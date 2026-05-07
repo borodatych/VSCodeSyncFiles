@@ -174,11 +174,14 @@ describe("onNewConflict callback", () => {
 
     // Now: base = hash("A-version") in _meta; localCurrent = hash("B-version"); cloudCurrent = hash("A-version")
     // Since base == cloudCurrent, detectChange says "push" not conflict
-    // To make it a true conflict: patch _meta so that base != cloud too
+    // To make it a true conflict: patch _meta so that base != cloud too.
+    // We must also clear the cached etag — otherwise the download path on B
+    // sees ifNoneMatch hit and returns notModified, which makes cloudCurrent
+    // collapse to base (= "fake-base-hash") and the 3-way conflict is masked.
     const metaDl = await provider.downloadFile(metaCloudPath(wsId));
     const meta = JSON.parse(metaDl.body.toString()) as MetaJson;
     if (meta.files[rel]) {
-      meta.files[rel] = { ...meta.files[rel], hash: "fake-base-hash" };
+      meta.files[rel] = { ...meta.files[rel], hash: "fake-base-hash", etag: undefined };
     }
     await provider.uploadFile(metaCloudPath(wsId), Buffer.from(JSON.stringify(meta)));
 

@@ -40,4 +40,4 @@
 
 ## Что НЕ сделано (blocked)
 
-- [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way`
+- [x] `engineCallbacks > onNewConflict 3-way` — починен на 2-м roadmap-max pass; см. фазу 13. Был bug в тесте (etag не обнулялся при подмене meta.hash → ETag-cache short-circuit маскировал conflict).

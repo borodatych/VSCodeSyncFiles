@@ -62,4 +62,4 @@
 ## Не сделано / отложено
 
 - [x] **husky + lint-staged** — установлены `husky@^9` + `lint-staged@^15`. `.husky/pre-commit` запускает `npx lint-staged`; `.lintstagedrc.json` гоняет `eslint --fix` по staged `*.{ts,tsx,mjs,cjs,js}`. `scripts.prepare: husky` авто-инициализирует hooks при `npm install`.
-- [~] **Stale flaky tests** (8 штук) на main — стабилизированы на момент roadmap-max pass: ушли в зелёное `attachCloudWorkspace`, `conflictResolution`, `platformCrypto decrypt with wrong key`, оба `syncRateLimitState fallback` (см. Phase 13 A3). Остаётся 1 hard race: `engineCallbacks > onNewConflict 3-way`. Текущий счёт: 650 passed / 1 failed.
+- [x] **Stale flaky tests** (8 штук) на main — все стабилизированы. Финальный счёт после 2-го roadmap-max pass: **660 passed / 0 failed** (было 607 / 3). См. Phase 13 A3 (rate-limit fallback off-by-1) и Phase 13 (engineCallbacks 3-way etag-cache short-circuit).
