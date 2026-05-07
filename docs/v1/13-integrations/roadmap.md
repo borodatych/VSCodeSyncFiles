@@ -28,6 +28,10 @@
 - [x] **F-3.7. Storage Usage Reporter** — `src/core/storageUsageReport.ts` (pure: `buildStorageUsageReport / formatBytes`, 11 unit-тестов) + команда `vscodesync.showStorageReport`. Рекурсивно walks CLOUD_ROOT_DIR (depth ≤ 4) → агрегация per-workspace + top-10 крупнейших → OutputChannel.
 - [x] **F-3.8. Conflict Heatmap** — `src/core/conflictHeatmapStore.ts` (pure: `appendConflictEntry / buildHotZones`, retention 180 дн, кластеризация overlapping ranges, 8 unit-тестов) + `src/ui/conflictHeatmapStoreFs.ts` (file I/O wrapper) + hook в `logSyncActivityRef` для `resolve_keep_mine`/`resolve_take_theirs` событий. Команда `vscodesync.showConflictHeatmap` выводит топ горячих файлов в OutputChannel. CodeLens поверх hot-зон — отложено (нужны line ranges из conflict resolution flow).
 
+## Reliability fixes (roadmap-max pass)
+
+- [x] **A3. Rate-limit fallback off-by-1** — `src/core/syncRateLimitState.ts`. После `noteProviderRateLimited(undefined)` `getRateLimitRemainingMs()` могло вернуть 14 999 ms вместо 15 000 ms из-за sub-ms drift между двумя `Date.now()` в одном tick'е. Добавлен +1 ms cushion в `blockedUntilMs`. Тест `syncRateLimitState — falls back to exponential backoff …` теперь стабильно зелёный.
+
 ## Что НЕ сделано (blocked / отложено)
 
 - [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way` (мета-патч race) — отложено.

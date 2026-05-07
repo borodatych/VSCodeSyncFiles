@@ -18,7 +18,10 @@ export function noteProviderRateLimited(retryAfterMs?: number): void {
     retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
       ? Math.min(retryAfterMs, MAX_WINDOW_MS)
       : fallbackBackoff.nextDelayMs();
-  blockedUntilMs = Math.max(blockedUntilMs, Date.now() + fromHeader);
+  // +1 ms cushions the sub-ms drift between this Date.now() and a same-tick
+  // read in getRateLimitRemainingMs() — without it, a 15 000 ms window can
+  // observably read back as 14 999 ms.
+  blockedUntilMs = Math.max(blockedUntilMs, Date.now() + fromHeader + 1);
   emit();
 }
 
