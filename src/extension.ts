@@ -104,6 +104,7 @@ import {
   runShowAchievements,
   scheduleAchievementsWarmup,
 } from "./ui/achievementsService.js";
+import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
@@ -1155,6 +1156,12 @@ export function activate(context: vscode.ExtensionContext): void {
       await runInstallWorkspaceTemplate();
     }),
   );
+
+  // Smart Conflict Prediction — status-bar warning when another machine has
+  // marked itself as editing the same active file.
+  const conflictPredictor = new SmartConflictPredictionService(globalConfig);
+  conflictPredictor.start();
+  context.subscriptions.push(conflictPredictor);
 
   context.subscriptions.push(fileDecorationRegistration);
   context.subscriptions.push(

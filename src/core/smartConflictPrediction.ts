@@ -1,21 +1,11 @@
 /**
- * Smart Conflict Prediction — skeleton.
+ * Smart Conflict Prediction — pure scorer.
  *
- * Goal: warn the user *before* they save when another machine is currently
- * editing the same file. Requires a presence wire (`editingBy[path]` field
- * propagated via `_machines.json`) that does not exist yet.
- *
- * The pure helper here scores the current risk given an existing presence
- * snapshot — implemented and tested. Subscribing to the presence wire and
- * surfacing the warning to the user throws a sentinel.
+ * The full presence wire (per-path `editingBy[path]` propagated via
+ * `_machines.json`) is still pending; the live UI uses the per-file
+ * `editingBy` field that already lives in `cfg.files[]` and surfaces it via
+ * `src/ui/smartConflictPredictionService.ts`.
  */
-
-export class SmartConflictPredictionNotImplementedError extends Error {
-  constructor(message = "Smart conflict prediction wire is not implemented yet") {
-    super(message);
-    this.name = "SmartConflictPredictionNotImplementedError";
-  }
-}
 
 export interface OtherMachineEdit {
   machineName: string;
@@ -59,6 +49,3 @@ export function scoreConflictRisk(input: ConflictRiskInput): ConflictRiskResult 
   return { score, activeOthers };
 }
 
-export function subscribePresenceWire(): never {
-  throw new SmartConflictPredictionNotImplementedError();
-}

@@ -95,6 +95,11 @@
           "default": true,
           "description": "%cfg.hoverDiffPreview.enabled.description%"
         },
+        "vscodesync.smartConflictPrediction.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.smartConflictPrediction.enabled.description%"
+        },
         "vscodesync.massChangeGuard": {
           "type": "boolean",
           "default": true,

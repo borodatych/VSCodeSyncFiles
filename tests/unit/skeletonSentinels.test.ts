@@ -14,11 +14,7 @@ import {
   renderScrubber,
   TimeTravelScrubberNotImplementedError,
 } from "../../src/core/timeTravelScrubber.js";
-import {
-  scoreConflictRisk,
-  subscribePresenceWire,
-  SmartConflictPredictionNotImplementedError,
-} from "../../src/core/smartConflictPrediction.js";
+import { scoreConflictRisk } from "../../src/core/smartConflictPrediction.js";
 import { planBulkPush } from "../../src/core/bulkPushWizard.js";
 import { summariseHoverDiff } from "../../src/core/hoverDiffPreview.js";
 import {
@@ -96,9 +92,11 @@ describe("smartConflictPrediction", () => {
     expect(r.score).toBeGreaterThan(0);
     expect(r.activeOthers).toEqual(["beta"]);
   });
-  it("subscribePresenceWire throws sentinel", () => {
-    expect(() => subscribePresenceWire()).toThrow(SmartConflictPredictionNotImplementedError);
-  });
+  // Note: SmartConflictPrediction skeleton was upgraded on roadmap-max
+  // pass 7 — see src/ui/smartConflictPredictionService.ts. The presence
+  // wire (per-path editingBy via _machines.json) is still in skeleton; the
+  // live UI uses the per-file editingBy field that already lives in
+  // cfg.files[].
 });
 
 describe("bulkPushWizard", () => {
