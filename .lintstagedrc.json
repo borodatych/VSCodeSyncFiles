@@ -1,0 +1,4 @@
+{
+  "*.{ts,tsx,mjs,cjs,js}": ["eslint --fix"],
+  "*.{json,md,yml,yaml}": []
+}

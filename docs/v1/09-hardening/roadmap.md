@@ -61,5 +61,5 @@
 
 ## Не сделано / отложено
 
-- [ ] **husky + lint-staged** — отложено: в этой сессии lint и так в нуле, hooks можно подключить отдельно когда добавится первая lint-ошибка.
+- [x] **husky + lint-staged** — установлены `husky@^9` + `lint-staged@^15`. `.husky/pre-commit` запускает `npx lint-staged`; `.lintstagedrc.json` гоняет `eslint --fix` по staged `*.{ts,tsx,mjs,cjs,js}`. `scripts.prepare: husky` авто-инициализирует hooks при `npm install`.
 - [ ] **Stale flaky tests** (8 штук) на main — `attachCloudWorkspace`, `conflictResolution`, `engineCallbacks`, `platformCrypto decrypt with wrong key`. Падали и до правок Волны 1; не регрессии этой фазы. См. отдельный bug в Phase 11.
