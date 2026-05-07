@@ -32,5 +32,5 @@
 - [ ] Bulk Push Wizard (M) — требует engine.pushAll progress callback
 - [ ] Hover Diff Preview (M) — требует API «diff summary без раскачки blob»
 - [ ] Workspace Templates / Achievements / Insights weekly digest
-- [ ] Wiring F1/F2/F3/F5 в реальные UI-points — все pure helpers готовы и протестированы, integration зависит от UI-полировки в реальном VS Code window
+- [x] Wiring F1/F2/F3/F5 в реальные UI-points — закрыто в Phase 13 как W1–W5 (sparkline → status bar; online indicator → quick-transfer; mass-delete guard → putManifest pre-flight; AI commit message → snapshot InputBox; formatNotification → unified notifications + digest).
 - [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way`
