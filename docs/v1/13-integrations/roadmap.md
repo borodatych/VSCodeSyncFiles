@@ -35,6 +35,6 @@
 ## Что НЕ сделано (blocked / отложено)
 
 - [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way` (мета-патч race) — отложено.
-- [ ] CodeLens поверх F-3.8 hot-зон — нужны line ranges из conflict resolution flow (сейчас heatmap собирает file-level entries 1..1).
+- [x] CodeLens поверх F-3.8 hot-зон — `src/ui/conflictHotZoneLensPlanner.ts` (pure: `planHotZoneLenses` со clamping на `lineCount-1` + сортировка top-to-bottom + `formatHotZoneLensTitle`, 9 unit-тестов) + `src/ui/conflictHotZoneCodeLens.ts` (`ConflictHotZoneCodeLensProvider` + `makeToRelPath`; 30-сек TTL-кэш, чтобы не читать `conflicts.json` на каждый refresh). Зарегистрирован в `extension.ts:1083+` рядом с `InlineConflictCodeLensProvider`. Setting `vscodesync.conflictHotZoneCodeLens.enabled` (default true). Текущий store пишет `1..1` ranges (resolve commands не передают точные строки), кластеры всё равно показываются на первой строке файла как «conflict-prone» сигнал.
 - [x] Auto-prompt F-3.5 на attachCloudWorkspace для новой машины — `maybePromptPathMapperAfterAttach(context, workspaceId)` в `src/ui/aiPathMapperCommand.ts`. Дёргается из обоих attach-flows в `src/extension.ts` (single workspace из tree + multi-pick из QuickPick). Idempotent через `globalState['vscodesync.aiPathMapper.promptedFor:<workspaceId>']` — показывается ровно один раз на машину × workspace. Soft-skip при отсутствии `vscode.lm`.
 - [~] Snapshot Diff Viewer / Time Travel scrubber / Hover Diff Preview / Workspace Templates — skeleton-bucket. Pure shapes + `*NotImplementedError` sentinels: см. фазу 12.

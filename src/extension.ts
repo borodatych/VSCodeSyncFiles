@@ -92,6 +92,10 @@ import { registerHealthAutoCheck } from "./ui/healthAutoCheck.js";
 import { registerScheduledSnapshots } from "./ui/scheduledSnapshots.js";
 import { SyncLastSyncCodeLensProvider } from "./ui/lastSyncCodeLens.js";
 import { InlineConflictCodeLensProvider } from "./ui/inlineConflictCodeLens.js";
+import {
+  ConflictHotZoneCodeLensProvider,
+  makeToRelPath,
+} from "./ui/conflictHotZoneCodeLens.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
@@ -1099,6 +1103,21 @@ export function activate(context: vscode.ExtensionContext): void {
       ) {
         inlineConflictLens.refresh();
       }
+    }),
+  );
+
+  // Conflict hot-zone CodeLens — flags lines that have been part of resolved
+  // conflicts ≥ N times in the last 180 days. Pure planner clamps to the
+  // current document's line count.
+  const hotZoneLens = new ConflictHotZoneCodeLensProvider({
+    storageDir: globalConfig.getStorageDir(),
+    toRelPath: makeToRelPath(),
+  });
+  context.subscriptions.push(
+    hotZoneLens,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, hotZoneLens),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("vscodesync.conflictHotZoneCodeLens")) hotZoneLens.refresh();
     }),
   );
   context.subscriptions.push(fileDecorationRegistration);

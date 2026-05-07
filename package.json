@@ -85,6 +85,11 @@
           "default": true,
           "description": "%cfg.inlineConflictCodeLens.enabled.description%"
         },
+        "vscodesync.conflictHotZoneCodeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.conflictHotZoneCodeLens.enabled.description%"
+        },
         "vscodesync.massChangeGuard": {
           "type": "boolean",
           "default": true,
