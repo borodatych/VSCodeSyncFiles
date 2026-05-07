@@ -89,6 +89,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.showStorageReport",
   "vscodesync.showInsightsWeeklyDigest",
   "vscodesync.showAchievements",
+  "vscodesync.installWorkspaceTemplate",
   "vscodesync.detectGarbageTracked",
   "vscodesync.startSyncRecording",
   "vscodesync.stopSyncRecording",

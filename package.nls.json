@@ -112,6 +112,7 @@
   "cmd.showStorageReport.title": "VSCodeSync: Show cloud storage report",
   "cmd.showInsightsWeeklyDigest.title": "VSCodeSync: Insights — weekly digest",
   "cmd.showAchievements.title": "VSCodeSync: Show achievements",
+  "cmd.installWorkspaceTemplate.title": "VSCodeSync: Install workspace template…",
   "cmd.detectGarbageTracked.title": "VSCodeSync: Detect garbage tracked files (suggest .vscodesync.ignore)",
   "cmd.startSyncRecording.title": "VSCodeSync: Start sync recording (replay session)",
   "cmd.stopSyncRecording.title": "VSCodeSync: Stop sync recording (save replay JSON)",

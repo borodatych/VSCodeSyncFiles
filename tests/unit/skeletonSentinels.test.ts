@@ -24,8 +24,8 @@ import { planBulkPush } from "../../src/core/bulkPushWizard.js";
 import { summariseHoverDiff } from "../../src/core/hoverDiffPreview.js";
 import {
   validateWorkspaceTemplate,
-  installTemplate,
-  WorkspaceTemplatesNotImplementedError,
+  planTemplateInstall,
+  BUILT_IN_TEMPLATES,
 } from "../../src/core/workspaceTemplates.js";
 import { evaluateAchievements, newlyUnlocked } from "../../src/core/achievements.js";
 import type { ActivityEvent } from "../../src/core/activityLog.js";
@@ -155,10 +155,28 @@ describe("workspaceTemplates", () => {
     });
     expect(r.ok).toBe(false);
   });
-  it("installTemplate throws sentinel", () => {
+  it("planTemplateInstall maps relPaths to absolute targets", () => {
+    const plan = planTemplateInstall(
+      { id: "t", title: "T", description: "", tags: [], files: [{ relPath: "a.md", content: "x" }] },
+      "/tmp/work",
+    );
+    expect(plan).toHaveLength(1);
+    expect(plan[0]?.absolutePath).toBe("/tmp/work/a.md");
+    expect(plan[0]?.content).toBe("x");
+  });
+  it("planTemplateInstall rejects path-traversal at install time", () => {
     expect(() =>
-      installTemplate({ id: "t", title: "T", description: "", tags: [], files: [] }, "/tmp"),
-    ).toThrow(WorkspaceTemplatesNotImplementedError);
+      planTemplateInstall(
+        { id: "t", title: "T", description: "", tags: [], files: [{ relPath: "../escape", content: "" }] },
+        "/tmp/work",
+      ),
+    ).toThrow();
+  });
+  it("BUILT_IN_TEMPLATES are all valid", () => {
+    for (const t of BUILT_IN_TEMPLATES) {
+      const r = validateWorkspaceTemplate(t);
+      expect(r.ok).toBe(true);
+    }
   });
 });
 

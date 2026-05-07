@@ -1150,6 +1150,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vscodesync.showAchievements", async () => {
       await runShowAchievements(context, globalConfig.getStorageDir());
     }),
+    vscode.commands.registerCommand("vscodesync.installWorkspaceTemplate", async () => {
+      const { runInstallWorkspaceTemplate } = await import("./ui/workspaceTemplatesCommand.js");
+      await runInstallWorkspaceTemplate();
+    }),
   );
 
   context.subscriptions.push(fileDecorationRegistration);

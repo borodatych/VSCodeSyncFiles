@@ -1,18 +1,10 @@
 /**
- * Workspace Templates — skeleton.
+ * Workspace Templates — pure manifest validator + planner for the install.
  *
- * Goal: a curated catalog of "starter workspaces" (e.g. "Node TS app",
- * "Python data project") the user can clone in one click. The pure helper
- * validates a template manifest; the actual install (clone + register +
- * track files) throws a sentinel.
+ * The actual file write happens in `src/ui/workspaceTemplatesCommand.ts`
+ * which iterates `planTemplateInstall(template, targetFolder)` and writes
+ * each entry through `writeTextFileAtomic`.
  */
-
-export class WorkspaceTemplatesNotImplementedError extends Error {
-  constructor(message = "Workspace template installer is not implemented yet") {
-    super(message);
-    this.name = "WorkspaceTemplatesNotImplementedError";
-  }
-}
 
 export interface WorkspaceTemplate {
   id: string;
@@ -47,6 +39,86 @@ export function validateWorkspaceTemplate(raw: unknown): ValidateResult {
   return { ok: true, value: r as WorkspaceTemplate };
 }
 
-export function installTemplate(_t: WorkspaceTemplate, _targetFolder: string): never {
-  throw new WorkspaceTemplatesNotImplementedError();
+export interface PlannedTemplateFile {
+  /** Workspace-relative POSIX path. */
+  relPath: string;
+  /** Absolute target path, joined from `targetFolder + relPath` (POSIX). */
+  absolutePath: string;
+  content: string;
 }
+
+/**
+ * Convert a validated template into a flat list of writes. Re-runs the
+ * traversal-escape guard at install time as a defence in depth — a manifest
+ * that passed validation could still mismatch what we expect after edits.
+ */
+export function planTemplateInstall(
+  t: WorkspaceTemplate,
+  targetFolder: string,
+): PlannedTemplateFile[] {
+  const folder = targetFolder.replace(/[/\\]+$/, "");
+  if (!folder) {
+    throw new Error("workspaceTemplates: targetFolder is empty");
+  }
+  return t.files.map((f) => {
+    if (f.relPath.startsWith("/") || f.relPath.includes("..") || /^[A-Za-z]:[/\\]/.test(f.relPath)) {
+      throw new Error(`workspaceTemplates: relPath escapes workspace: ${f.relPath}`);
+    }
+    const absolutePath = `${folder}/${f.relPath.replace(/^\/+/, "")}`;
+    return { relPath: f.relPath, absolutePath, content: f.content };
+  });
+}
+
+/** Built-in catalog of starter templates. */
+export const BUILT_IN_TEMPLATES: WorkspaceTemplate[] = [
+  {
+    id: "vscodesync.notes",
+    title: "Empty notes workspace",
+    description: "Markdown notes + .vscodesync-ignore template",
+    tags: ["notes", "markdown"],
+    files: [
+      {
+        relPath: "README.md",
+        content: "# Notes\n\nAdd your notes here. They'll sync via VSCodeSync.\n",
+      },
+      {
+        relPath: ".vscodesync-ignore",
+        content: "# Ignore patterns (gitignore syntax)\n.DS_Store\n*.tmp\n",
+      },
+    ],
+  },
+  {
+    id: "vscodesync.snippets",
+    title: "Code snippets workspace",
+    description: "Per-language snippet stub + README",
+    tags: ["snippets", "code"],
+    files: [
+      {
+        relPath: "README.md",
+        content: "# Snippets\n\nDrop your reusable code snippets here, organised per language.\n",
+      },
+      {
+        relPath: "snippets/typescript.md",
+        content: "# TypeScript snippets\n\n```ts\n// example\n```\n",
+      },
+      {
+        relPath: "snippets/python.md",
+        content: "# Python snippets\n\n```py\n# example\n```\n",
+      },
+    ],
+  },
+  {
+    id: "vscodesync.docs",
+    title: "Documentation project",
+    description: "Roadmap + knowledge base scaffold",
+    tags: ["docs", "knowledge"],
+    files: [
+      {
+        relPath: "README.md",
+        content: "# Documentation\n\n- See [roadmap.md](roadmap.md) for milestones.\n- See [knowledge.md](knowledge.md) for learned context.\n",
+      },
+      { relPath: "roadmap.md", content: "# Roadmap\n\n## Phase 1\n- [ ] First milestone\n" },
+      { relPath: "knowledge.md", content: "# Knowledge\n\n_Insights worth remembering._\n" },
+    ],
+  },
+];

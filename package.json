@@ -957,6 +957,10 @@
         "title": "%cmd.showAchievements.title%"
       },
       {
+        "command": "vscodesync.installWorkspaceTemplate",
+        "title": "%cmd.installWorkspaceTemplate.title%"
+      },
+      {
         "command": "vscodesync.detectGarbageTracked",
         "title": "%cmd.detectGarbageTracked.title%"
       },
