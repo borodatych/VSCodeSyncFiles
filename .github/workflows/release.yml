@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run package
+      - name: Pick VSIX
+        id: pick
+        run: |
+          file=$(ls *.vsix | head -n1)
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --packagePath "${{ steps.pick.outputs.file }}"
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx publish "${{ steps.pick.outputs.file }}" -p "$OVSX_PAT"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pick.outputs.file }}
+          generate_release_notes: true
+
+  ci:
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run compile
+      - name: Upload VSIX (artifact)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run package
+      - name: Save VSIX
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: "*.vsix"
+          if-no-files-found: error
+
+  # Best-effort smoke test on Cursor / Windsurf — both ship as VS Code forks
+  # and accept the same VSIX. We don't rely on their CLIs being stable, so
+  # the job is non-blocking (continue-on-error). Failure here only signals
+  # that we should re-test manually before a release.
+  cursor-smoke:
+    needs: ci
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run package
+      - name: Verify VSIX manifest accepts Cursor / Windsurf engine ranges
+        run: |
+          file=$(ls *.vsix | head -n1)
+          unzip -p "$file" extension/package.json > /tmp/pkg.json
+          node -e "
+            const p = require('/tmp/pkg.json');
+            const eng = p.engines?.vscode;
+            if (!eng) { process.exit(1); }
+            console.log('engines.vscode =', eng);
+            // Cursor / Windsurf currently track VS Code 1.92+; require <= 1.92 minimum.
+            const m = /\\^?(\\d+)\\.(\\d+)/.exec(eng);
+            if (!m) { console.error('cannot parse engines.vscode'); process.exit(1); }
+            const minor = Number(m[2]);
+            if (minor > 92) {
+              console.error('engines.vscode minimum > 1.92 — Cursor/Windsurf may reject');
+              process.exit(1);
+            }
+            console.log('OK — Cursor/Windsurf compatible engine range');
+          "

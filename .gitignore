@@ -7,13 +7,15 @@ builds/
 .DS_Store
 references/
 nul
-.git/
-.github/
 .DS_Store
-cli/
-docs/
+cli/node_modules/
+cli/dist/
 CLAUDE.md
 .vscode/
 .cursor/
 .kilo/
 .vibe/
+.claude/
+
+# Documentation: keep roadmap and continuity in git, hide local drafts.
+docs/idea.md
