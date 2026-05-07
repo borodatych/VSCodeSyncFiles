@@ -1,20 +1,11 @@
 /**
- * Bulk Push Wizard — skeleton.
+ * Bulk Push Wizard — pure planner + result formatter.
  *
- * Goal: a multi-step wizard that pushes many workspaces at once with a
- * progress bar and per-workspace error reporting. Requires
- * `engine.pushAll(progressCb)` which does not exist yet.
- *
- * The pure helper plans the wizard steps so the future UI can render its
- * stepper without re-deriving the plan. The actual push throws a sentinel.
+ * The actual push runs via `engine.pushAll(_, onProgress)` (declared in
+ * `syncEngine.ts`); the UI command in `extension.ts` wires the planner
+ * output through a QuickPick + `vscode.window.withProgress`.
  */
-
-export class BulkPushWizardNotImplementedError extends Error {
-  constructor(message = "Bulk Push wizard backend (engine.pushAll) is not implemented yet") {
-    super(message);
-    this.name = "BulkPushWizardNotImplementedError";
-  }
-}
+import type { PushAllResult } from "./syncEngine.js";
 
 export interface BulkPushTarget {
   workspaceId: string;
@@ -44,6 +35,41 @@ export function planBulkPush(targets: readonly BulkPushTarget[]): BulkPushPlan {
   };
 }
 
-export function runBulkPush(_plan: BulkPushPlan): never {
-  throw new BulkPushWizardNotImplementedError();
+export interface BulkPushSummary {
+  okCount: number;
+  failCount: number;
+  totalPushed: number;
+  failedWorkspaceIds: string[];
+}
+
+export function summariseBulkPushResults(results: readonly PushAllResult[]): BulkPushSummary {
+  let okCount = 0;
+  let failCount = 0;
+  let totalPushed = 0;
+  const failedWorkspaceIds: string[] = [];
+  for (const r of results) {
+    if (r.ok) {
+      okCount++;
+    } else {
+      failCount++;
+      failedWorkspaceIds.push(r.workspaceId);
+    }
+    totalPushed += r.pushedFiles;
+  }
+  return { okCount, failCount, totalPushed, failedWorkspaceIds };
+}
+
+export function formatBulkPushResults(results: readonly PushAllResult[]): string {
+  const s = summariseBulkPushResults(results);
+  const lines: string[] = [];
+  lines.push(`VSCodeSync · Bulk Push — ${String(s.okCount)} ok / ${String(s.failCount)} failed`);
+  lines.push(`Pushed ${String(s.totalPushed)} file(s) across ${String(results.length)} workspace(s).`);
+  if (s.failCount === 0) return lines.join("\n");
+  lines.push("");
+  lines.push("Failures:");
+  for (const r of results) {
+    if (r.ok) continue;
+    lines.push(`  ✗ ${r.workspaceId}: ${r.error ?? "(no error message)"}`);
+  }
+  return lines.join("\n");
 }

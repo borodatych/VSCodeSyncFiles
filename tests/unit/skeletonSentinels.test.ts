@@ -20,11 +20,7 @@ import {
   subscribePresenceWire,
   SmartConflictPredictionNotImplementedError,
 } from "../../src/core/smartConflictPrediction.js";
-import {
-  planBulkPush,
-  runBulkPush,
-  BulkPushWizardNotImplementedError,
-} from "../../src/core/bulkPushWizard.js";
+import { planBulkPush } from "../../src/core/bulkPushWizard.js";
 import {
   summariseHoverDiff,
   attachHoverProvider,
@@ -124,11 +120,9 @@ describe("bulkPushWizard", () => {
     expect(plan.totalWorkspaces).toBe(1);
     expect(plan.totalPendingFiles).toBe(5);
   });
-  it("runBulkPush throws sentinel", () => {
-    expect(() => runBulkPush({ totalWorkspaces: 0, totalPendingFiles: 0, targets: [] })).toThrow(
-      BulkPushWizardNotImplementedError,
-    );
-  });
+  // Note: BulkPushWizard skeleton was upgraded to a full impl on roadmap-max
+  // pass 5; the sentinel was removed. The pure planner stays here as the
+  // canonical "what to push next" helper.
 });
 
 describe("hoverDiffPreview", () => {

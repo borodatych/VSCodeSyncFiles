@@ -92,6 +92,38 @@ export interface PurgeLostFileItem {
   relPath: string;
 }
 
+/** Per-workspace outcome of `pushAll`. */
+export interface PushAllResult {
+  workspaceId: string;
+  ok: boolean;
+  /** Number of files actually pushed (after the local-hash check). */
+  pushedFiles: number;
+  /** When `ok === true` and the workspace was skipped (e.g. not in `activeWorkspaces`). */
+  skipped?: "not_active";
+  /** When `ok === false` — error message captured from the failing call. */
+  error?: string;
+}
+
+/** Progress event surfaced by `pushAll(_, onProgress)`. Two events per workspace. */
+export type PushAllProgressEvent =
+  | {
+      kind: "workspace_started";
+      workspaceId: string;
+      workspaceNote: string;
+      index: number;
+      total: number;
+    }
+  | {
+      kind: "workspace_finished";
+      workspaceId: string;
+      workspaceNote: string;
+      index: number;
+      total: number;
+      ok: boolean;
+      pushedFiles: number;
+      error?: string;
+    };
+
 /** Действие по файлу в сухом прогоне sync (см. `previewSyncPlan`). */
 export type PreviewSyncFileAction = ChangeAction | "conflict_pending";
 
@@ -2731,17 +2763,45 @@ export class SyncEngine {
     return false;
   }
 
-  async pushAll(workspaceId?: string): Promise<void> {
+  async pushAll(
+    workspaceId?: string,
+    onProgress?: (ev: PushAllProgressEvent) => void,
+  ): Promise<PushAllResult[]> {
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     const ids = workspaceId
       ? [workspaceId]
       : [...new Set(cfg.activeWorkspaces.map((w) => w.workspaceId))];
-    for (const id of ids) {
+    const results: PushAllResult[] = [];
+    // Errors propagate as they did historically — callers that need
+    // per-workspace failure containment (Bulk Push wizard) wrap each id in
+    // their own try/catch instead of asking pushAll to swallow.
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const note =
+        cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote ?? id;
+      onProgress?.({
+        kind: "workspace_started",
+        workspaceId: id,
+        workspaceNote: note,
+        index: i,
+        total: ids.length,
+      });
+      let pushedFiles = 0;
       await this.syncWorkspace(id);
       const c2 = await this.loadCfg();
       const entry = c2.activeWorkspaces.find((w) => w.workspaceId === id);
       if (!entry) {
+        results.push({ workspaceId: id, ok: true, pushedFiles: 0, skipped: "not_active" });
+        onProgress?.({
+          kind: "workspace_finished",
+          workspaceId: id,
+          workspaceNote: note,
+          index: i,
+          total: ids.length,
+          ok: true,
+          pushedFiles: 0,
+        });
         continue;
       }
       for (const f of c2.files.filter((x) => x.workspaceId === id)) {
@@ -2751,10 +2811,22 @@ export class SyncEngine {
         const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
         if (localHash !== f.localHash) {
           await this.pushFile(c2, id, f.localPath, entry);
+          pushedFiles++;
         }
       }
       await this.saveCfg(c2);
+      results.push({ workspaceId: id, ok: true, pushedFiles });
+      onProgress?.({
+        kind: "workspace_finished",
+        workspaceId: id,
+        workspaceNote: note,
+        index: i,
+        total: ids.length,
+        ok: true,
+        pushedFiles,
+      });
     }
+    return results;
   }
 
   async pullAll(workspaceId?: string): Promise<void> {

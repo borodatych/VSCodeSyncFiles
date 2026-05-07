@@ -619,6 +619,10 @@
         "title": "%cmd.pushAll.title%"
       },
       {
+        "command": "vscodesync.bulkPush",
+        "title": "%cmd.bulkPush.title%"
+      },
+      {
         "command": "vscodesync.pullAll",
         "title": "%cmd.pullAll.title%"
       },

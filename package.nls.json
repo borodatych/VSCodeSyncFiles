@@ -3,6 +3,7 @@
   "description": "Sync individual files between machines via OneDrive / Google Drive / Dropbox / Yandex.Disk",
 
   "cmd.pushAll.title": "VSCodeSync: Push all files",
+  "cmd.bulkPush.title": "VSCodeSync: Bulk Push wizard (pick workspaces → push)",
   "cmd.pullAll.title": "VSCodeSync: Pull all files",
   "cmd.pushCurrentFile.title": "VSCodeSync: Push current file",
   "cmd.pullCurrentFile.title": "VSCodeSync: Pull current file",

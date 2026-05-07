@@ -2,6 +2,7 @@
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако (OneDrive / Google Drive / Dropbox / Yandex.Disk)",
   "cmd.pushAll.title": "VSCodeSync: Отправить всё",
+  "cmd.bulkPush.title": "VSCodeSync: Bulk Push (выбор workspace'ов → push с прогрессом)",
   "cmd.pullAll.title": "VSCodeSync: Получить всё",
   "cmd.pushCurrentFile.title": "VSCodeSync: Отправить текущий файл",
   "cmd.pullCurrentFile.title": "VSCodeSync: Получить текущий файл",
