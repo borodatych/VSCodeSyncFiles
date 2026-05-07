@@ -113,6 +113,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.pinFileForSync",
   "vscodesync.openMachinesGraph",
   "vscodesync.openQuickTransferDrop",
+  "vscodesync.openSankeyChart",
   "vscodesync.configurePathMapping",
   "vscodesync.editWorkspaceIgnorePatterns",
   "vscodesync.exportEncryptionKey",

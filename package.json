@@ -1043,6 +1043,10 @@
         "title": "%cmd.openQuickTransferDrop.title%"
       },
       {
+        "command": "vscodesync.openSankeyChart",
+        "title": "%cmd.openSankeyChart.title%"
+      },
+      {
         "command": "vscodesync.configurePathMapping",
         "title": "%cmd.configurePathMapping.title%"
       },

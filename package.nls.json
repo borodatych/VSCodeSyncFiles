@@ -56,6 +56,7 @@
   "cmd.pinFileForSync.title": "VSCodeSync: Pin file to top of sync queue",
   "cmd.openMachinesGraph.title": "VSCodeSync: Open machines × workspaces graph",
   "cmd.openQuickTransferDrop.title": "VSCodeSync: Open Quick Transfer drop panel",
+  "cmd.openSankeyChart.title": "VSCodeSync: Open Sankey chart (push → pull)",
   "cmd.showStatus.title": "VSCodeSync: Show status",
   "cmd.syncWorkspace.title": "VSCodeSync: Sync workspace",
   "cmd.detachWorkspace.title": "VSCodeSync: Detach workspace…",

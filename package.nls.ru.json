@@ -127,6 +127,7 @@
   "cmd.pinFileForSync.title": "VSCodeSync: Закрепить файл в начале очереди sync",
   "cmd.openMachinesGraph.title": "VSCodeSync: Открыть граф «машины × воркспейсы»",
   "cmd.openQuickTransferDrop.title": "VSCodeSync: Открыть панель Quick Transfer",
+  "cmd.openSankeyChart.title": "VSCodeSync: Открыть Sankey-диаграмму (push → pull)",
   "cmd.configurePathMapping.title": "VSCodeSync: Настроить маппинг путей",
   "cmd.editWorkspaceIgnorePatterns.title": "VSCodeSync: Редактировать исключения воркспейса",
   "cmd.exportEncryptionKey.title": "VSCodeSync: Экспортировать ключ шифрования",
