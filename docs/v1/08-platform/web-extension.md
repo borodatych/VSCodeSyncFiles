@@ -57,4 +57,4 @@ CI: после сборки `npm run verify:web` проверяет отсутс
 - [x] Unit-тесты ICompression (Node + Web): `tests/unit/platformCompression.test.ts` — round-trip, threshold, cross-platform, wireCompression.ts format compatibility
 - [x] Unit-тесты web-specific утилит: `tests/unit/webExtensionUtils.test.ts` — powerMonitorStub, OAuth URL/state parsing, lock-file body, smee.io SSE parsing, E2E pipeline (compress+encrypt → decrypt+decompress) для Node/Web/Cross-platform
 - [x] Убедиться что нет прямых `require('node:...')` в web bundle — `scripts/verify-web-bundle.mjs` в CI
-- [ ] E2E тест на `vscode.dev` с реальным OneDrive — ручной прогон (автоматизация невозможна без публичного deployment)
+- [~] E2E тест на `vscode.dev` с реальным OneDrive — **manual-only** (по контракту /roadmap-max — skeleton-acceptable; E2E на browser deployments в default-списке). Автоматизация невозможна без публичного deployment + сервисного OneDrive-аккаунта. Шаги ручного прогона: открыть https://vscode.dev → установить расширение из Marketplace → войти в OneDrive → создать workspace → закрыть/открыть вкладку → проверить, что состояние восстановилось.
