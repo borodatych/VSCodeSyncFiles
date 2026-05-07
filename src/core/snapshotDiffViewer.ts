@@ -1,22 +1,10 @@
 /**
- * Snapshot Diff Viewer — skeleton.
+ * Snapshot Diff Viewer — pure planner for the side-by-side diff.
  *
- * Goal: a webview that shows side-by-side diff between any two snapshots of
- * the same file (the .snapshots/{name}/ tree contains the historical
- * blobs). The pure helpers here describe the data shapes and produce the
- * inputs the future webview will consume.
- *
- * The webview itself (`renderDiff`) throws a sentinel so any caller that
- * tries to render before the implementation lands degrades to a clear
- * "needs work" message instead of silent failure.
+ * The actual diff render is delegated to VS Code's built-in `vscode.diff`
+ * command (see `src/ui/snapshotDiffCommand.ts`); this module only computes
+ * labels and the identical-short-circuit flag.
  */
-
-export class SnapshotDiffViewerNotImplementedError extends Error {
-  constructor(message = "Snapshot Diff Viewer webview is not implemented yet") {
-    super(message);
-    this.name = "SnapshotDiffViewerNotImplementedError";
-  }
-}
 
 export interface SnapshotRef {
   workspaceId: string;
@@ -43,14 +31,21 @@ export interface SnapshotDiffPlan {
 export function planSnapshotDiff(input: SnapshotDiffInput): SnapshotDiffPlan {
   const fmt = (r: SnapshotRef): string => `${r.snapshotName} · ${new Date(r.createdAtMs).toISOString()}`;
   return {
-    title: `Diff: ${input.relPath}`,
+    title: `${input.relPath} (${input.left.snapshotName} ↔ ${input.right.snapshotName})`,
     leftLabel: fmt(input.left),
     rightLabel: fmt(input.right),
     identical: input.leftContent === input.rightContent,
   };
 }
 
-/** Sentinel: must be caught by callers to surface "needs work" UX. */
-export function renderDiff(_input: SnapshotDiffInput): never {
-  throw new SnapshotDiffViewerNotImplementedError();
+/**
+ * Compute the union of file lists from two snapshot meta records — a file
+ * needs to be in *either* snapshot to show up as a diff candidate (a file
+ * present only in left appears as "deleted in right" and vice-versa).
+ */
+export function unionSnapshotFiles(leftFiles: readonly string[], rightFiles: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const f of leftFiles) seen.add(f);
+  for (const f of rightFiles) seen.add(f);
+  return [...seen].sort();
 }

@@ -114,6 +114,7 @@
   "cmd.showInsightsWeeklyDigest.title": "VSCodeSync: Insights — недельный отчёт",
   "cmd.showAchievements.title": "VSCodeSync: Показать достижения",
   "cmd.installWorkspaceTemplate.title": "VSCodeSync: Установить шаблон workspace…",
+  "cmd.diffSnapshots.title": "VSCodeSync: Diff двух snapshot'ов (встроенный diff)",
   "cmd.detectGarbageTracked.title": "VSCodeSync: Найти мусорные tracked файлы (предложить .vscodesync.ignore)",
   "cmd.startSyncRecording.title": "VSCodeSync: Начать запись sync-сессии (replay)",
   "cmd.stopSyncRecording.title": "VSCodeSync: Остановить запись и сохранить replay JSON",

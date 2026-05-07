@@ -7,8 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   planSnapshotDiff,
-  renderDiff,
-  SnapshotDiffViewerNotImplementedError,
+  unionSnapshotFiles,
 } from "../../src/core/snapshotDiffViewer.js";
 import {
   buildTimeTravelModel,
@@ -42,17 +41,16 @@ describe("snapshotDiffViewer", () => {
     expect(plan.identical).toBe(true);
     expect(plan.title).toContain("a.ts");
   });
-  it("renderDiff throws sentinel", () => {
-    expect(() =>
-      renderDiff({
-        relPath: "a.ts",
-        left: { workspaceId: "w", snapshotName: "v1", createdAtMs: 1 },
-        right: { workspaceId: "w", snapshotName: "v2", createdAtMs: 2 },
-        leftContent: "x",
-        rightContent: "y",
-      }),
-    ).toThrow(SnapshotDiffViewerNotImplementedError);
+  it("unionSnapshotFiles dedupes and sorts", () => {
+    expect(unionSnapshotFiles(["b.ts", "a.ts"], ["a.ts", "c.ts"])).toEqual([
+      "a.ts",
+      "b.ts",
+      "c.ts",
+    ]);
   });
+  // Note: SnapshotDiffViewer skeleton was upgraded to a real
+  // src/ui/snapshotDiffCommand.ts on roadmap-max pass 7; the sentinel was
+  // removed.
 });
 
 describe("timeTravelScrubber", () => {

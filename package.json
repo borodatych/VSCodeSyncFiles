@@ -961,6 +961,10 @@
         "title": "%cmd.installWorkspaceTemplate.title%"
       },
       {
+        "command": "vscodesync.diffSnapshots",
+        "title": "%cmd.diffSnapshots.title%"
+      },
+      {
         "command": "vscodesync.detectGarbageTracked",
         "title": "%cmd.detectGarbageTracked.title%"
       },

@@ -928,6 +928,37 @@ export function registerPlannedPaletteCommands(
       channel.appendLine(formatWeeklyDigest(digest));
       channel.show(true);
     }),
+    vscode.commands.registerCommand("vscodesync.diffSnapshots", async () => {
+      const provider = await extras.tryAuthenticatedProvider?.();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+        return;
+      }
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace в этой папке.");
+        return;
+      }
+      const wsPick = await vscode.window.showQuickPick(
+        wc.activeWorkspaces.map((w) => ({
+          label: w.workspaceNote || w.workspaceId,
+          description: w.workspaceId.slice(0, 8),
+          workspaceId: w.workspaceId,
+        })),
+        { title: "Snapshot diff — workspace", placeHolder: "Выберите workspace" },
+      );
+      if (!wsPick) return;
+      const { runSnapshotDiff } = await import("./snapshotDiffCommand.js");
+      await runSnapshotDiff({
+        getProvider: () => Promise.resolve(provider),
+        pickWorkspaceId: () => Promise.resolve(wsPick.workspaceId),
+      });
+    }),
   );
 }
 
