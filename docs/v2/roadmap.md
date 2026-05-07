@@ -9,7 +9,7 @@
 **Прогресс ночной волны:**
 - Signaling envelope: `src/core/p2pSignaling.ts` со strict-decoder (offer/answer/ice/bye, freshness-window, recipient-binding). 13 unit-тестов.
 - DataChannel layer: `src/core/p2pDataChannel.ts` поверх `@roamhq/wrtc` (lazy-load, fallback к null если binding не установлен). 8 unit-тестов на fake channel: send/onMessage round-trip с ArrayBuffer / Uint8Array / TypedArrayView, isOpen state, idempotent close.
-- Что осталось — ICrypto-обёртка для DTLS payload framing (можно reuse существующий `encryptBuffer / decryptBuffer`) и команда «start P2P session» в UI.
+- **Crypto envelope подключён:** `src/core/p2pCryptoEnvelope.ts` (`encodeP2PFrame / decodeP2PFrame` поверх существующих `encryptBuffer/decryptBuffer`). Wire-format: `[v=1][type:u8][seq:u32][reserved:u16=0][AES-256-GCM body]`. Strict-decoder возвращает `{ ok:false, reason }` на короткий header / unknown version / unknown type / non-zero reserved / authTag failure / seq mismatch. 12 unit-тестов. **Что осталось:** команда «start P2P session» в UI + интеграция в DataChannel layer (использовать `encodeP2PFrame` вместо raw send).
 
 **Зачем:** облако вносит лаг 5–30 с и тратит API-квоту, когда обе машины онлайн (типичный
 workflow «дом → стенд RDP»). Дифференциатор: «единственное расширение, которое умеет cloud + P2P».
