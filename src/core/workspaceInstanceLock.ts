@@ -45,7 +45,7 @@ async function windowsProcessCreationTimeUtcMs(pid: number): Promise<number | nu
   }
   try {
     const ps =
-      `$p = Get-CimInstance Win32_Process -Filter \"ProcessId = ${String(pid)}\"; ` +
+      `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${String(pid)}"; ` +
       `if ($null -eq $p) { exit 2 }; $p.CreationDate.ToUniversalTime().ToString('o')`;
     const { stdout, stderr } = await execFileAsync(
       "powershell.exe",
@@ -136,7 +136,7 @@ async function releaseOurLockFile(): Promise<void> {
   ownerNonce = null;
   try {
     const body = await readLock(p);
-    if (body && body.nonce === n && body.pid === process.pid) {
+    if (body?.nonce === n && body.pid === process.pid) {
       await tryUnlink(p);
     }
   } catch {

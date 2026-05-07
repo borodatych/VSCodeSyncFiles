@@ -87,6 +87,12 @@ export interface MetaEntry {
    * Hash in `hash` stays canonical plaintext (post line-ending/syncignore hashing rules).
    */
   wireGzip?: boolean;
+  /**
+   * v2.3 (planned): cloud blob bytes are zstd-compressed via WASM backend.
+   * Mutually exclusive with wireGzip — at most one wire codec per file.
+   * Off-by-default; readers fall back gracefully when codec is unknown.
+   */
+  wireZstd?: boolean;
 }
 
 export const EMPTY_META_JSON: MetaJson = { files: {} };

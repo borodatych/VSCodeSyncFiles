@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { formatNotification } from "../utils/notificationFormat.js";
 
 const CFG_SECTION = "vscodesync";
 
@@ -89,7 +90,7 @@ function flushDigest(): void {
 
   void vscode.window
     .showInformationMessage(
-      `☁ VSCodeSync — за последние ${String(intervalMin)} мин:\n  ${parts.join("\n  ")}`,
+      formatNotification(`☁ VSCodeSync — за последние ${String(intervalMin)} мин:\n  ${parts.join("\n  ")}`),
       "Показать детали",
       "Закрыть",
     )
@@ -116,7 +117,7 @@ export async function showSyncInfo(
   if (!meetsLevel(minLevel)) {
     return undefined;
   }
-  return vscode.window.showInformationMessage(msg, ...actions);
+  return vscode.window.showInformationMessage(formatNotification(msg), ...actions);
 }
 
 /**
@@ -133,14 +134,14 @@ export async function showSyncWarning(
   if (!isConflict && !meetsLevel(minLevel)) {
     return undefined;
   }
-  return vscode.window.showWarningMessage(msg, ...actions);
+  return vscode.window.showWarningMessage(formatNotification(msg), ...actions);
 }
 
 /**
  * Show error — always shown regardless of notification level.
  */
 export async function showSyncError(msg: string, ...actions: string[]): Promise<string | undefined> {
-  return vscode.window.showErrorMessage(msg, ...actions);
+  return vscode.window.showErrorMessage(formatNotification(msg), ...actions);
 }
 
 /**
@@ -157,7 +158,7 @@ export function recordDigestPush(count: number, machineName?: string): void {
   const intervalMin = getDigestIntervalMin();
   if (level === "verbose" || intervalMin === 0) {
     const to = machineName ? ` → ${machineName}` : "";
-    void vscode.window.showInformationMessage(`VSCodeSync: ↑ push ${String(count)} файл(ов)${to}`);
+    void vscode.window.showInformationMessage(formatNotification(`VSCodeSync: ↑ push ${String(count)} файл(ов)${to}`));
     return;
   }
   digestBucket.pushed += count;
@@ -180,7 +181,7 @@ export function recordDigestPull(count: number, fromMachine?: string): void {
   const intervalMin = getDigestIntervalMin();
   if (level === "verbose" || intervalMin === 0) {
     const from = fromMachine ? ` ← ${fromMachine}` : "";
-    void vscode.window.showInformationMessage(`VSCodeSync: ↓ pull ${String(count)} файл(ов)${from}`);
+    void vscode.window.showInformationMessage(formatNotification(`VSCodeSync: ↓ pull ${String(count)} файл(ов)${from}`));
     return;
   }
   digestBucket.pulled += count;
@@ -198,7 +199,7 @@ export function recordDigestConflict(fileName: string): void {
 
   void vscode.window
     .showWarningMessage(
-      `VSCodeSync: ⚠ конфликт — ${fileName}. Разрешите вручную.`,
+      formatNotification(`VSCodeSync: ⚠ конфликт — ${fileName}. Разрешите вручную.`),
       "Открыть Activity Feed",
     )
     .then((choice) => {

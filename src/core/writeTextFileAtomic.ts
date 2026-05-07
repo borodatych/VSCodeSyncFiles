@@ -47,7 +47,11 @@ function tmpPathNextTo(filePath: string): string {
 
 /**
  * Best-effort atomic UTF-8 write: temp file next to target, rename into place.
- * Falls back to direct write if rename stays blocked (same bytes as temp).
+ *
+ * If rename stays blocked (Windows AV / file watcher holding a handle), we make
+ * a second attempt that first deletes the destination and then renames a fresh
+ * temp into its place — this preserves the new bytes on disk under a temp name
+ * even if the swap fails. As a last resort we fall back to a direct overwrite.
  */
 export async function writeTextFileAtomic(filePath: string, body: string): Promise<void> {
   const dir = path.dirname(filePath);
@@ -56,12 +60,32 @@ export async function writeTextFileAtomic(filePath: string, body: string): Promi
   await fs.writeFile(tmp, body, "utf8");
   try {
     await renameReplacingFileWithRetries(tmp, filePath);
-  } catch (e) {
-    await tryUnlink(tmp);
-    if (isRenameBlockingError(e)) {
-      await fs.writeFile(filePath, body, "utf8");
-      return;
+    return;
+  } catch (e: unknown) {
+    if (!isRenameBlockingError(e)) {
+      await tryUnlink(tmp);
+      throw e;
     }
-    throw e;
+  }
+
+  // Rename was blocked — try the unlink-then-rename swap. The new bytes stay
+  // on disk under `tmp` for the duration of this fallback path.
+  try {
+    await fs.unlink(filePath);
+    await renameReplacingFileWithRetries(tmp, filePath);
+    return;
+  } catch (e: unknown) {
+    if (!isRenameBlockingError(e)) {
+      await tryUnlink(tmp);
+      throw e;
+    }
+  }
+
+  // Last resort: direct overwrite. We still hold `tmp` until the write
+  // succeeds so that a crash mid-write leaves a recoverable copy nearby.
+  try {
+    await fs.writeFile(filePath, body, "utf8");
+  } finally {
+    await tryUnlink(tmp);
   }
 }

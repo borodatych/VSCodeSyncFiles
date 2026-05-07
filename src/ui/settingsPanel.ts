@@ -90,7 +90,7 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
             void sendAuthStatus();
           }
           if (msg.type === "signOut" && msg.key) {
-            const providerKey = msg.key as string;
+            const providerKey = msg.key;
             const secretKey =
               providerKey === "onedrive" ? "vscodesync.onedrive.oauth" :
               providerKey === "gdrive" ? "vscodesync.gdrive.oauth" :
@@ -113,7 +113,9 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           sendSettings();
         }
       });
-      panel.onDidDispose(() => disposable.dispose());
+      panel.onDidDispose(() => {
+        disposable.dispose();
+      });
     }),
   );
 }
@@ -123,7 +125,7 @@ const ALL_KEYS = [
   "yandexOAuthClientId", "yandexUseAppFolder",
   "notificationLevel", "showFileDecorations", "digestIntervalMinutes",
   "maxFileSizeMB", "warnOnBinaryFiles", "showPreview", "syncSummaryOnStartup",
-  "lineEnding", "fileEncoding",
+  "lineEnding",
   "localBackupEnabled", "localBackupRetentionDays",
   "syncOnOpen", "syncOnFocusDelayMs", "pushOnCommit",
   "smartSuggestions", "requireMachineApproval",

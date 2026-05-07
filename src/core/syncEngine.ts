@@ -32,6 +32,9 @@ import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTyp
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import type { LineEndingMode } from "../utils/normalize.js";
 import { computeHash, hashCanonicalBuffer, type HashConfig } from "../utils/hash.js";
+import { verboseLog, warnLog } from "../utils/log.js";
+import { validateManifestShape } from "./manifestValidate.js";
+import { detectMassChange } from "./massChangeGuard.js";
 import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.js";
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
@@ -65,11 +68,14 @@ const TOMBSTONE_PURGE_DAYS_DEFAULT = 30;
  * Supports `*` (within one path segment) and `**` (any depth).
  */
 function minimatchGlob(str: string, pattern: string): boolean {
+  // Use  (private-use) as a safe sentinel for `**` so we can rewrite it
+  // to `.*` after escaping `*` → `[^/]*` for single segments.
+  const SENTINEL = "";
   const reStr = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\x00")
+    .replace(/\*\*/g, SENTINEL)
     .replace(/\*/g, "[^/]*")
-    .replace(/\x00/g, ".*");
+    .replaceAll(SENTINEL, ".*");
   return new RegExp(`^${reStr}$`).test(str);
 }
 
@@ -171,6 +177,11 @@ export interface SyncEngineDeps {
    */
   onSchemaVersionTooNew?: (workspaceId: string, detectedVersion: number) => void;
   /**
+   * Called when the cloud manifest fails JSON / shape validation.
+   * UI layer offers Repair State (rebuild from local).
+   */
+  onCorruptManifest?: (workspaceId: string, reason: string) => void;
+  /**
    * Called when a locally-attached workspace is detected as deleted on the cloud by another machine
    * (manifest NOT_FOUND). The workspace is auto-detached locally before this callback fires.
    * UI layer should notify the user and optionally offer to re-upload via `repushWorkspaceToCloud`.
@@ -188,6 +199,16 @@ export interface SyncEngineDeps {
    * `oldContent` is null when the file did not exist locally before pull.
    */
   onFilePulled?: (posixRel: string, oldContent: string | null, newContent: string) => void;
+  /**
+   * Called before `putManifest` writes a manifest that would tombstone a large
+   * batch of files (see `detectMassChange`). UI layer surfaces a confirmation
+   * modal. Resolve `true` to proceed, `false` to abort the manifest write.
+   * If undefined, the guard is disabled and putManifest proceeds unconditionally.
+   */
+  onMassChange?: (
+    workspaceId: string,
+    report: import("./massChangeGuard.js").MassChangeReport,
+  ) => Promise<boolean>;
 }
 
 export class SyncEngine {
@@ -372,7 +393,7 @@ export class SyncEngine {
    */
   async listCloudWorkspaceFiles(workspaceId: string): Promise<string[]> {
     const dl = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
-    const m = JSON.parse(dl.body.toString("utf8")) as { files?: Array<{ path: string; removedAt?: string }> };
+    const m = JSON.parse(dl.body.toString("utf8")) as { files?: { path: string; removedAt?: string }[] };
     if (!Array.isArray(m.files)) return [];
     return m.files.filter((f) => !f.removedAt).map((f) => f.path);
   }
@@ -443,7 +464,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
     if (ix >= 0) {
-      cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix]! };
+      cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix] };
       await this.saveCfg(cfg);
     }
 
@@ -540,6 +561,10 @@ export class SyncEngine {
 
     await this.adoptManifestFilesFromCloud(workspaceId);
     await this.syncWorkspace(workspaceId);
+    // Initial attach: materialise cloud-newer files on disk so the user lands
+    // in a ready-to-edit state. Without this `syncWorkspace` only marks them
+    // `cloud_newer` in the manifest and the user is forced to run Pull manually.
+    await this.forcePullWorkspace(workspaceId);
     const cfgEnd = await this.loadCfg();
     await this.saveCfg(cfgEnd);
   }
@@ -1314,20 +1339,16 @@ export class SyncEngine {
    * Non-fatal: if manifest write fails, lock is not set (graceful degradation).
    */
   async setSoftLock(workspaceId: string, posixRel: string): Promise<void> {
-    console.log(`[VSS:softlock] setSoftLock START ws=${workspaceId} file=${posixRel}`);
+    verboseLog("softlock", `set START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
-      console.log(`[VSS:softlock] setSoftLock SKIP (readOnly)`);
       return;
     }
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
-      console.log(`[VSS:softlock] setSoftLock SKIP (no entry)`);
       return;
     }
-    console.log(`[VSS:softlock] setSoftLock downloadManifest...`);
     const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    console.log(`[VSS:softlock] setSoftLock downloadManifest done, m=${m ? "ok" : "null"}`);
     if (!m) {
       return;
     }
@@ -1347,12 +1368,14 @@ export class SyncEngine {
           : f,
       ),
     };
-    console.log(`[VSS:softlock] setSoftLock putManifest...`);
     try {
       await this.putManifest(workspaceId, updated, entry.manifestEtag);
-      console.log(`[VSS:softlock] setSoftLock putManifest DONE`);
-    } catch (e) {
-      console.warn(`[VSS:softlock] setSoftLock putManifest FAILED (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+      verboseLog("softlock", `set DONE ${posixRel}`);
+    } catch (e: unknown) {
+      warnLog(
+        "softlock",
+        `set FAILED (non-fatal) ${posixRel}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -1361,7 +1384,7 @@ export class SyncEngine {
    * Should be called when user closes the file or finishes Push.
    */
   async clearSoftLock(workspaceId: string, posixRel: string): Promise<void> {
-    console.log(`[VSS:softlock] clearSoftLock START ws=${workspaceId} file=${posixRel}`);
+    verboseLog("softlock", `clear START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
       return;
     }
@@ -1370,9 +1393,7 @@ export class SyncEngine {
     if (!entry) {
       return;
     }
-    console.log(`[VSS:softlock] clearSoftLock downloadManifest...`);
     const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    console.log(`[VSS:softlock] clearSoftLock downloadManifest done, m=${m ? "ok" : "null"}`);
     if (!m) {
       return;
     }
@@ -1385,8 +1406,7 @@ export class SyncEngine {
       return; // Only clear own lock
     }
     const now = new Date().toISOString();
-    const { editingBy: _eb, editingSince: _es, ...rest } = existing;
-    void _eb; void _es;
+    const { editingBy: _editingBy, editingSince: _editingSince, ...rest } = existing;
     const updated: CloudManifest = {
       ...m,
       updatedAt: now,
@@ -1395,12 +1415,14 @@ export class SyncEngine {
         i === mfIx ? { ...rest, version: f.version + 1 } : f,
       ),
     };
-    console.log(`[VSS:softlock] clearSoftLock putManifest...`);
     try {
       await this.putManifest(workspaceId, updated, entry.manifestEtag);
-      console.log(`[VSS:softlock] clearSoftLock putManifest DONE`);
-    } catch (e) {
-      console.warn(`[VSS:softlock] clearSoftLock putManifest FAILED (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+      verboseLog("softlock", `clear DONE ${posixRel}`);
+    } catch (e: unknown) {
+      warnLog(
+        "softlock",
+        `clear FAILED (non-fatal) ${posixRel}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -1784,8 +1806,8 @@ export class SyncEngine {
     // Update meta: move entry from old key to new key
     const oldMetaEntry = meta.files[oldRel];
     if (oldMetaEntry) {
-      meta.files[newRel] = { ...oldMetaEntry };
-      delete meta.files[oldRel];
+      const { [oldRel]: _moved, ...rest } = meta.files;
+      meta.files = { ...rest, [newRel]: { ...oldMetaEntry } };
     }
 
     // Build updated manifest
@@ -1930,7 +1952,8 @@ export class SyncEngine {
         return cached;
       }
       const full = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
-      const m = JSON.parse(full.body.toString("utf8")) as CloudManifest;
+      const m = this.parseManifestSafe(workspaceId, full.body);
+      if (!m) return null;
       this.manifestByWs.set(workspaceId, m);
       if (full.etag) {
         await this.patchEntry(workspaceId, {
@@ -1940,7 +1963,8 @@ export class SyncEngine {
       }
       return m;
     }
-    const m = JSON.parse(dl.body.toString("utf8")) as CloudManifest;
+    const m = this.parseManifestSafe(workspaceId, dl.body);
+    if (!m) return null;
     this.manifestByWs.set(workspaceId, m);
     if (dl.etag) {
       await this.patchEntry(workspaceId, {
@@ -1949,6 +1973,26 @@ export class SyncEngine {
       });
     }
     return m;
+  }
+
+  /**
+   * Parse a cloud manifest body. On JSON / shape errors notifies the host and
+   * returns `null` so callers fall through to the «manifest gone» recovery
+   * path — which will surface to the user (auto-detach or rebuild).
+   */
+  private parseManifestSafe(workspaceId: string, body: Buffer): CloudManifest | null {
+    try {
+      const parsed = JSON.parse(body.toString("utf8")) as CloudManifest;
+      if (!parsed.workspaceId || !Array.isArray(parsed.files)) {
+        throw new Error("manifest schema mismatch");
+      }
+      return parsed;
+    } catch (e: unknown) {
+      const reason = e instanceof Error ? e.message : String(e);
+      warnLog("syncEngine", `manifest corrupt for ${workspaceId}: ${reason}`);
+      this.deps.onCorruptManifest?.(workspaceId, reason);
+      return null;
+    }
   }
 
   /** Manifest was deleted from cloud while workspace still exists locally — rebuild from tracked files and re-upload. */
@@ -2012,7 +2056,7 @@ export class SyncEngine {
       const t = Date.parse(f.renamedAt);
       if (!Number.isNaN(t) && t < cutoff) {
         const { renamedFrom: _, renamedAt: __, ...rest } = f;
-        return rest as typeof f;
+        return rest;
       }
       return f;
     });
@@ -2138,6 +2182,25 @@ export class SyncEngine {
     await this.ensureNotFrozenForCloudWrites(workspaceId);
     try {
       const clean = this.purgeTombstones(manifest);
+      // Pre-flight schema validation: never push a manifest that we ourselves
+      // would reject on download. Catches accidental shape regressions before
+      // they corrupt cloud state for other machines.
+      const validation = validateManifestShape(clean);
+      if (!validation.ok) {
+        throw new Error(`putManifest aborted: ${validation.reason}`);
+      }
+      // Mass-change guard: ask the UI for confirmation when this push would
+      // tombstone a large batch of files (absolute or percent threshold).
+      // Only consult on the first attempt — on a 412 retry the merged manifest
+      // is the result of our prior intent, so we don't re-prompt.
+      if (this.deps.onMassChange && retries === 3) {
+        const prev = this.manifestByWs.get(workspaceId);
+        const report = detectMassChange(prev, clean);
+        if (report.triggered) {
+          const proceed = await this.deps.onMassChange(workspaceId, report);
+          if (!proceed) throw new Error("putManifest aborted: mass-change guard");
+        }
+      }
       const body = Buffer.from(`${JSON.stringify(clean, null, 2)}\n`, "utf8");
       const res = await this.deps.provider.uploadFile(manifestCloudPath(workspaceId), body, {
         ifMatch,
@@ -2426,7 +2489,8 @@ export class SyncEngine {
         file.syncStatus = "cloud_newer";
         await this.saveCfg(cfg);
       }
-    } else if (action === "conflict") {
+    } else {
+      // action === "conflict"
       if (
         await this.tryAutoResolvePreserveLineEndingConflict(
           cfg,
@@ -2500,7 +2564,7 @@ export class SyncEngine {
           // Cloud manifest missing — treat all locally tracked files as pending push
           const localRows: SyncPreviewFileRow[] = cfg.files
             .filter((f) => f.workspaceId === wsId)
-            .map((f) => ({ localPath: f.localPath, action: "push" as PreviewSyncFileAction }));
+            .map((f) => ({ localPath: f.localPath, action: "push" }));
           localRows.sort((a, b) => a.localPath.localeCompare(b.localPath, undefined, { sensitivity: "base" }));
           results.push({ workspaceId: wsId, workspaceNote: entry.workspaceNote, files: localRows });
           continue;

@@ -27,6 +27,7 @@ import {
   bumpOfflineFlushBackoff,
 } from "../core/syncOfflineFlushBackoff.js";
 import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
+import { verboseLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
 const GIT_EXT = "vscode.git";
@@ -129,7 +130,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       : enqueueOnUnreachable.kind === "pull"
         ? `pull:${"rel" in enqueueOnUnreachable ? enqueueOnUnreachable.rel : "?"}`
         : "fullSync";
-    console.log(`[VSS:trig] #${seq} START ${label}`);
+    verboseLog("trigger", `#${String(seq)} START ${label}`);
     if (!vscode.workspace.isTrusted) {
       return;
     }
@@ -149,10 +150,9 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
     const mc = await deps.globalConfig.load();
     const engine = deps.makeEngine(root, p, mc.machineId, mc.machineName);
     deps.statusBar.setSyncing(true);
-    console.log(`[VSS:trig] #${seq} setSyncing(true) ${label}`);
     try {
       await fn(engine);
-    } catch (e) {
+    } catch (e: unknown) {
       if (enqueueOnUnreachable.kind !== "none" && isLikelyUnreachableError(e)) {
         bumpOfflineFlushBackoff();
         noteCloudTransportFailure();
@@ -172,7 +172,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
         await deps.statusBar.refresh();
       }
     } finally {
-      console.log(`[VSS:trig] #${seq} finally → setSyncing(false) ${label}`);
+      verboseLog("trigger", `#${String(seq)} finally ${label}`);
       deps.statusBar.setSyncing(false);
       await refreshAfter();
     }

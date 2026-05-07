@@ -1,15 +1,13 @@
 import * as vscode from "vscode";
-import { randomBytes } from "node:crypto";
+import { getWebviewNonce } from "../utils/webviewNonce.js";
 import type { StatsDashboardPayload } from "../core/statsDashboardModel.js";
 import { buildStatsDashboardPayload } from "../core/statsDashboardModel.js";
 import { loadActivityFile } from "../core/activityLog.js";
 import { loadStatsFile } from "../core/syncStatsStore.js";
+import { bucketActivity } from "./activityHeatmap.js";
 
 const WEBVIEW_VIEW_TYPE = "vscodesyncStatsDashboard";
 
-function getNonce(): string {
-  return randomBytes(16).toString("base64url");
-}
 
 function buildHtml(nonce: string, cspSource: string): string {
   return `<!DOCTYPE html>
@@ -45,6 +43,11 @@ function buildHtml(nonce: string, cspSource: string): string {
     button:hover { background: var(--vscode-button-hoverBackground); }
     .warn { color: var(--vscode-errorForeground); }
     .ok { color: var(--vscode-testing-iconPassed, #73c991); }
+    .heatGrid { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; font-size: 0.75em; }
+    .heatRow { display: grid; grid-template-columns: 36px repeat(24, minmax(10px, 1fr)); gap: 1px; }
+    .heatLabel { opacity: 0.8; padding-right: 6px; align-self: center; }
+    .heatHour { text-align: center; opacity: 0.6; padding-bottom: 2px; }
+    .heatCell { height: 14px; border-radius: 2px; background: rgba(73,194,143,0.05); }
   </style>
 </head>
 <body>
@@ -83,6 +86,10 @@ function buildHtml(nonce: string, cspSource: string): string {
 
   <h2>Активность по дням (30 дн.)</h2>
   <div class="bars" id="bars"></div>
+
+  <h2>Heatmap активности (час × день недели)</h2>
+  <p class="muted">Цвет ячейки = относительная плотность синков в этот час недели.</p>
+  <div class="heatGrid" id="heatGrid"></div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -159,9 +166,42 @@ function buildHtml(nonce: string, cspSource: string): string {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
     }
+    function renderHeatmap(m) {
+      var grid = document.getElementById('heatGrid');
+      if (!grid) return;
+      var peak = 0;
+      for (var d = 0; d < 7; d++) {
+        for (var h = 0; h < 24; h++) {
+          if (m[d][h] > peak) peak = m[d][h];
+        }
+      }
+      var dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      var html = '';
+      // Header row: hour labels (every 4 hours)
+      html += '<div class="heatRow">';
+      html += '<div class="heatLabel"></div>';
+      for (var hh = 0; hh < 24; hh++) {
+        html += '<div class="heatHour">' + (hh % 4 === 0 ? String(hh) : '') + '</div>';
+      }
+      html += '</div>';
+      for (var dd = 0; dd < 7; dd++) {
+        html += '<div class="heatRow"><div class="heatLabel">' + dows[dd] + '</div>';
+        for (var hr = 0; hr < 24; hr++) {
+          var v = m[dd][hr];
+          var op = peak > 0 ? Math.max(0.05, v / peak) : 0;
+          html += '<div class="heatCell" title="' + dows[dd] + ' ' + String(hr) + ':00 — ' + String(v) +
+            '" style="background: rgba(73,194,143,' + op.toFixed(2) + ')"></div>';
+        }
+        html += '</div>';
+      }
+      grid.innerHTML = html;
+    }
     window.addEventListener('message', function (ev) {
       if (ev.data && ev.data.type === 'stats' && ev.data.payload) {
         render(ev.data.payload);
+        if (ev.data.heatmap) {
+          renderHeatmap(ev.data.heatmap);
+        }
       }
     });
     document.getElementById('btnRefresh').addEventListener('click', function () {
@@ -189,7 +229,8 @@ async function pushPayload(wv: vscode.WebviewPanel["webview"], storageDir: strin
     monthlyLimitMB: Math.max(0, monthlyLimitMB),
     compressUploads,
   });
-  await wv.postMessage({ type: "stats", payload });
+  const heatmap = bucketActivity(activity.events);
+  await wv.postMessage({ type: "stats", payload, heatmap });
 }
 
 export function openStatsDashboardPanel(context: vscode.ExtensionContext, storageDir: string): void {
@@ -225,7 +266,7 @@ export function openStatsDashboardPanel(context: vscode.ExtensionContext, storag
   }
 
   panel.reveal(vscode.ViewColumn.One, false);
-  const nonce = getNonce();
+  const nonce = getWebviewNonce();
   const wv = panel.webview;
   wv.html = buildHtml(nonce, wv.cspSource);
   void pushPayload(wv, storageDir);

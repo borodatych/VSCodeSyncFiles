@@ -68,7 +68,7 @@ export function computeChunks(buf: Buffer): ContentChunk[] {
   let rolling = 0;
 
   for (let i = 0; i < buf.length; i++) {
-    rolling = ((rolling * HASH_POLY) ^ buf[i]!) & HASH_MOD;
+    rolling = ((rolling * HASH_POLY) ^ buf[i]) & HASH_MOD;
     const chunkLen = i - start + 1;
     const boundary = (rolling & CHUNK_MASK) === 0;
 

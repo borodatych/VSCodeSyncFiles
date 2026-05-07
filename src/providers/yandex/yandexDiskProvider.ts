@@ -26,6 +26,7 @@ import {
   storeYandexTokens,
   type YandexTokenBundle,
 } from "./yandexTokens.js";
+import { verboseLog, warnLog } from "../../utils/log.js";
 
 const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
@@ -40,14 +41,26 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Pr
   const ac = new AbortController();
   const short = url.replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
   const t0 = Date.now();
-  console.log(`[VSS:fetch] START  ${init.method ?? "GET"} ${short}`);
+  verboseLog("yandex.fetch", `START ${init.method ?? "GET"} ${short}`);
   const timer = setTimeout(() => {
-    console.warn(`[VSS:fetch] ABORT after ${timeoutMs}ms — ${init.method ?? "GET"} ${short}`);
+    warnLog("yandex.fetch", `ABORT after ${String(timeoutMs)}ms — ${init.method ?? "GET"} ${short}`);
     ac.abort();
   }, timeoutMs);
   return fetch(url, { ...init, signal: ac.signal })
-    .then((r) => { console.log(`[VSS:fetch] DONE   ${String(r.status)} in ${Date.now() - t0}ms — ${short}`); return r; })
-    .catch((e: unknown) => { console.warn(`[VSS:fetch] ERROR  ${e instanceof Error ? e.message : String(e)} in ${Date.now() - t0}ms — ${short}`); throw e; })
+    .then((r) => {
+      verboseLog(
+        "yandex.fetch",
+        `DONE ${String(r.status)} in ${String(Date.now() - t0)}ms — ${short}`,
+      );
+      return r;
+    })
+    .catch((e: unknown) => {
+      warnLog(
+        "yandex.fetch",
+        `ERROR ${e instanceof Error ? e.message : String(e)} in ${String(Date.now() - t0)}ms — ${short}`,
+      );
+      throw e;
+    })
     .finally(() => { clearTimeout(timer); });
 }
 
@@ -84,7 +97,7 @@ export class YandexDiskProvider implements ICloudProvider {
     private readonly secrets: SecretStore,
     private readonly getClientId: () => string,
     /** When true, all paths use `app:/` prefix (app-folder scope). Default: false. */
-    private readonly useAppFolder: boolean = false,
+    private readonly useAppFolder = false,
   ) {}
 
   async isAuthenticated(): Promise<boolean> {

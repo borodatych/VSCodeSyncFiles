@@ -18,6 +18,7 @@ import {
   deactivateWebhookPushIfProvider,
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
+import { reconcileFromFlags } from "./webhookExpirationMath.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "gdrive-push-channel.json";
@@ -157,9 +158,13 @@ export function registerGoogleDriveWebhookLifecycle(
 
     let state = await readState(globalConfig);
     if (state) {
-      const urlOk = state.notificationUrl === notificationUrl;
-      const stillValid = !isNearOrPastGdriveExpiration(state.expiration, 600_000);
-      if (!urlOk || !stillValid) {
+      const decision = reconcileFromFlags({
+        hasExisting: true,
+        urlOk: state.notificationUrl === notificationUrl,
+        withinValidSlack: isNearOrPastGdriveExpiration(state.expiration, 600_000),
+        withinRenewSlack: isNearOrPastGdriveExpiration(state.expiration, 3600_000),
+      });
+      if (decision.action === "create") {
         try {
           await gdriveStopPushChannel(token, state.channelId, state.resourceId);
         } catch {
@@ -268,7 +273,7 @@ export function registerGoogleDriveWebhookLifecycle(
   const refresh = (): Promise<void> => {
     reconcileChain = reconcileChain
       .then(() => reconcileBody())
-      .catch((e) => {
+      .catch((e: unknown) => {
         log(out, `Google webhooks reconcile error: ${e instanceof Error ? e.message : String(e)}`);
       });
     return reconcileChain;

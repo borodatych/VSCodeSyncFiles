@@ -19,6 +19,11 @@ import {
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
 import { createAndStartSmeeRelay, type SmeeRelay } from "./webhookTunnel.js";
+import {
+  isNearOrPastExpiration,
+  reconcileSubscription,
+  SUBSCRIPTION_RENEW_SLACK_MS,
+} from "./webhookExpirationMath.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "onedrive-graph-subscription.json";
@@ -65,14 +70,6 @@ function log(ch: vscode.OutputChannel, msg: string): void {
   ch.appendLine(`[${new Date().toISOString()}] ${msg}`);
 }
 
-/** True if expiration is within `slackMs` of now or already past. */
-function isNearOrPastExpiration(expirationIso: string, slackMs: number): boolean {
-  const t = Date.parse(expirationIso);
-  if (Number.isNaN(t)) {
-    return true;
-  }
-  return t - slackMs <= Date.now();
-}
 
 export interface OneDriveWebhookLifecycleHandle {
   refresh: () => Promise<void>;
@@ -163,11 +160,11 @@ export function registerOneDriveWebhookLifecycle(
       const prev = await readState(globalConfig);
       if (prev) {
         const bundle = await readOneDriveTokenBundle(secrets);
-        if (bundle?.accessToken && gc.activeProvider === "onedrive") {
+        if (bundle?.accessToken) {
           try {
             await graphDeleteSubscription(bundle.accessToken, prev.subscriptionId);
             log(out, `Removed Graph subscription ${prev.subscriptionId} (webhooks disabled or URL cleared).`);
-          } catch (e) {
+          } catch (e: unknown) {
             log(out, `Graph subscription cleanup: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
@@ -185,9 +182,11 @@ export function registerOneDriveWebhookLifecycle(
 
     let state = await readState(globalConfig);
     if (state) {
-      const urlOk = state.notificationUrl === notificationUrl;
-      const stillValid = !isNearOrPastExpiration(state.expirationDateTime, 120_000);
-      if (!urlOk || !stillValid) {
+      const decision = reconcileSubscription(
+        { notificationUrl: state.notificationUrl, expirationDateTime: state.expirationDateTime },
+        notificationUrl,
+      );
+      if (decision.action === "create") {
         try {
           await graphDeleteSubscription(token, state.subscriptionId);
         } catch {
@@ -253,7 +252,7 @@ export function registerOneDriveWebhookLifecycle(
       if (gci.activeProvider !== "onedrive") {
         return;
       }
-      if (!isNearOrPastExpiration(s.expirationDateTime, 20 * 60_000)) {
+      if (!isNearOrPastExpiration(s.expirationDateTime, SUBSCRIPTION_RENEW_SLACK_MS)) {
         return;
       }
       const b = await readOneDriveTokenBundle(secrets);
@@ -278,7 +277,7 @@ export function registerOneDriveWebhookLifecycle(
   const refresh = (): Promise<void> => {
     reconcileChain = reconcileChain
       .then(() => reconcileBody())
-      .catch((e) => {
+      .catch((e: unknown) => {
         log(out, `Reconcile error: ${e instanceof Error ? e.message : String(e)}`);
       });
     return reconcileChain;

@@ -42,7 +42,7 @@ interface PendingOAuthRequest {
 
 const pendingOAuthRequests = new Map<string, PendingOAuthRequest>();
 
-function registerUriHandlerWeb(context: vscode.ExtensionContext): vscode.Disposable {
+function registerUriHandlerWeb(_context: vscode.ExtensionContext): vscode.Disposable {
   return vscode.window.registerUriHandler({
     handleUri(uri: vscode.Uri): vscode.ProviderResult<void> {
       void (async () => {
@@ -101,9 +101,11 @@ export async function webOAuthGetCode(
  * Format: vscode://<publisher>.<name>/oauth-callback
  */
 export function buildWebOAuthRedirectUri(): string {
-  const ext = vscode.extensions.getExtension("vscodesync.vscodesync");
-  const publisher = ext?.packageJSON?.publisher ?? "vscodesync";
-  const name = ext?.packageJSON?.name ?? "vscodesync";
+  const EXT_ID = "borodatych.vscodesyncfiles";
+  const ext = vscode.extensions.getExtension(EXT_ID);
+  const pkg = ext?.packageJSON as { publisher?: string; name?: string } | undefined;
+  const publisher = pkg?.publisher ?? "borodatych";
+  const name = pkg?.name ?? "vscodesyncfiles";
   return `${vscode.env.uriScheme}://${publisher}.${name}/oauth-callback`;
 }
 
@@ -204,7 +206,7 @@ export const webPowerMonitorStub = {
   },
   /** No-op: battery monitoring not available in browser. */
   startMonitoring(_callback: (pct: number | null) => void): void {
-    // not available in web
+    // battery monitoring is unavailable in web
   },
   stopMonitoring(): void {
     // no-op
@@ -226,9 +228,9 @@ export async function getWebGitBranch(workspaceFolder?: vscode.WorkspaceFolder):
 
     const api = gitExtension.isActive
       ? gitExtension.exports.getAPI(1)
-      : (await gitExtension.activate() as GitExtensionApi).getAPI(1);
+      : (await gitExtension.activate()).getAPI(1);
 
-    if (!api || api.repositories.length === 0) return null;
+    if (api.repositories.length === 0) return null;
 
     const folder = workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
     const repo = folder
@@ -236,7 +238,7 @@ export async function getWebGitBranch(workspaceFolder?: vscode.WorkspaceFolder):
           ?? api.repositories[0]
       : api.repositories[0];
 
-    return repo?.state.HEAD?.name ?? null;
+    return repo.state.HEAD?.name ?? null;
   } catch {
     return null;
   }
@@ -245,10 +247,10 @@ export async function getWebGitBranch(workspaceFolder?: vscode.WorkspaceFolder):
 // Minimal type shim for VS Code Git extension API (avoids importing @types/vscode-git)
 interface GitExtensionApi {
   getAPI(version: 1): {
-    repositories: Array<{
+    repositories: {
       rootUri: vscode.Uri;
       state: { HEAD?: { name?: string } };
-    }>;
+    }[];
   };
 }
 

@@ -13,6 +13,7 @@ import {
   bumpOfflineFlushBackoff,
 } from "../core/syncOfflineFlushBackoff.js";
 import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
+import { verboseLog } from "../utils/log.js";
 
 export interface QuietFullSyncAllFoldersDeps {
   globalConfig: GlobalConfigManager;
@@ -63,7 +64,7 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
       }
     } catch { /* non-fatal */ }
   }
-  console.log(`[VSS:quiet] setSyncing(true) folders=${String(folders.length)}`);
+  verboseLog("quietFullSync", `setSyncing(true) folders=${String(folders.length)}`);
   d.statusBar.setSyncing(true);
   try {
     for (const folder of folders) {
@@ -77,7 +78,7 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
         await engine.syncWorkspace(aw.workspaceId);
       }
     }
-  } catch (e) {
+  } catch (e: unknown) {
     if (d.offlineQueue && isLikelyUnreachableError(e)) {
       await d.offlineQueue.enqueueFullSync();
       allowImmediateOfflineFlushRetry();
@@ -85,7 +86,7 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
       noteCloudTransportFailure();
     }
   } finally {
-    console.log(`[VSS:quiet] finally → setSyncing(false)`);
+    verboseLog("quietFullSync", "finally");
     d.statusBar.setSyncing(false);
     d.refreshUi();
     await d.statusBar.refresh();

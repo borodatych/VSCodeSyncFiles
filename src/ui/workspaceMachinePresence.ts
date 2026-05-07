@@ -1,4 +1,5 @@
 import type { ManifestMachineCacheEntry } from "../core/types.js";
+import { classifyPresence } from "./machinePresenceStatus.js";
 
 const MIN30_MS = 30 * 60_000;
 const H24_MS = 24 * 3600_000;
@@ -11,18 +12,15 @@ function ageMs(lastSeenIso: string): number | undefined {
   return Date.now() - t;
 }
 
-/** 🟢 &lt; 30 min · 🟡 30 min–24 h · 🔴 &gt; 24 h */
+/**
+ * 🟢 online (≤ 5 min, classifyPresence) · 🟡 recent (≤ 24 h) · 🔴 offline (> 24 h).
+ * Aligned with `classifyPresence` so all UI surfaces (tree tooltip, quick-transfer
+ * picker, future graph panel) report the same presence tier for a given lastSeen.
+ */
 export function machinePresenceEmoji(lastSeen: string): string {
-  const age = ageMs(lastSeen);
-  if (age === undefined) {
-    return "⚪";
-  }
-  if (age < MIN30_MS) {
-    return "🟢";
-  }
-  if (age < H24_MS) {
-    return "🟡";
-  }
+  const status = classifyPresence(lastSeen, Date.now());
+  if (status === "online") return "🟢";
+  if (status === "recent") return "🟡";
   return "🔴";
 }
 

@@ -14,6 +14,35 @@ export type AiMergeResult =
   | { ok: true; merged: string }
   | { ok: false; reason: "disabled" | "no_model" | "too_large" | "model_refused" | "error"; detail?: string };
 
+// Minimal typed surface for vscode.lm (older @types/vscode bundled with the
+// engine version in package.json may not declare it; the runtime exposes the
+// API on supported versions).
+interface LmChatModel {
+  sendRequest(
+    messages: unknown[],
+    options: Record<string, unknown>,
+    token: vscode.CancellationToken,
+  ): Promise<{ text: AsyncIterable<string> }>;
+}
+interface LmApi {
+  selectChatModels(filter?: { vendor?: string; family?: string }): Promise<LmChatModel[]>;
+}
+interface LmChatMessageStatic {
+  User(text: string): unknown;
+}
+interface VscodeWithLm {
+  readonly lm?: LmApi;
+  readonly LanguageModelChatMessage?: LmChatMessageStatic;
+}
+
+function getLm(): { api: LmApi; ChatMessage: LmChatMessageStatic } | null {
+  const v = vscode as unknown as VscodeWithLm;
+  if (v.lm && v.LanguageModelChatMessage) {
+    return { api: v.lm, ChatMessage: v.LanguageModelChatMessage };
+  }
+  return null;
+}
+
 /**
  * Attempt AI merge of a 3-way conflict.
  *
@@ -39,30 +68,38 @@ export async function runAiMerge(
     local.length > MAX_CONTENT_CHARS ||
     remote.length > MAX_CONTENT_CHARS
   ) {
-    return { ok: false, reason: "too_large", detail: `Файл слишком большой для AI merge (>${String(MAX_CONTENT_CHARS)} символов на секцию)` };
+    return {
+      ok: false,
+      reason: "too_large",
+      detail: `Файл слишком большой для AI merge (>${String(MAX_CONTENT_CHARS)} символов на секцию)`,
+    };
   }
 
-  // Select LM — prefer gpt-4 class, fall back to any available
-  let model: vscode.LanguageModelChat | undefined;
+  const lm = getLm();
+  if (!lm) {
+    return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен в этой версии VS Code" };
+  }
+
+  // Select LM — prefer gpt-4o class, fall back to any available
+  let model: LmChatModel;
   try {
-    const models = await vscode.lm.selectChatModels({ vendor: "copilot", family: "gpt-4o" });
-    if (models.length === 0) {
-      const any = await vscode.lm.selectChatModels();
-      model = any[0];
-    } else {
-      model = models[0];
+    const preferred = await lm.api.selectChatModels({ vendor: "copilot", family: "gpt-4o" });
+    const list = preferred.length > 0 ? preferred : await lm.api.selectChatModels();
+    if (list.length === 0) {
+      return {
+        ok: false,
+        reason: "no_model",
+        detail: "Нет доступной языковой модели (Copilot не активирован?)",
+      };
     }
+    model = list[0];
   } catch {
     return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен" };
   }
 
-  if (!model) {
-    return { ok: false, reason: "no_model", detail: "Нет доступной языковой модели (Copilot не активирован?)" };
-  }
-
   const prompt = buildMergePrompt(base, local, remote, relPath);
   const cts = new vscode.CancellationTokenSource();
-  const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+  const messages = [lm.ChatMessage.User(prompt)];
 
   let responseText = "";
   try {
@@ -70,7 +107,7 @@ export async function runAiMerge(
     for await (const chunk of response.text) {
       responseText += chunk;
     }
-  } catch (e) {
+  } catch (e: unknown) {
     return { ok: false, reason: "error", detail: e instanceof Error ? e.message : String(e) };
   } finally {
     cts.dispose();
@@ -113,7 +150,7 @@ ${remote}
 function extractMergedContent(response: string): string | null {
   const match = /<merged>([\s\S]*?)<\/merged>/.exec(response);
   if (!match) return null;
-  const content = match[1] ?? "";
+  const content = match[1];
   if (content.trim() === "CONFLICT") return null;
   return content;
 }
@@ -127,8 +164,10 @@ export async function isAiMergeAvailable(): Promise<boolean> {
   if (!cfg.get<boolean>("aiMerge", false)) {
     return false;
   }
+  const lm = getLm();
+  if (!lm) return false;
   try {
-    const models = await vscode.lm.selectChatModels();
+    const models = await lm.api.selectChatModels();
     return models.length > 0;
   } catch {
     return false;

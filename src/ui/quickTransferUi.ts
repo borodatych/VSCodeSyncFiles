@@ -14,6 +14,7 @@ import { isLikelyUnreachableError } from "../utils/networkErrors.js";
 import { guardPathsBeforePush } from "./syncGuards.js";
 import { showSyncInfo, showSyncError, showSyncWarning } from "./notificationService.js";
 import { readMachinesRegistrySafe } from "../core/machineRegistry.js";
+import { classifyPresence, describePresence } from "./machinePresenceStatus.js";
 
 const CFG_SECTION = "vscodesync";
 const DISMISSED_KEY = "vscodesync.quickTransfer.dismissedIds";
@@ -152,13 +153,21 @@ export function registerQuickTransferFeatures(
               targetMachineId = replyToMachineId;
             } else {
               type MachinePick = vscode.QuickPickItem & { machineId?: string };
+              const now = Date.now();
               const items: MachinePick[] = [
                 { label: "$(broadcast) Все машины", description: "доступно любой машине", machineId: undefined },
-                ...otherMachines.map((m) => ({
-                  label: m.machineName,
-                  description: `последний раз: ${new Date(m.lastSeen).toLocaleString(vscode.env.language)}`,
-                  machineId: m.machineId,
-                })),
+                ...otherMachines.map((m) => {
+                  const status = classifyPresence(m.lastSeen, now);
+                  const dot =
+                    status === "online" ? "$(circle-filled)" :
+                    status === "recent" ? "$(circle-outline)" :
+                    "$(circle-slash)";
+                  return {
+                    label: `${dot} ${m.machineName}`,
+                    description: describePresence(m.lastSeen, now),
+                    machineId: m.machineId,
+                  };
+                }),
               ];
               const picked = await vscode.window.showQuickPick<MachinePick>(items, {
                 placeHolder: "Кому отправить?",

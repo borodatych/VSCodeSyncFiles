@@ -16,6 +16,39 @@ import {
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { hasStickyUnreachableHint, subscribeOfflineHints } from "../core/syncOfflineHints.js";
 import { readPassiveOnlineHint } from "../utils/readNavigatorOnline.js";
+import { loadActivityFile } from "../core/activityLog.js";
+import { sparkline, bucketHourly } from "../utils/sparkline.js";
+
+const SPARKLINE_TTL_MS = 60_000;
+let sparkCache: { storageDir: string; computedAt: number; text: string } | undefined;
+
+async function buildSparkSuffix(storageDir: string): Promise<string> {
+  if (
+    sparkCache?.storageDir === storageDir &&
+    Date.now() - sparkCache.computedAt < SPARKLINE_TTL_MS
+  ) {
+    return sparkCache.text;
+  }
+  let text = "";
+  try {
+    const file = await loadActivityFile(storageDir);
+    const stamps: number[] = [];
+    for (const ev of file.events) {
+      if (ev.kind !== "push" && ev.kind !== "pull") continue;
+      const t = Date.parse(ev.at);
+      if (Number.isFinite(t)) stamps.push(t);
+    }
+    if (stamps.length > 0) {
+      const buckets = bucketHourly(stamps, Date.now(), 24);
+      const spark = sparkline(buckets);
+      if (spark.trim().length > 0) text = `  · ${spark}`;
+    }
+  } catch {
+    // Activity log may not exist yet (pre-first-event) — silent fallback.
+  }
+  sparkCache = { storageDir, computedAt: Date.now(), text };
+  return text;
+}
 
 function providerLabel(type: ProviderType | null): string {
   switch (type) {
@@ -108,7 +141,7 @@ export class SyncStatusBarController implements vscode.Disposable {
       new vscode.Disposable(() => {
         rateLimitSub.dispose();
       }),
-      new vscode.Disposable(() => clearInterval(uiTick)),
+      new vscode.Disposable(() => { clearInterval(uiTick); }),
       new vscode.Disposable(() => {
         offlineHintSub.dispose();
       }),
@@ -323,7 +356,9 @@ export class SyncStatusBarController implements vscode.Disposable {
       offlineSuffix = "  · $(globe) Offline";
     }
 
-    this.item.text = `${pausePrefix}${plabel}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}  $(clock) ${lastFmt}`;
+    const sparkSuffix = await buildSparkSuffix(this.deps.globalConfig.getStorageDir());
+
+    this.item.text = `${pausePrefix}${plabel}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
     let tooltip =
       loaded.length === 1 && loaded[0]
         ? this.buildTooltip(loaded[0].wc, plabel, gc.activeProvider, sessionPaused)

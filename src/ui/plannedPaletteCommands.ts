@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import {
@@ -21,6 +23,7 @@ import { runConfigurePathMapping } from "./configurePathMapping.js";
 import { runEditWorkspaceIgnorePatterns } from "./workspaceIgnorePatternsUi.js";
 import { runMergeWorkspaces } from "./mergeWorkspacesWizard.js";
 import { openActivityFeedPanel } from "./activityFeedPanel.js";
+import { setLastAppliedFilter } from "./activitySavedSearches.js";
 import { openStatsDashboardPanel } from "./statsDashboardPanel.js";
 import { resolveWorkspaceRootForPaletteCommand } from "../utils/workspaceRootResolver.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
@@ -125,9 +128,33 @@ export function registerPlannedPaletteCommands(
         return;
       }
 
+      // AI prefill (best-effort): if vscode.lm is available and aiMerge is on,
+      // suggest a Conventional-Commit one-liner from the workspace's tracked files.
+      // Falls back to empty placeholder when LM isn't available.
+      let aiPrefill = "";
+      const aiOn = configuration().get<boolean>("aiMerge", false);
+      if (aiOn) {
+        try {
+          const targetWs = wc.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+          const files = wc.files
+            .filter((f) => f.workspaceId === workspaceId)
+            .map((f) => f.localPath);
+          const { suggestCommitMessage } = await import("../core/aiCommitMessage.js");
+          const suggestion = await suggestCommitMessage({
+            workspaceNote: targetWs?.workspaceNote ?? "",
+            changedFiles: files,
+            intent: "snapshot",
+          });
+          if (suggestion.ok) aiPrefill = suggestion.message;
+        } catch {
+          /* AI is opt-in; ignore failures silently */
+        }
+      }
+
       const nameInput = await vscode.window.showInputBox({
         prompt: "Имя снапшота (например: перед деплоем)",
         placeHolder: "snapshot-name",
+        value: aiPrefill,
       });
       if (!nameInput?.trim()) {
         return;
@@ -241,8 +268,235 @@ export function registerPlannedPaletteCommands(
     }),
     vscode.commands.registerCommand("vscodesync.openActivityFeed", async () => {
       const gc = await extras.globalConfig.load();
-      openActivityFeedPanel(context, extras.globalConfig.getStorageDir(), gc.machineName);
+      // Pull a pending saved-search filter from globalState (set by
+      // `vscodesync.activityApplySavedSearch`) and clear it so the next plain
+      // open doesn't re-apply it.
+      const PENDING_KEY = "vscodesync.activity.pendingApplyFilter";
+      const pending = context.globalState.get<unknown>(PENDING_KEY);
+      const applyFilter =
+        pending !== null && typeof pending === "object"
+          ? (pending as { kind?: string; workspaceId?: string; query?: string })
+          : undefined;
+      if (applyFilter) {
+        await context.globalState.update(PENDING_KEY, undefined);
+      }
+      openActivityFeedPanel(context, extras.globalConfig.getStorageDir(), gc.machineName, {
+        applyFilter,
+        onFilterChanged: (filter) => {
+          void setLastAppliedFilter(context, filter);
+        },
+      });
     }),
+
+    vscode.commands.registerCommand("vscodesync.aiSessionSummary", async () => {
+      const { loadActivityFile } = await import("../core/activityLog.js");
+      const { summariseActivity } = await import("../core/aiSessionSummary.js");
+      const dir = extras.globalConfig.getStorageDir();
+      const data = await loadActivityFile(dir);
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: "Сегодня", windowMs: 24 * 3600_000, description: "за последние 24 часа" },
+          { label: "Эта неделя", windowMs: 7 * 24 * 3600_000, description: "за последние 7 дней" },
+          { label: "Этот месяц", windowMs: 30 * 24 * 3600_000, description: "за последние 30 дней" },
+        ],
+        { placeHolder: "Окно для AI-сводки" },
+      );
+      if (!pick) return;
+      const cutoff = Date.now() - pick.windowMs;
+      const filtered = data.events.filter((e) => Date.parse(e.at) >= cutoff);
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI summary…" },
+        async () => {
+          const result = await summariseActivity(filtered, pick.label);
+          if (!result.ok) {
+            const msg =
+              result.reason === "no_events"
+                ? "Нет событий в выбранном окне."
+                : result.reason === "no_model"
+                  ? "Нет доступной языковой модели (нужен Copilot или совместимый LM provider в VS Code)."
+                  : `AI summary error: ${result.detail ?? "unknown"}`;
+            await vscode.window.showWarningMessage(`VSCodeSync: ${msg}`);
+            return;
+          }
+          const ch = vscode.window.createOutputChannel(`VSCodeSync · AI summary · ${pick.label}`);
+          ch.appendLine(`AI summary (${pick.label}):`);
+          ch.appendLine("");
+          ch.appendLine(result.summary);
+          ch.show();
+        },
+      );
+    }),
+
+    vscode.commands.registerCommand("vscodesync.aiSuggestWorkspaceTags", async () => {
+      const root = await resolveWorkspaceRootForPaletteCommand();
+      if (!root) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const { WorkspaceConfigManager: WCM } = await import("../core/workspaceConfigManager.js");
+      const wc = await WCM.load(root);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace.");
+        return;
+      }
+      let workspaceId: string | undefined;
+      if (wc.activeWorkspaces.length === 1) {
+        workspaceId = wc.activeWorkspaces[0]?.workspaceId;
+      } else {
+        const picked = await vscode.window.showQuickPick(
+          wc.activeWorkspaces.map((w) => ({ label: w.workspaceNote, id: w.workspaceId })),
+          { placeHolder: "Workspace для тегов" },
+        );
+        workspaceId = picked?.id;
+      }
+      if (!workspaceId) return;
+      const ws = workspaceId;
+      const files = wc.files.filter((f) => f.workspaceId === ws).map((f) => f.localPath);
+      if (files.length === 0) {
+        await vscode.window.showWarningMessage("VSCodeSync: в workspace нет файлов для анализа.");
+        return;
+      }
+      const { suggestWorkspaceTags } = await import("../core/aiSessionSummary.js");
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI tagger…" },
+        async () => {
+          const result = await suggestWorkspaceTags(files);
+          if (!result.ok) {
+            await vscode.window.showWarningMessage(
+              "VSCodeSync: AI tagger недоступен или не дал валидных тегов.",
+            );
+            return;
+          }
+          const accepted = await vscode.window.showInformationMessage(
+            `VSCodeSync AI tagger предложил: ${result.tags.join(", ")}. Применить?`,
+            "Применить",
+            "Отмена",
+          );
+          if (accepted !== "Применить") return;
+          await vscode.commands.executeCommand("vscodesync.editWorkspaceTags", ws, result.tags);
+        },
+      );
+    }),
+
+    vscode.commands.registerCommand("vscodesync.diffWorkspaceManifest", async () => {
+      const root = await resolveWorkspaceRootForPaletteCommand();
+      if (!root) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const provider = await extras.tryAuthenticatedProvider?.();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: нет авторизованного провайдера.");
+        return;
+      }
+      const { WorkspaceConfigManager: WCM } = await import("../core/workspaceConfigManager.js");
+      const wc = await WCM.load(root);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace.");
+        return;
+      }
+      const picked = wc.activeWorkspaces.length === 1
+        ? wc.activeWorkspaces[0]
+        : await vscode.window.showQuickPick(
+            wc.activeWorkspaces.map((w) => ({ label: w.workspaceNote, description: w.workspaceId, w })),
+            { placeHolder: "Workspace для сравнения" },
+          ).then((p) => p?.w);
+      if (!picked) return;
+
+      const { manifestCloudPath } = await import("../core/cloudLayout.js");
+      const dl = await provider.downloadFile(manifestCloudPath(picked.workspaceId)).catch(() => null);
+      if (!dl) {
+        await vscode.window.showWarningMessage("VSCodeSync: облачный манифест недоступен.");
+        return;
+      }
+      interface CloudFile { path: string; removedAt?: string }
+      interface CloudManifestLite { files: CloudFile[] }
+      const remote = JSON.parse(dl.body.toString("utf8")) as CloudManifestLite;
+      const remoteSet = new Set(remote.files.filter((f) => !f.removedAt).map((f) => f.path));
+      const localSet = new Set(
+        wc.files.filter((f) => f.workspaceId === picked.workspaceId).map((f) => f.localPath),
+      );
+      const onlyLocal = [...localSet].filter((p) => !remoteSet.has(p)).sort();
+      const onlyRemote = [...remoteSet].filter((p) => !localSet.has(p)).sort();
+      const both = [...localSet].filter((p) => remoteSet.has(p)).sort();
+
+      const channel = vscode.window.createOutputChannel(`VSCodeSync · diff ${picked.workspaceNote}`);
+      channel.appendLine(`Workspace: ${picked.workspaceNote} (${picked.workspaceId})`);
+      channel.appendLine("");
+      channel.appendLine(`✅ В обоих (${String(both.length)}):`);
+      for (const p of both) channel.appendLine(`  ${p}`);
+      channel.appendLine("");
+      channel.appendLine(`⚠ Только локально, нет в облаке (${String(onlyLocal.length)}):`);
+      for (const p of onlyLocal) channel.appendLine(`  ${p}`);
+      channel.appendLine("");
+      channel.appendLine(`⚠ Только в облаке, нет локально (${String(onlyRemote.length)}):`);
+      for (const p of onlyRemote) channel.appendLine(`  ${p}`);
+      channel.show();
+    }),
+
+    vscode.commands.registerCommand("vscodesync.forcePullFromMachine", async () => {
+      const root = await resolveWorkspaceRootForPaletteCommand();
+      if (!root) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        await vscode.window.showWarningMessage("VSCodeSync: нет активного файла.");
+        return;
+      }
+      const { WorkspaceConfigManager: WCM } = await import("../core/workspaceConfigManager.js");
+      const wc = await WCM.load(root);
+      const rel = vscode.workspace.asRelativePath(editor.document.uri, false).split("\\").join("/");
+      const tf = wc.files.find((f) => f.localPath === rel);
+      if (!tf) {
+        await vscode.window.showWarningMessage(
+          "VSCodeSync: текущий файл не отслеживается — добавьте его сначала.",
+        );
+        return;
+      }
+      // Reuse showFileHistory which already lists machine versions from .history/.
+      await vscode.commands.executeCommand("vscodesync.showFileHistory", editor.document.uri);
+    }),
+
+    vscode.commands.registerCommand("vscodesync.smartPauseDropdown", async () => {
+      const cfg = vscode.workspace.getConfiguration("vscodesync");
+      type Mode = "off" | "metered" | "battery" | "all" | "manual";
+      const meterOn = cfg.get<boolean>("pauseOnMeteredConnection", false);
+      const batThr = cfg.get<number>("pauseBatteryThreshold", 0);
+      const cur: Mode =
+        meterOn && batThr > 0
+          ? "all"
+          : meterOn
+            ? "metered"
+            : batThr > 0
+              ? "battery"
+              : "off";
+      const items: (vscode.QuickPickItem & { value: Mode; thr?: number })[] = [
+        { label: "$(circle-slash) Off", description: "Авто-паузу выключить", value: "off", picked: cur === "off" },
+        { label: "$(plug) Metered only", description: "Пауза при metered-соединении", value: "metered", picked: cur === "metered" },
+        { label: "$(zap) Battery <30%", description: "Пауза при низкой батарее", value: "battery", thr: 30, picked: cur === "battery" },
+        { label: "$(warning) Battery+Metered (max savings)", description: "Включить обе авто-паузы", value: "all", thr: 30, picked: cur === "all" },
+        { label: "$(debug-pause) Toggle manual pause", description: "Ручная пауза текущей сессии", value: "manual" },
+      ];
+      const pick = await vscode.window.showQuickPick(items, {
+        title: "VSCodeSync · авто-пауза",
+        placeHolder: `Текущий режим: ${cur}`,
+      });
+      if (!pick) return;
+      if (pick.value === "manual") {
+        await vscode.commands.executeCommand("vscodesync.togglePause");
+        return;
+      }
+      const meter = pick.value === "metered" || pick.value === "all";
+      const batteryThr = pick.value === "battery" || pick.value === "all" ? (pick.thr ?? 30) : 0;
+      await cfg.update("pauseOnMeteredConnection", meter, vscode.ConfigurationTarget.Global);
+      await cfg.update("pauseBatteryThreshold", batteryThr, vscode.ConfigurationTarget.Global);
+      await vscode.window.showInformationMessage(
+        `VSCodeSync auto-pause: metered=${meter ? "on" : "off"}, battery<${String(batteryThr)}%${batteryThr === 0 ? " (off)" : ""}.`,
+      );
+    }),
+
     vscode.commands.registerCommand("vscodesync.configurePathMapping", async () => {
       await runConfigurePathMapping(extras.globalConfig);
     }),
@@ -453,6 +707,37 @@ export function registerPlannedPaletteCommands(
       const gc = await extras.globalConfig.load();
       await exportWorkspaceStructure(root, gc.machineName);
     }),
+    vscode.commands.registerCommand("vscodesync.restoreFromCloud", async () => {
+      const provider = await extras.tryAuthenticatedProvider?.();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+        return;
+      }
+      const target = await runCloudExportFlow(provider, "Папка для восстановления (откроется как workspace)");
+      if (!target) return;
+      await vscode.window
+        .showInformationMessage(
+          `VSCodeSync: восстановление в ${target}. Открыть как workspace?`,
+          "Открыть",
+          "Не сейчас",
+        )
+        .then((choice) => {
+          if (choice === "Открыть") {
+            void vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(target), true);
+          }
+        });
+    }),
+    vscode.commands.registerCommand("vscodesync.exportWorkspaceToFolder", async () => {
+      const provider = await extras.tryAuthenticatedProvider?.();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+        return;
+      }
+      const target = await runCloudExportFlow(provider, "Целевая папка для экспорта");
+      if (target) {
+        await vscode.window.showInformationMessage(`VSCodeSync: экспортировано в ${target}.`);
+      }
+    }),
     vscode.commands.registerCommand("vscodesync.importWorkspaceStructure", async () => {
       const root = await resolveWorkspaceRootForPaletteCommand();
       if (!root) {
@@ -479,5 +764,237 @@ export function registerPlannedPaletteCommands(
         refreshAfterLocalConfigChange: extras.refreshAfterLocalConfigChange,
       });
     }),
+    vscode.commands.registerCommand("vscodesync.aiPathMapper", async () => {
+      const { runAiPathMapper } = await import("./aiPathMapperCommand.js");
+      await runAiPathMapper();
+    }),
+    vscode.commands.registerCommand("vscodesync.startSyncRecording", async () => {
+      const { startRecording, isRecording } = await import("./syncReplayRecorderState.js");
+      if (isRecording()) {
+        await vscode.window.showInformationMessage("VSCodeSync: запись уже идёт. Stop, чтобы остановить.");
+        return;
+      }
+      const gc = await extras.globalConfig.load();
+      const { sessionId } = startRecording(extras.globalConfig.getStorageDir(), gc.machineName);
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: запись sync-сессии началась (id: ${sessionId.slice(0, 8)}…).`,
+      );
+    }),
+    vscode.commands.registerCommand("vscodesync.stopSyncRecording", async () => {
+      const { stopRecording, isRecording } = await import("./syncReplayRecorderState.js");
+      if (!isRecording()) {
+        await vscode.window.showInformationMessage("VSCodeSync: нет активной записи.");
+        return;
+      }
+      const fp = await stopRecording();
+      if (!fp) {
+        await vscode.window.showWarningMessage("VSCodeSync: не удалось сохранить запись.");
+        return;
+      }
+      const choice = await vscode.window.showInformationMessage(
+        `VSCodeSync: запись сохранена в ${fp}.`,
+        "Открыть",
+      );
+      if (choice === "Открыть") {
+        await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fp));
+      }
+    }),
+    vscode.commands.registerCommand("vscodesync.detectGarbageTracked", async () => {
+      const root = await resolveWorkspaceRootForPaletteCommand();
+      if (!root) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const wc = await WorkspaceConfigManager.load(root);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showInformationMessage("VSCodeSync: нет привязанных workspace'ов.");
+        return;
+      }
+      // Build samples from manifest paths + activity push counts (last 30 days).
+      const { loadActivityFile } = await import("../core/activityLog.js");
+      const file = await loadActivityFile(extras.globalConfig.getStorageDir());
+      const cutoff = Date.now() - 30 * 86_400_000;
+      const pushes = new Map<string, number>();
+      for (const ev of file.events) {
+        if (ev.kind !== "push") continue;
+        const t = Date.parse(ev.at);
+        if (!Number.isFinite(t) || t < cutoff) continue;
+        pushes.set(ev.relPath, (pushes.get(ev.relPath) ?? 0) + 1);
+      }
+      interface FS { path: string; pushCount: number; sizeBytes?: number }
+      const samples: FS[] = wc.files.map((f) => ({
+        path: f.localPath,
+        pushCount: pushes.get(f.localPath) ?? 0,
+      }));
+      const { rankGarbageCandidates, suggestIgnorePatterns } = await import("../core/aiGarbageTrackedDetector.js");
+      const candidates = rankGarbageCandidates(samples);
+      if (candidates.length === 0) {
+        await vscode.window.showInformationMessage("VSCodeSync: подозрительных tracked-файлов не найдено.");
+        return;
+      }
+      const channel = vscode.window.createOutputChannel("VSCodeSync · garbage detector");
+      channel.clear();
+      channel.appendLine(`Кандидаты на вынос в .vscodesync.ignore (${String(candidates.length)}):`);
+      channel.appendLine("");
+      for (const c of candidates) {
+        channel.appendLine(`  [${c.score.toFixed(2)}] ${c.path}  ←  ${c.reasons.join(", ")}`);
+      }
+      const patterns = suggestIgnorePatterns(candidates);
+      channel.appendLine("");
+      channel.appendLine("Предлагаемые ignore-паттерны:");
+      for (const p of patterns) channel.appendLine(`  ${p}`);
+      channel.show(true);
+      const choice = await vscode.window.showInformationMessage(
+        `VSCodeSync: найдено ${String(candidates.length)} кандидатов. Скопировать ignore-паттерны в clipboard?`,
+        "Скопировать",
+        "Закрыть",
+      );
+      if (choice === "Скопировать") {
+        await vscode.env.clipboard.writeText(patterns.join("\n"));
+        await vscode.window.showInformationMessage("VSCodeSync: паттерны скопированы в clipboard.");
+      }
+    }),
+    vscode.commands.registerCommand("vscodesync.showStorageReport", async () => {
+      const provider = await extras.tryAuthenticatedProvider?.();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+        return;
+      }
+      const { CLOUD_ROOT_DIR } = await import("../core/cloudLayout.js");
+      // Walk one level (workspace dirs); for each, list manifest+meta+files
+      // (depth ≤ 3 in practice; per-snapshot deep walk skipped — surfaces top-level).
+      interface Entry { cloudPath: string; size?: number }
+      const collect = async (dir: string, depth: number, into: Entry[]): Promise<void> => {
+        if (depth > 4) return;
+        let listing: Awaited<ReturnType<typeof provider.listFolder>>;
+        try { listing = await provider.listFolder(dir); } catch { return; }
+        for (const e of listing) {
+          if (e.size === undefined) {
+            await collect(e.cloudPath, depth + 1, into);
+          } else {
+            into.push({ cloudPath: e.cloudPath, size: e.size });
+          }
+        }
+      };
+      const all: Entry[] = [];
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: подсчёт занятого места…", cancellable: false },
+        async () => { await collect(CLOUD_ROOT_DIR, 0, all); },
+      );
+      const { buildStorageUsageReport, formatBytes } = await import("../core/storageUsageReport.js");
+      const report = buildStorageUsageReport(all, 10);
+      const channel = vscode.window.createOutputChannel("VSCodeSync · storage report");
+      channel.clear();
+      channel.appendLine(`Всего файлов: ${String(report.totalFiles)} · ${formatBytes(report.totalBytes)}`);
+      channel.appendLine("");
+      channel.appendLine(`По workspace (${String(report.perWorkspace.length)}):`);
+      for (const w of report.perWorkspace) {
+        channel.appendLine(`  ${formatBytes(w.totalBytes).padStart(10)} · ${String(w.fileCount).padStart(5)} файлов · ${w.workspaceId}`);
+      }
+      channel.appendLine("");
+      channel.appendLine(`Топ-${String(report.topFiles.length)} крупнейших файлов:`);
+      for (const f of report.topFiles) {
+        channel.appendLine(`  ${formatBytes(f.size).padStart(10)} · ${f.cloudPath}`);
+      }
+      channel.show(true);
+    }),
+    vscode.commands.registerCommand("vscodesync.showConflictHeatmap", async () => {
+      const { getHotZones } = await import("./conflictHeatmapStoreFs.js");
+      const zones = await getHotZones(extras.globalConfig.getStorageDir(), 1);
+      if (zones.length === 0) {
+        await vscode.window.showInformationMessage(
+          "VSCodeSync: ещё нет записанных разрешений конфликтов.",
+        );
+        return;
+      }
+      const channel = vscode.window.createOutputChannel("VSCodeSync · conflict heatmap");
+      channel.clear();
+      channel.appendLine(`Hot files (${String(zones.length)}):`);
+      channel.appendLine("");
+      for (const z of zones) {
+        channel.appendLine(`  ${String(z.count).padStart(3)} × ${z.relPath} (lines ${String(z.startLine)}-${String(z.endLine)})`);
+      }
+      channel.show(true);
+    }),
   );
+}
+
+/**
+ * Shared "pick cloud workspace + pick local folder + download all files"
+ * flow used by Export-to-Folder and Restore-from-Cloud. Returns the target
+ * absolute path on success, undefined on cancel/error.
+ */
+async function runCloudExportFlow(
+  provider: ICloudProvider,
+  pickFolderTitle: string,
+): Promise<string | undefined> {
+  const { listCloudWorkspacesViaPaths } = await import("../core/cloudWorkspaceLister.js");
+  const cloudWs = await listCloudWorkspacesViaPaths(provider);
+  if (cloudWs.length === 0) {
+    await vscode.window.showWarningMessage("VSCodeSync: на облаке нет workspace'ов.");
+    return undefined;
+  }
+  type WPick = vscode.QuickPickItem & { workspaceId: string };
+  const items: WPick[] = cloudWs.map((w) => ({
+    label: w.workspaceNote || w.workspaceId,
+    description: `${w.workspaceId} · ${String(w.fileCount)} файлов`,
+    workspaceId: w.workspaceId,
+  }));
+  const picked = await vscode.window.showQuickPick<WPick>(items, { placeHolder: "Workspace" });
+  if (!picked) return undefined;
+
+  const folderUris = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    title: pickFolderTitle,
+  });
+  const target = folderUris?.[0]?.fsPath;
+  if (!target) return undefined;
+
+  const { manifestCloudPath, trackedFileCloudPath } = await import("../core/cloudLayout.js");
+  const dl = await provider.downloadFile(manifestCloudPath(picked.workspaceId)).catch(() => null);
+  if (!dl) {
+    await vscode.window.showWarningMessage("VSCodeSync: облачный манифест недоступен.");
+    return undefined;
+  }
+  const { parseManifestSafe } = await import("../core/manifestValidate.js");
+  const parsed = parseManifestSafe(dl.body);
+  if (!parsed.ok) {
+    await vscode.window.showErrorMessage(`VSCodeSync: облачный манифест невалидный: ${parsed.reason}`);
+    return undefined;
+  }
+  const { planWorkspaceExport, escapingPaths } = await import("../core/workspaceExportPlan.js");
+  const plan = planWorkspaceExport(parsed.value, target);
+  if (plan.empty) {
+    await vscode.window.showInformationMessage("VSCodeSync: workspace не содержит файлов.");
+    return undefined;
+  }
+  const escapes = escapingPaths(plan);
+  if (escapes.length > 0) {
+    await vscode.window.showErrorMessage(
+      `VSCodeSync: ${String(escapes.length)} путей вне выбранной папки — отказ.`,
+    );
+    return undefined;
+  }
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: загрузка файлов…", cancellable: false },
+    async (progress) => {
+      let done = 0;
+      for (const entry of plan.entries) {
+        try {
+          const dlFile = await provider.downloadFile(
+            trackedFileCloudPath(picked.workspaceId, entry.posixRel),
+          );
+          await fs.mkdir(path.dirname(entry.targetAbs), { recursive: true });
+          await fs.writeFile(entry.targetAbs, dlFile.body);
+        } catch {
+          /* per-file errors are non-fatal; final count reflects what succeeded */
+        }
+        done++;
+        progress.report({ message: `${String(done)}/${String(plan.entries.length)}` });
+      }
+    },
+  );
+  return target;
 }

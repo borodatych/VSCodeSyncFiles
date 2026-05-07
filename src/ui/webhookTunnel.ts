@@ -12,21 +12,35 @@
  */
 
 import * as vscode from "vscode";
+import { warnLog, errorLog } from "../utils/log";
+import { parseSmeeSseBlock, type SmeePayload } from "./webhookSseParser.js";
+
+export type { SmeePayload } from "./webhookSseParser.js";
 
 const SMEE_BASE = "https://smee.io";
 const RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
-
-export type SmeePayload = {
-  body: Record<string, unknown>;
-  headers: Record<string, string>;
-};
 
 export interface SmeeRelay {
   /** The public smee.io URL to register as your webhook endpoint. */
   readonly channelUrl: string;
   /** Close the SSE stream (idempotent). */
   dispose(): void;
+}
+
+interface RelayState {
+  disposed: boolean;
+  attempts: number;
+  reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  abort: AbortController;
+}
+
+// Reading `state.disposed` through this helper hides the property from
+// TypeScript's flow narrowing — the flag is mutated from outside the
+// async function, but eslint's `no-unnecessary-condition` would otherwise
+// treat the field as never-true inside the closure.
+function isDisposed(s: RelayState): boolean {
+  return (s as { disposed: boolean }).disposed;
 }
 
 /** Create a new smee.io channel. Returns the public URL. */
@@ -47,46 +61,62 @@ export function startSmeeRelay(
   channelUrl: string,
   handler: (payload: SmeePayload) => void,
 ): SmeeRelay {
-  let disposed = false;
-  let attempts = 0;
-  let currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  // Mutable state lives on an object so external `dispose()` writes are visible
+  // to the in-flight `connect()` loop without tripping flow-based linters.
+  const state: RelayState = {
+    disposed: false,
+    attempts: 0,
+    reader: null,
+    abort: new AbortController(),
+  };
 
   const connect = async (): Promise<void> => {
-    if (disposed) return;
+    if (isDisposed(state)) return;
+    state.abort = new AbortController();
     try {
       const res = await fetch(channelUrl, {
         headers: { Accept: "text/event-stream" },
+        signal: state.abort.signal,
       });
       if (!res.ok || !res.body) {
         throw new Error(`smee.io SSE connect failed: ${String(res.status)}`);
       }
-      attempts = 0; // reset on successful connect
-      currentReader = res.body.getReader();
+      state.attempts = 0; // reset on successful connect
+      state.reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
       for (;;) {
-        if (disposed) break;
-        const { done, value } = await currentReader.read();
+        if (isDisposed(state)) break;
+        const { done, value } = await state.reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         // Process complete SSE messages (delimited by \n\n)
         const parts = buffer.split("\n\n");
         buffer = parts.pop() ?? "";
         for (const part of parts) {
-          parseAndDispatch(part, handler);
+          parseSmeeSseBlock(part, handler);
         }
       }
-    } catch (e) {
-      if (disposed) return;
-      attempts += 1;
-      if (attempts >= MAX_RECONNECT_ATTEMPTS) {
+    } catch (err: unknown) {
+      if (isDisposed(state)) return;
+      const isAbort =
+        err instanceof Error && (err.name === "AbortError" || err.name === "ResetError");
+      if (isAbort) return;
+      errorLog("smeeRelay", "SSE error", err);
+      state.attempts += 1;
+      if (state.attempts >= MAX_RECONNECT_ATTEMPTS) {
+        warnLog(
+          "smeeRelay",
+          `tunnel lost connection after ${String(MAX_RECONNECT_ATTEMPTS)} attempts; falling back to polling`,
+        );
         void vscode.window.showWarningMessage(
           `VSCodeSync: smee.io tunnel потерял соединение после ${String(MAX_RECONNECT_ATTEMPTS)} попыток. Polling продолжится.`,
         );
         return;
       }
       await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+      if (isDisposed(state)) return;
       void connect();
     }
   };
@@ -96,41 +126,12 @@ export function startSmeeRelay(
   return {
     channelUrl,
     dispose() {
-      disposed = true;
-      currentReader?.cancel().catch(() => undefined);
-      currentReader = null;
+      state.disposed = true;
+      state.abort.abort();
+      state.reader?.cancel().catch(() => undefined);
+      state.reader = null;
     },
   };
-}
-
-/**
- * Parse a single SSE message block and call the handler if it contains a `data:` line.
- * smee.io sends the full HTTP request (headers + body) as JSON in the `data` field.
- */
-function parseAndDispatch(sseBlock: string, handler: (payload: SmeePayload) => void): void {
-  let data = "";
-  for (const line of sseBlock.split("\n")) {
-    if (line.startsWith("data:")) {
-      data += line.slice(5).trim();
-    }
-  }
-  if (!data || data === "connected") {
-    return; // heartbeat or connection ack
-  }
-  try {
-    const parsed = JSON.parse(data) as Record<string, unknown>;
-    // smee.io wraps the original POST body under `body` key and headers under header fields
-    const body = (parsed["body"] as Record<string, unknown> | undefined) ?? parsed;
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      if (k !== "body" && typeof v === "string") {
-        headers[k] = v;
-      }
-    }
-    handler({ body, headers });
-  } catch {
-    /* malformed JSON from smee.io — skip */
-  }
 }
 
 /**

@@ -1,16 +1,14 @@
 import * as vscode from "vscode";
-import { randomBytes } from "node:crypto";
+import { getWebviewNonce } from "../utils/webviewNonce.js";
 import * as fs from "node:fs/promises";
 import type { ActivityEvent } from "../core/activityLog.js";
 import { loadActivityFile } from "../core/activityLog.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { PathMappingError, trackedLocalAbsolutePath } from "../core/pathMapping.js";
+import type { ActivityFilter } from "./activityFilterMatch.js";
 
 const WEBVIEW_VIEW_TYPE = "vscodesyncActivityFeed";
 
-function getNonce(): string {
-  return randomBytes(16).toString("base64url");
-}
 
 function eventsToCsv(events: ActivityEvent[]): string {
   const head = ["at", "kind", "workspaceId", "workspaceNote", "relPath", "machineName", "provider", "detail"];
@@ -228,12 +226,32 @@ function buildHtml(nonce: string, cspSource: string): string {
         allEvents = ev.data.events || [];
         render();
       }
+      if (ev.data && ev.data.type === 'applySavedSearch' && ev.data.filter) {
+        var f = ev.data.filter;
+        document.getElementById('fWs').value = f.workspaceId || '';
+        document.getElementById('fKind').value = f.kind || '';
+        document.getElementById('fPath').value = f.query || '';
+        render();
+      }
     });
+
+    function notifyFilterChanged() {
+      vscode.postMessage({
+        type: 'filterChanged',
+        filter: {
+          workspaceId: document.getElementById('fWs').value || undefined,
+          kind: document.getElementById('fKind').value || undefined,
+          query: document.getElementById('fPath').value.trim() || undefined,
+        },
+      });
+    }
 
     ['fWs', 'fMachine', 'fKind', 'fPath'].forEach(function (id) {
       var el = document.getElementById(id);
-      el.addEventListener('change', render);
-      el.addEventListener('input', function () { if (id === 'fPath') render(); });
+      el.addEventListener('change', function () { render(); notifyFilterChanged(); });
+      el.addEventListener('input', function () {
+        if (id === 'fPath') { render(); notifyFilterChanged(); }
+      });
     });
     document.getElementById('btnRefresh').addEventListener('click', function () {
       vscode.postMessage({ type: 'refresh' });
@@ -279,10 +297,24 @@ let panel: vscode.WebviewPanel | undefined;
 /** Set on each open; the singleton webview handler reads the latest dir. */
 let lastActivityStorageDir: string | undefined;
 let lastActivityMachineName = "";
+let lastFilterChangedHandler: ((filter: ActivityFilter) => void) | undefined;
 
-export function openActivityFeedPanel(context: vscode.ExtensionContext, storageDir: string, machineName: string): void {
+export interface OpenActivityFeedOptions {
+  /** When set, the webview applies this filter on load (saved-search flow). */
+  applyFilter?: ActivityFilter;
+  /** Called when the user changes the form filter — host persists for "save current search". */
+  onFilterChanged?: (filter: ActivityFilter) => void;
+}
+
+export function openActivityFeedPanel(
+  context: vscode.ExtensionContext,
+  storageDir: string,
+  machineName: string,
+  options?: OpenActivityFeedOptions,
+): void {
   lastActivityStorageDir = storageDir;
   lastActivityMachineName = machineName;
+  lastFilterChangedHandler = options?.onFilterChanged;
 
   if (!panel) {
     panel = vscode.window.createWebviewPanel(WEBVIEW_VIEW_TYPE, "VSCodeSync · Activity Feed", vscode.ViewColumn.One, {
@@ -304,6 +336,7 @@ export function openActivityFeedPanel(context: vscode.ExtensionContext, storageD
         events?: ActivityEvent[];
         workspaceId?: string;
         relPath?: string;
+        filter?: ActivityFilter;
       }) => {
         const dir = lastActivityStorageDir;
         const wv = panel?.webview;
@@ -318,6 +351,10 @@ export function openActivityFeedPanel(context: vscode.ExtensionContext, storageD
 
         if (msg.type === "ready" || msg.type === "refresh") {
           await pushEvents();
+          return;
+        }
+        if (msg.type === "filterChanged" && msg.filter) {
+          lastFilterChangedHandler?.(msg.filter);
           return;
         }
         if (msg.type === "openFile" && msg.workspaceId && msg.relPath) {
@@ -408,12 +445,15 @@ export function openActivityFeedPanel(context: vscode.ExtensionContext, storageD
 
   panel.reveal(vscode.ViewColumn.One, false);
 
-  const nonce = getNonce();
+  const nonce = getWebviewNonce();
   const wv = panel.webview;
   wv.html = buildHtml(nonce, wv.cspSource);
 
   void (async () => {
     const data = await loadActivityFile(storageDir);
     await wv.postMessage({ type: "load", events: data.events });
+    if (options?.applyFilter) {
+      await wv.postMessage({ type: "applySavedSearch", filter: options.applyFilter });
+    }
   })();
 }

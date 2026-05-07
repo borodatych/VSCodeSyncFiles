@@ -69,7 +69,7 @@ export function registerOfflineRecoveryMonitor(context: vscode.ExtensionContext,
     allowImmediateOfflineFlushRetry();
     void tick();
   };
-  if (typeof (globalThis as Record<string, unknown>)["addEventListener"] === "function") {
+  if (typeof (globalThis as Record<string, unknown>).addEventListener === "function") {
     (globalThis as unknown as EventTarget).addEventListener("online", onOnline);
     context.subscriptions.push(
       new vscode.Disposable(() => {

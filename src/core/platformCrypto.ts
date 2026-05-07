@@ -32,10 +32,12 @@ export function createNodeCrypto(): ICrypto {
   const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
 
   return {
+    // eslint-disable-next-line @typescript-eslint/require-await
     async generateKey(): Promise<Uint8Array> {
       return nodeCrypto.randomBytes(KEY_BYTES);
     },
 
+    // eslint-disable-next-line @typescript-eslint/require-await
     async encrypt(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
       const iv = nodeCrypto.randomBytes(IV_BYTES);
       const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key);
@@ -45,6 +47,7 @@ export function createNodeCrypto(): ICrypto {
       return Buffer.concat([iv, ciphertext, authTag]);
     },
 
+    // eslint-disable-next-line @typescript-eslint/require-await
     async decrypt(key: Uint8Array, blob: Uint8Array): Promise<Uint8Array> {
       if (blob.length < IV_BYTES + AUTH_TAG_BYTES) {
         throw new Error("ICrypto(node): blob too short");
@@ -59,6 +62,7 @@ export function createNodeCrypto(): ICrypto {
       return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     },
 
+    // eslint-disable-next-line @typescript-eslint/require-await
     async sha256(data: Uint8Array): Promise<Uint8Array> {
       return nodeCrypto.createHash("sha256").update(data).digest();
     },
@@ -97,7 +101,7 @@ export function createWebCrypto(): ICrypto {
 
     async encrypt(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
       const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-      const cryptoKey = await importAesKey(key);
+      const cryptoKey: CryptoKey = await importAesKey(key);
       // SubtleCrypto AES-GCM appends authTag to the end of ciphertext output
       const encrypted = await subtle.encrypt(
         { name: "AES-GCM", iv, tagLength: AUTH_TAG_BYTES * 8 },
@@ -118,7 +122,7 @@ export function createWebCrypto(): ICrypto {
       const iv = blob.subarray(0, IV_BYTES);
       // WebCrypto expects ciphertext || authTag in one buffer (same layout as after IV)
       const ciphertextWithTag = blob.subarray(IV_BYTES);
-      const cryptoKey = await importAesKey(key);
+      const cryptoKey: CryptoKey = await importAesKey(key);
       const decrypted = await subtle.decrypt(
         { name: "AES-GCM", iv, tagLength: AUTH_TAG_BYTES * 8 },
         cryptoKey,

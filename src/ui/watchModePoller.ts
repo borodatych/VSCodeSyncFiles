@@ -30,6 +30,13 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
   let currentMs = 0;
   let prevWebhookPollingSuppressed: boolean | undefined;
 
+  // EWMA of inter-save intervals — informs how aggressively to scale up
+  // the polling interval during idle. Tracks document.save events on tracked
+  // files; pure save-rate, no provider hits.
+  const EWMA_ALPHA = 0.3;
+  let lastSaveAtMs: number | undefined;
+  let ewmaSaveIntervalMs: number | undefined;
+
   const baseMs = (): number => {
     const sec = vscode.workspace.getConfiguration(CFG).get<number>("watchIntervalSeconds", 30);
     return Math.max(5, sec) * 1000;
@@ -105,7 +112,11 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
       idleCycles += 1;
       if (idleCycles >= 5) {
         idleCycles = 0;
-        const next = Math.min(currentMs * 2, maxMs());
+        // EWMA-aware scaling: if the user hasn't been saving anywhere near
+        // the current poll cadence, scale up faster (4×) to save quota.
+        const ewma = ewmaSaveIntervalMs;
+        const factor = ewma !== undefined && ewma > currentMs * 3 ? 4 : 2;
+        const next = Math.min(currentMs * factor, maxMs());
         if (next !== currentMs) {
           applyInterval(next);
         }
@@ -116,6 +127,24 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
   schedule();
 
   context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(() => {
+      const now = Date.now();
+      if (lastSaveAtMs !== undefined) {
+        const delta = now - lastSaveAtMs;
+        if (delta > 0) {
+          ewmaSaveIntervalMs =
+            ewmaSaveIntervalMs === undefined
+              ? delta
+              : EWMA_ALPHA * delta + (1 - EWMA_ALPHA) * ewmaSaveIntervalMs;
+        }
+      }
+      lastSaveAtMs = now;
+      // Activity heuristic: a save while we're on a back-off interval is a
+      // strong hint that the user is back — drop instantly to base.
+      if (currentMs > baseMs()) {
+        applyInterval(baseMs());
+      }
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration(`${CFG}.watchMode`) ||

@@ -10,6 +10,39 @@ function decoHashConfig(): HashConfig {
   return { lineEnding };
 }
 
+function formatRelative(iso: string | undefined): string {
+  if (!iso) return "никогда";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const diff = Date.now() - t;
+  if (diff < 60_000) return "только что";
+  if (diff < 3_600_000) return `${String(Math.floor(diff / 60_000))} мин назад`;
+  if (diff < 86_400_000) return `${String(Math.floor(diff / 3_600_000))} ч назад`;
+  return `${String(Math.floor(diff / 86_400_000))} д назад`;
+}
+
+interface TrackedLike {
+  workspaceId: string;
+  lastSync?: string;
+  syncStatus?: string;
+  editingBy?: string;
+  editingByName?: string;
+}
+
+function buildTooltip(tf: TrackedLike): string {
+  const parts: string[] = [];
+  if (tf.syncStatus === "conflict") parts.push("⚠ Конфликт — разрешите вручную");
+  else if (tf.syncStatus === "cloud_newer") parts.push("↓ Облако новее — Pull");
+  else if (tf.syncStatus === "pending_push") parts.push("↑ Ожидает отправки");
+  else parts.push("✓ Синхронизирован");
+  parts.push(`Last sync: ${formatRelative(tf.lastSync)}`);
+  if (tf.editingByName ?? tf.editingBy) {
+    parts.push(`Editing on: ${tf.editingByName ?? tf.editingBy ?? "unknown"}`);
+  }
+  parts.push(`Workspace: ${tf.workspaceId.slice(0, 8)}…`);
+  return parts.join(" · ");
+}
+
 export class SyncFileDecorationController implements vscode.FileDecorationProvider, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
   readonly onDidChangeFileDecorations = this.emitter.event;
@@ -42,24 +75,25 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
       if (!tf) {
         return undefined;
       }
+      const tooltip = buildTooltip(tf);
       if (tf.syncStatus === "conflict") {
         return new vscode.FileDecoration(
           "⚠",
-          "Конфликт синхронизации",
+          tooltip,
           new vscode.ThemeColor("gitDecoration.conflictingResource"),
         );
       }
       if (tf.syncStatus === "pending_push") {
         return new vscode.FileDecoration(
           "↑",
-          "Ожидает отправки",
+          tooltip,
           new vscode.ThemeColor("gitDecoration.modifiedResource"),
         );
       }
       if (tf.syncStatus === "cloud_newer") {
         return new vscode.FileDecoration(
           "↓",
-          "Облако новее — нажмите «Получить файл» для обновления",
+          tooltip,
           new vscode.ThemeColor("gitDecoration.untrackedResource"),
         );
       }
@@ -67,11 +101,11 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
       if (curHash !== "" && curHash !== tf.localHash) {
         return new vscode.FileDecoration(
           "↑",
-          "Локально изменён относительно последнего sync",
+          tooltip,
           new vscode.ThemeColor("gitDecoration.modifiedResource"),
         );
       }
-      return new vscode.FileDecoration("✓", "Синхронизирован", undefined);
+      return new vscode.FileDecoration("✓", tooltip, undefined);
     })();
   }
 

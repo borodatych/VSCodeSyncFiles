@@ -3,6 +3,8 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import { GlobalConfigManager } from "./core/globalConfigManager.js";
+import { initLog } from "./utils/logVscode.js";
+import { verboseLog } from "./utils/log.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { ensureWorkspaceGitignoreEntry } from "./core/workspaceGitignore.js";
 import { OneDriveProvider } from "./providers/onedrive/onedriveProvider.js";
@@ -46,6 +48,7 @@ import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
 import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
 import { syncMachinesRegistrySelf } from "./core/machineRegistry.js";
+import { classifyExpiry, formatExpiryHint } from "./core/tokenExpiryHints.js";
 import { buildHealthCheckReport } from "./ui/healthCheckReport.js";
 import { SyncScheduleDeferredStore } from "./core/syncScheduleDeferredStore.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
@@ -85,6 +88,15 @@ import { runAiMerge, isAiMergeAvailable } from "./core/aiMerge.js";
 import { registerProviderSetupGuide } from "./ui/providerSetupGuide.js";
 import { registerCommandCenter } from "./ui/commandCenter.js";
 import { registerSettingsPanel } from "./ui/settingsPanel.js";
+import { registerHealthAutoCheck } from "./ui/healthAutoCheck.js";
+import { registerScheduledSnapshots } from "./ui/scheduledSnapshots.js";
+import { SyncLastSyncCodeLensProvider } from "./ui/lastSyncCodeLens.js";
+import { InlineConflictCodeLensProvider } from "./ui/inlineConflictCodeLens.js";
+import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
+import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
+import { registerPanelCommands } from "./commands/registerPanels.js";
+import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
+import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 
 const CFG_SECTION = "vscodesync";
 
@@ -105,6 +117,7 @@ const warnedPurgeLostKeys = new Set<string>();
 const notifiedConflictKeys = new Set<string>();
 /** Dedupe schema-version-too-new warnings per session: key = workspaceId. */
 const warnedSchemaVersionKeys = new Set<string>();
+const warnedCorruptManifestKeys = new Set<string>();
 /** Dedupe remote-workspace-deleted notifications per session: key = workspaceId. */
 const warnedRemoteDeletedKeys = new Set<string>();
 /** Set in `activate`; called by makeEngine's onRemoteWorkspaceDeleted to refresh the sidebar tree. */
@@ -289,8 +302,6 @@ function makeEngine(
   const encryptionOn = cfg.get<boolean>("encryption", false);
   const compressUploads = cfg.get<boolean>("compressUploads", false);
   const key = encryptionOn && encKey ? encKey : null;
-  const encRaw = cfg.get<string>("fileEncoding", "utf8");
-  const encodingLint = encRaw === "utf8" || encRaw === "";
   return new SyncEngine({
     workspaceRoot,
     provider: wrapWithQueue(provider),
@@ -298,26 +309,25 @@ function makeEngine(
     machineName,
     maxFileSizeBytes: maxB > 0 ? maxB : undefined,
     lineEnding,
-    encodingLint,
+    // VSCodeSync v1 supports UTF-8 only; surface BOM / invalid UTF-8.
+    encodingLint: true,
     localBackupEnabled,
     localBackupRetentionDays,
     encrypt: key ? (buf) => encryptBuffer(key, buf) : undefined,
     decrypt: key ? (buf) => decryptBuffer(key, buf) : undefined,
     onFilePulled: makeOnFilePulledCallback(),
-    onEncodingIssue: encodingLint
-      ? (kind, rel) => {
-          const k = syncWarnDedupeKey(workspaceRoot, kind, rel);
-          if (warnedEncodingIssueKeys.has(k)) {
-            return;
-          }
-          warnedEncodingIssueKeys.add(k);
-          const tip =
-            kind === "bom"
-              ? `UTF-8 BOM в «${rel}» исключается из канона; сохраните файл без BOM для предсказуемости.`
-              : `«${rel}»: недопустимые UTF‑8 последовательности; канон использует замену символов.`;
-          void vscode.window.showWarningMessage(`VSCodeSync: ${tip}`);
-        }
-      : undefined,
+    onEncodingIssue: (kind, rel) => {
+      const k = syncWarnDedupeKey(workspaceRoot, kind, rel);
+      if (warnedEncodingIssueKeys.has(k)) {
+        return;
+      }
+      warnedEncodingIssueKeys.add(k);
+      const tip =
+        kind === "bom"
+          ? `UTF-8 BOM в «${rel}» исключается из канона; сохраните файл без BOM для предсказуемости.`
+          : `«${rel}»: недопустимые UTF‑8 последовательности; канон использует замену символов.`;
+      void vscode.window.showWarningMessage(`VSCodeSync: ${tip}`);
+    },
     onPreserveLineEndingConflictHint:
       lineEnding === "preserve"
         ? (rel) => {
@@ -426,6 +436,43 @@ function makeEngine(
         }
       });
     },
+    onCorruptManifest: (workspaceId: string, reason: string) => {
+      if (warnedCorruptManifestKeys.has(workspaceId)) {
+        return;
+      }
+      warnedCorruptManifestKeys.add(workspaceId);
+      void vscode.window.showErrorMessage(
+        `VSCodeSync: облачный манифест workspace ${workspaceId} повреждён (${reason}). Запустить Repair State?`,
+        "Repair State",
+      ).then((choice) => {
+        if (choice === "Repair State") {
+          void vscode.commands.executeCommand("vscodesync.repairState");
+        }
+      });
+    },
+    onMassChange: async (workspaceId: string, report) => {
+      const enabled = vscode.workspace
+        .getConfiguration("vscodesync")
+        .get<boolean>("massChangeGuard", true);
+      if (!enabled) return true;
+      const { describeMassChange } = await import("./core/massChangeGuard.js");
+      const message = describeMassChange(report);
+      const choice = await vscode.window.showWarningMessage(
+        `VSCodeSync · ${workspaceId}: ${message}`,
+        { modal: true },
+        "Создать snapshot и продолжить",
+        "Продолжить без snapshot",
+      );
+      if (choice === undefined) return false;
+      if (choice === "Создать snapshot и продолжить") {
+        try {
+          await vscode.commands.executeCommand("vscodesync.createSnapshot");
+        } catch {
+          /* user-cancelled snapshot is non-fatal — they explicitly opted to proceed */
+        }
+      }
+      return true;
+    },
     onRemoteWorkspaceDeleted: (
       workspaceId: string,
       workspaceNote: string,
@@ -519,7 +566,7 @@ async function resolveFileTarget(
   uri: vscode.Uri | undefined,
 ): Promise<{ root: string; fsPath: string } | undefined> {
   let u = uri ?? vscode.window.activeTextEditor?.document.uri;
-  if (!u || u.scheme !== "file") {
+  if (u?.scheme !== "file") {
     // No active editor (e.g. called from webview) — show file picker
     const picked = await vscode.window.showOpenDialog({
       canSelectMany: false,
@@ -529,7 +576,7 @@ async function resolveFileTarget(
       title: "VSCodeSync: выберите файл или папку",
     });
     u = picked?.[0];
-    if (!u || u.scheme !== "file") {
+    if (u?.scheme !== "file") {
       return undefined;
     }
   }
@@ -812,7 +859,7 @@ async function runAiMergeForConflict(
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `VSCodeSync: AI merge «${basename}»…`, cancellable: false },
       async () => {
-        const result = await runAiMerge(baseText, localText, remoteText!, posixRel);
+        const result = await runAiMerge(baseText, localText, remoteText, posixRel);
 
         if (!result.ok) {
           const reasonMsg: Record<string, string> = {
@@ -823,7 +870,7 @@ async function runAiMergeForConflict(
             error: result.detail ?? "Ошибка AI merge.",
           };
           await vscode.window.showWarningMessage(
-            `VSCodeSync AI Merge: ${reasonMsg[result.reason] ?? result.detail ?? result.reason}`,
+            `VSCodeSync AI Merge: ${reasonMsg[result.reason]}`,
           );
           return;
         }
@@ -910,6 +957,8 @@ async function updateWorkspacesTreeBadge(tv: vscode.TreeView<SyncTreeElement>): 
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  initLog(context);
+
   const globalDir = GlobalConfigManager.resolveDefaultConfigDir();
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);
   const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
@@ -920,10 +969,13 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCommandCenter(context);
   registerSettingsPanel(context);
 
+  const activityAlertMonitor = new ActivityAlertMonitor(context);
+  context.subscriptions.push(activityAlertMonitor);
   logSyncActivityRef = (ev) => {
     const retention = vscode.workspace.getConfiguration(CFG_SECTION).get<number>("activityRetentionDays", 90);
     void appendActivityEvent(globalConfig.getStorageDir(), ev, retention);
     timelineFireChangeRef?.();
+    activityAlertMonitor.notify(ev);
     // Feed into notification digest
     if (ev.kind === "push") {
       recordDigestPush(1, ev.machineName);
@@ -932,6 +984,24 @@ export function activate(context: vscode.ExtensionContext): void {
     } else if (ev.kind === "conflict") {
       recordDigestConflict(ev.relPath);
     }
+    // Feed into conflict heatmap (file-level — line ranges aren't surfaced
+    // by the resolve commands; the helper clusters by overlapping ranges so
+    // sentinel 1..1 collapses to "file-level entry").
+    if (ev.kind === "resolve_keep_mine" || ev.kind === "resolve_take_theirs") {
+      void (async () => {
+        try {
+          const { recordConflictResolution } = await import("./ui/conflictHeatmapStoreFs.js");
+          await recordConflictResolution(globalConfig.getStorageDir(), ev.relPath);
+        } catch { /* heatmap is best-effort; silent on I/O errors */ }
+      })();
+    }
+    // Feed into the sync-replay recorder when an active session is running.
+    void (async () => {
+      try {
+        const { feedActivity } = await import("./ui/syncReplayRecorderState.js");
+        feedActivity(ev);
+      } catch { /* recorder is best-effort; silent */ }
+    })();
   };
   logSyncStatsTransferRef = (ev) => {
     void recordTransferBytes(globalConfig.getStorageDir(), ev);
@@ -998,6 +1068,39 @@ export function activate(context: vscode.ExtensionContext): void {
   const yandexOutputChannel = vscode.window.createOutputChannel("VSCodeSync · Yandex Disk");
   context.subscriptions.push(yandexOutputChannel);
   const fileDecorationRegistration = vscode.window.registerFileDecorationProvider(fileDecorations);
+
+  // Last-sync CodeLens — visible over every tracked file (toggle via vscodesync.codeLens.enabled).
+  const lastSyncLens = new SyncLastSyncCodeLensProvider();
+  context.subscriptions.push(
+    lastSyncLens,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, lastSyncLens),
+    vscode.workspace.onDidSaveTextDocument(() => { lastSyncLens.refresh(); }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("vscodesync.codeLens")) lastSyncLens.refresh();
+    }),
+  );
+
+  // Inline conflict CodeLens — over <<< / === / >>> marker blocks.
+  const inlineConflictLens = new InlineConflictCodeLensProvider(
+    () => vscode.workspace.getConfiguration("vscodesync").get<boolean>("aiMerge", false),
+  );
+  context.subscriptions.push(
+    inlineConflictLens,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, inlineConflictLens),
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      // Only refresh when the changed document might have markers — cheap heuristic.
+      const text = e.document.getText();
+      if (text.includes("<<<<<<<") || text.includes(">>>>>>>")) inlineConflictLens.refresh();
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration("vscodesync.inlineConflictCodeLens") ||
+        e.affectsConfiguration("vscodesync.aiMerge")
+      ) {
+        inlineConflictLens.refresh();
+      }
+    }),
+  );
   context.subscriptions.push(fileDecorationRegistration);
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -1068,7 +1171,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerActiveEditorSyncContext(context);
 
   const workspacesTree = new WorkspacesTreeProvider();
-  treeRefreshRef = () => workspacesTree.refresh();
+  treeRefreshRef = () => { workspacesTree.refresh(); };
   context.subscriptions.push(workspacesTree);
 
   const savedNoteFilter = context.globalState.get<string>(WORKSPACES_NOTE_FILTER_KEY) ?? "";
@@ -1107,7 +1210,7 @@ export function activate(context: vscode.ExtensionContext): void {
     options?: { showErrorDialog?: boolean },
   ): Promise<void> => {
     const seq = ++_rweSeq;
-    console.log(`[VSS:rwe] #${seq} START fn=${fn.name || "(anon)"}`);
+    verboseLog("rwe", `#${String(seq)} START fn=${fn.name || "(anon)"}`);
     const root = workspaceRoot ?? pickRoot();
     if (!root) {
       await vscode.window.showErrorMessage("VSCodeSync: откройте папку.");
@@ -1121,10 +1224,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const encKey = await getEncKey();
     const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, encKey);
     statusBar.setSyncing(true);
-    console.log(`[VSS:rwe] #${seq} setSyncing(true)`);
     try {
       await fn(engine, root, globalConfig);
-    } catch (e) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (options?.showErrorDialog !== false) {
         // Special handling for expired/missing credentials
@@ -1145,7 +1247,7 @@ export function activate(context: vscode.ExtensionContext): void {
         throw e;
       }
     } finally {
-      console.log(`[VSS:rwe] #${seq} finally → setSyncing(false)`);
+      verboseLog("rwe", `#${String(seq)} finally`);
       statusBar.setSyncing(false);
       await statusBar.refresh();
       workspacesTree.refresh();
@@ -1187,7 +1289,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    await runWithEngine(async (engine, _root, gc) => {
+    await runWithEngine(async (engine, root, gc) => {
       const cfgProv = await gc.load();
       const t = cfgProv.activeProvider ?? "onedrive";
       try {
@@ -1492,7 +1594,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // Custom collapse all (built-in disabled to control toolbar position)
   context.subscriptions.push(
     vscode.commands.registerCommand("vscodesync.collapseAllWorkspaces", () => {
-      void treeView.collapseAll();
+      // `collapseAll` exists at runtime but is missing from older @types/vscode.
+      const v = treeView as unknown as { collapseAll?: () => Thenable<void> };
+      void v.collapseAll?.();
     }),
   );
 
@@ -1796,8 +1900,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspacePushAll",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -1820,8 +1924,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspacePullAll",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -1844,8 +1948,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceSync",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -1868,8 +1972,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceDetach",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -1894,8 +1998,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceRenameNote",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const note =
@@ -1916,8 +2020,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceHealthCheck",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -1941,8 +2045,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeRemoteWorkspaceConnect",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "remoteOffer") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "remoteOffer") {
           return;
         }
         workspacesTree.setWorkspaceLoading(el.workspaceId, true);
@@ -1965,7 +2069,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "vscodesync.treeRemoteWorkspaceDelete",
       async (el: SyncTreeElement | undefined) => {
-        if (!el || el.kind !== "remoteOffer") {
+        if (el?.kind !== "remoteOffer") {
           return;
         }
         const label = el.workspaceNote.trim().length > 0 ? el.workspaceNote : el.workspaceId;
@@ -2007,8 +2111,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceShowMenu",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const isActive = !el.syncState || el.syncState === "active";
@@ -2063,7 +2167,7 @@ export function activate(context: vscode.ExtensionContext): void {
           items.filter((i) => i.cmd !== "" || i.kind === vscode.QuickPickItemKind.Separator),
           { title: `Workspace: ${el.note || el.workspaceId}`, placeHolder: "Выберите действие" },
         );
-        if (!picked || !picked.cmd) {
+        if (!picked?.cmd) {
           return;
         }
         await vscode.commands.executeCommand(picked.cmd, ...(picked.args ?? []));
@@ -2072,8 +2176,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeWorkspaceAddTagToPanelFilter",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "workspace") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "workspace") {
           return;
         }
         const tags = el.tags;
@@ -2099,6 +2203,67 @@ export function activate(context: vscode.ExtensionContext): void {
         await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
       },
     ),
+
+    vscode.commands.registerCommand("vscodesync.quickSwitchWorkspace", async () => {
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      if (folders.length === 0) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      type Item = vscode.QuickPickItem & {
+        folder: vscode.WorkspaceFolder;
+        workspaceId: string;
+        suspended: boolean;
+        lastSync: string;
+      };
+      const items: Item[] = [];
+      for (const folder of folders) {
+        const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+        for (const aw of wc.activeWorkspaces) {
+          const filesForWs = wc.files.filter((f) => f.workspaceId === aw.workspaceId);
+          let last = "";
+          for (const f of filesForWs) {
+            if (f.lastSync && f.lastSync > last) last = f.lastSync;
+          }
+          const note = aw.workspaceNote || aw.workspaceId;
+          const suspended = normalizeWorkspaceSyncState(aw) === "suspended";
+          const icon = suspended ? "$(debug-pause)" : "$(cloud)";
+          items.push({
+            folder,
+            workspaceId: aw.workspaceId,
+            suspended,
+            lastSync: last,
+            label: `${icon} ${note}`,
+            description: suspended ? "suspended" : "active",
+            detail: `${folder.name} · ${String(filesForWs.length)} files${last ? ` · last sync ${last}` : ""}`,
+          });
+        }
+      }
+      if (items.length === 0) {
+        await vscode.window.showInformationMessage(
+          "VSCodeSync: в открытых папках нет подключённых workspace.",
+        );
+        return;
+      }
+      // Recent first
+      items.sort((a, b) => (a.lastSync < b.lastSync ? 1 : a.lastSync > b.lastSync ? -1 : 0));
+      const picked = await vscode.window.showQuickPick(items, {
+        title: "VSCodeSync · быстрое переключение workspace",
+        placeHolder: "Выберите workspace для просмотра / Resume / Suspend",
+        matchOnDescription: true,
+        matchOnDetail: true,
+      });
+      if (!picked) return;
+      // Focus the Workspaces view so the user lands in context. Resume of a
+      // suspended workspace is one click away from there; we don't try to
+      // synthesise a SyncTreeElement here because the view will rebuild it.
+      await vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
+      if (picked.suspended) {
+        await vscode.window.showInformationMessage(
+          `«${picked.label.replace(/^\$\([^)]+\)\s*/, "")}» в режиме Suspend — нажмите Resume в дереве.`,
+        );
+      }
+    }),
 
     vscode.commands.registerCommand("vscodesync.suspendWorkspace", async (arg?: unknown) => {
       let root: string | undefined;
@@ -2547,10 +2712,6 @@ export function activate(context: vscode.ExtensionContext): void {
       void refreshActiveEditorSyncContext();
     }),
 
-    vscode.commands.registerCommand("vscodesync.migrateProvider", async () => {
-      await vscode.commands.executeCommand("vscodesync.migrateToAnotherProvider");
-    }),
-
     vscode.commands.registerCommand("vscodesync.purgeEncryptedWorkspace", async () => {
       const root = pickRoot();
       if (!root) {
@@ -2588,8 +2749,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeFilePush",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "file") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "file") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -2614,8 +2775,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand(
       "vscodesync.treeFilePull",
-      async (el: SyncTreeElement) => {
-        if (!el || el.kind !== "file") {
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "file") {
           return;
         }
         const rootPath = el.folderRoot.fsPath;
@@ -2636,8 +2797,8 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
 
-    vscode.commands.registerCommand("vscodesync.treeFileShowHistory", async (el: SyncTreeElement) => {
-      if (!el || el.kind !== "file") {
+    vscode.commands.registerCommand("vscodesync.treeFileShowHistory", async (el: SyncTreeElement | undefined) => {
+      if (el?.kind !== "file") {
         return;
       }
       const wc = await WorkspaceConfigManager.load(el.folderRoot.fsPath);
@@ -2648,8 +2809,8 @@ export function activate(context: vscode.ExtensionContext): void {
       await runShowFileHistory(runWithEngine, globalConfig, { root: el.folderRoot.fsPath, fsPath: abs });
     }),
 
-    vscode.commands.registerCommand("vscodesync.treeFileOpenInCloud", async (el: SyncTreeElement) => {
-      if (!el || el.kind !== "file") {
+    vscode.commands.registerCommand("vscodesync.treeFileOpenInCloud", async (el: SyncTreeElement | undefined) => {
+      if (el?.kind !== "file") {
         return;
       }
       const wc = await WorkspaceConfigManager.load(el.folderRoot.fsPath);
@@ -2660,8 +2821,8 @@ export function activate(context: vscode.ExtensionContext): void {
       await openTrackedFileInCloudStorage(registry, globalConfig, { root: el.folderRoot.fsPath, fsPath: abs });
     }),
 
-    vscode.commands.registerCommand("vscodesync.treeFileKeepMine", async (el: SyncTreeElement) => {
-      if (!el || el.kind !== "file") {
+    vscode.commands.registerCommand("vscodesync.treeFileKeepMine", async (el: SyncTreeElement | undefined) => {
+      if (el?.kind !== "file") {
         return;
       }
       const rootPath = el.folderRoot.fsPath;
@@ -2690,8 +2851,8 @@ export function activate(context: vscode.ExtensionContext): void {
       void refreshActiveEditorSyncContext();
     }),
 
-    vscode.commands.registerCommand("vscodesync.treeFileTakeTheirs", async (el: SyncTreeElement) => {
-      if (!el || el.kind !== "file") {
+    vscode.commands.registerCommand("vscodesync.treeFileTakeTheirs", async (el: SyncTreeElement | undefined) => {
+      if (el?.kind !== "file") {
         return;
       }
       const rootPath = el.folderRoot.fsPath;
@@ -2729,8 +2890,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Force sync: push local version despite a soft lock from another machine
   context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.treeFileForceSync", async (el: SyncTreeElement) => {
-      if (!el || el.kind !== "file") {
+    vscode.commands.registerCommand("vscodesync.treeFileForceSync", async (el: SyncTreeElement | undefined) => {
+      if (el?.kind !== "file") {
         return;
       }
       const who = el.editingByName ?? el.editingBy ?? "другой машины";
@@ -3045,7 +3206,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return rel !== ".." && !rel.startsWith(`..${path.sep}`);
       };
 
-      let rawPaths: string[] = selectedUris
+      const rawPaths: string[] = selectedUris
         ? selectedUris.map((u) => u.fsPath).filter((p) => underRoot(p))
         : [target.fsPath];
 
@@ -4284,15 +4445,15 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const cfg = await globalConfig.load();
       const engine = makeEngine(folderRoot, provider, cfg.machineId, cfg.machineName);
-      console.log(`[VSS:startup] pullAll START ${folderRoot}`);
+      verboseLog("startup", `pullAll START ${folderRoot}`);
       statusBar.setSyncing(true);
       try {
         await engine.pullAll();
-      } catch (e) {
+      } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         startupChannel.appendLine(`Pull (${folderRoot}): ${msg}`);
       } finally {
-        console.log(`[VSS:startup] pullAll DONE ${folderRoot}`);
+        verboseLog("startup", `pullAll DONE ${folderRoot}`);
         statusBar.setSyncing(false);
         await statusBar.refresh();
         workspacesTree.refresh();
@@ -4356,17 +4517,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!gc.activeProvider) {
         return;
       }
-      // Only OneDrive has no auto-refresh — check if stored token is expired
+      // Only OneDrive has no auto-refresh — check if stored token is expired or
+      // close to it (7-day soft warning via classifyExpiry).
       if (gc.activeProvider === "onedrive") {
         const bundle = await readOneDriveTokenBundle(context.secrets);
-        if (bundle && bundle.expiresAtMs < Date.now()) {
-          const choice = await vscode.window.showWarningMessage(
-            "VSCodeSync: токен OneDrive истёк. Выполните повторную авторизацию для продолжения синхронизации.",
-            "Войти снова",
-            "Пропустить",
-          );
-          if (choice === "Войти снова") {
-            await vscode.commands.executeCommand("vscodesync.onedriveSignIn");
+        if (bundle) {
+          const hint = classifyExpiry(bundle.expiresAtMs);
+          const msg = formatExpiryHint("OneDrive", hint);
+          if (msg) {
+            const choice = await vscode.window.showWarningMessage(
+              msg,
+              "Войти снова",
+              "Пропустить",
+            );
+            if (choice === "Войти снова") {
+              await vscode.commands.executeCommand("vscodesync.onedriveSignIn");
+            }
           }
         }
       }
@@ -4525,6 +4691,148 @@ export function activate(context: vscode.ExtensionContext): void {
     await statusBar.refresh();
     workspacesTree.refresh();
   })();
+
+  // Weekly background Health Check — silent on green, toast on warnings.
+  void (async () => {
+    const gcInit = await globalConfig.load();
+    registerHealthAutoCheck(context, {
+      globalConfig,
+      tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+      createEngine: (root, p) => makeEngine(root, p, gcInit.machineId, gcInit.machineName),
+      activeProvider: gcInit.activeProvider,
+      machineId: gcInit.machineId,
+      machineName: gcInit.machineName,
+      offlineQueue: offlineQueueStore,
+      scheduleDeferred: scheduleDeferredStore,
+    });
+  })();
+
+  // vscode://borodatych.vscodesyncfiles/connect?provider=...&workspaceId=...
+  // Lets a second machine import a workspace by following a share-link.
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri): void {
+        void (async () => {
+          if (uri.path !== "/connect") return;
+          const params = new URLSearchParams(uri.query);
+          const workspaceId = params.get("workspaceId")?.trim();
+          const provider = params.get("provider")?.trim();
+          if (!workspaceId) return;
+          const choice = await vscode.window.showInformationMessage(
+            `VSCodeSync: получен link для workspace ${workspaceId}${provider ? ` (${provider})` : ""}. Подключить?`,
+            "Подключить",
+            "Открыть провайдер-онбординг",
+            "Отмена",
+          );
+          if (choice === "Открыть провайдер-онбординг") {
+            await vscode.commands.executeCommand("vscodesync.startOnboarding");
+            return;
+          }
+          if (choice === "Подключить") {
+            // Pre-select provider if specified.
+            if (provider) {
+              const gc = await globalConfig.load();
+              if (gc.activeProvider !== provider && ["onedrive", "gdrive", "yandex", "dropbox"].includes(provider)) {
+                await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+              }
+            }
+            await vscode.commands.executeCommand("vscodesync.connectCloudWorkspace");
+          }
+        })();
+      },
+    }),
+  );
+
+  // Command: copy a share-link for the current workspace to clipboard.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vscodesync.shareWorkspaceLink", async () => {
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      if (folders.length === 0) return;
+      const wc = await WorkspaceConfigManager.load(folders[0].uri.fsPath);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace для расшаривания.");
+        return;
+      }
+      const pick = wc.activeWorkspaces.length === 1
+        ? wc.activeWorkspaces[0]
+        : await vscode.window.showQuickPick(
+            wc.activeWorkspaces.map((w) => ({ label: w.workspaceNote, description: w.workspaceId, w })),
+            { placeHolder: "Workspace для расшаривания" },
+          ).then((p) => p?.w);
+      if (!pick) return;
+      const gc = await globalConfig.load();
+      const provider = gc.activeProvider ?? "onedrive";
+      const link = `vscode://borodatych.vscodesyncfiles/connect?provider=${encodeURIComponent(provider)}&workspaceId=${encodeURIComponent(pick.workspaceId)}`;
+      await vscode.env.clipboard.writeText(link);
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: link скопирован в буфер обмена. Откройте его на другой машине, чтобы подключить workspace «${pick.workspaceNote}».`,
+      );
+    }),
+  );
+
+  // Activity-feed saved searches and panel webviews — registered via per-area
+  // command modules (см. v2.6 декомпозицию `extension.ts`).
+  context.subscriptions.push(
+    ...registerActivitySearchCommands({ context }),
+    ...registerPanelCommands({ context, storageDir: globalConfig.getStorageDir() }),
+
+    vscode.commands.registerCommand("vscodesync.pinFileForSync", async (uri?: vscode.Uri) => {
+      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (target?.scheme !== "file") {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте файл для pin.");
+        return;
+      }
+      const folder = vscode.workspace.getWorkspaceFolder(target);
+      if (!folder) return;
+      const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+      const rel = path.relative(folder.uri.fsPath, target.fsPath).split(path.sep).join("/");
+      const tf = wc.files.find((f) => f.localPath === rel);
+      if (!tf) {
+        await vscode.window.showWarningMessage(
+          "VSCodeSync: файл не отслеживается — добавьте его в workspace.",
+        );
+        return;
+      }
+      await offlineQueueStore.enqueuePush(folder.uri.fsPath, rel, tf.workspaceId, true);
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: «${rel}» закреплён в начале очереди — выгрузится первым при следующем flush.`,
+      );
+    }),
+  );
+
+  // Live presence heartbeat — opt-in via `presenceHeartbeatMinutes`.
+  registerPresenceHeartbeat(context, {
+    globalConfig,
+    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+  });
+
+  // Cross-cloud backup mirror — opt-in via `backup.secondaryProvider`.
+  registerCrossCloudBackup(context, {
+    globalConfig,
+    registry,
+    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+  });
+
+  // Scheduled snapshots (daily / weekly via vscodesync.snapshotSchedule).
+  registerScheduledSnapshots(context, {
+    getCandidateFolders: () => vscode.workspace.workspaceFolders ?? [],
+    snapshotFolder: async (folderRoot) => {
+      const wc = await WorkspaceConfigManager.load(folderRoot);
+      if (wc.activeWorkspaces.length === 0) return;
+      const provider = await tryAuthenticatedProvider(registry);
+      if (!provider) return;
+      const gc = await globalConfig.load();
+      for (const aw of wc.activeWorkspaces) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        try {
+          const { createWorkspaceSnapshot } = await import("./core/snapshotsEngine.js");
+          await createWorkspaceSnapshot(provider, folderRoot, aw.workspaceId, `auto-${stamp}`, gc.machineName);
+        } catch {
+          /* non-fatal — surfaces in next manual snapshot */
+        }
+      }
+    },
+  });
 }
 
 export function deactivate(): void {

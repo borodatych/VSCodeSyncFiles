@@ -57,59 +57,57 @@ export async function runYandexOAuthLoopback(
 
   await new Promise<void>((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      void (async () => {
-        try {
-          // Step 1: Yandex redirects here with #access_token in fragment — serve HTML shim
-          if (req.method === "GET" && req.url?.startsWith(YANDEX_OAUTH_REDIRECT_PATH)) {
-            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            res.end(shimHtml);
-            return;
-          }
-
-          // Step 2: Shim POSTs the extracted token here
-          if (req.method === "POST" && req.url === "/token-received") {
-            const chunks: Buffer[] = [];
-            req.on("data", (c: Buffer) => chunks.push(c));
-            req.on("end", () => {
-              void (async () => {
-                res.writeHead(200, { "Content-Type": "text/plain" });
-                res.end("ok");
-                server.close();
-                try {
-                  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-                    access_token?: string;
-                    expires_in?: string;
-                    error?: string;
-                  };
-                  if (body.error) {
-                    reject(new Error(body.error));
-                    return;
-                  }
-                  if (!body.access_token) {
-                    reject(new Error("Токен не получен"));
-                    return;
-                  }
-                  const expiresIn = Number(body.expires_in ?? 31536000);
-                  await storeYandexTokens(secrets, {
-                    accessToken: body.access_token,
-                    expiresAtMs: Date.now() + expiresIn * 1000,
-                  });
-                  resolve();
-                } catch (e) {
-                  reject(e instanceof Error ? e : new Error(String(e)));
-                }
-              })();
-            });
-            return;
-          }
-
-          res.writeHead(404, { "Content-Type": "text/plain" });
-          res.end("not found");
-        } catch (e) {
-          server.close();
-          reject(e instanceof Error ? e : new Error(String(e)));
+      try {
+        // Step 1: Yandex redirects here with #access_token in fragment — serve HTML shim
+        if (req.method === "GET" && req.url?.startsWith(YANDEX_OAUTH_REDIRECT_PATH)) {
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(shimHtml);
+          return;
         }
-      })();
+
+        // Step 2: Shim POSTs the extracted token here
+        if (req.method === "POST" && req.url === "/token-received") {
+          const chunks: Buffer[] = [];
+          req.on("data", (c: Buffer) => chunks.push(c));
+          req.on("end", () => {
+            void (async () => {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.end("ok");
+              server.close();
+              try {
+                const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+                  access_token?: string;
+                  expires_in?: string;
+                  error?: string;
+                };
+                if (body.error !== undefined && body.error.length > 0) {
+                  reject(new Error(body.error));
+                  return;
+                }
+                if (body.access_token === undefined || body.access_token.length === 0) {
+                  reject(new Error("Токен не получен"));
+                  return;
+                }
+                const expiresIn = Number(body.expires_in ?? 31536000);
+                await storeYandexTokens(secrets, {
+                  accessToken: body.access_token,
+                  expiresAtMs: Date.now() + expiresIn * 1000,
+                });
+                resolve();
+              } catch (e: unknown) {
+                reject(e instanceof Error ? e : new Error(String(e)));
+              }
+            })();
+          });
+          return;
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+      } catch (e: unknown) {
+        server.close();
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
     });
 
     const to = setTimeout(
@@ -123,7 +121,7 @@ export async function runYandexOAuthLoopback(
     server.on("error", (e: NodeJS.ErrnoException) => {
       clearTimeout(to);
       if (e.code === "EADDRINUSE") {
-        reject(new Error(`Порт ${YANDEX_OAUTH_REDIRECT_PORT} занят. Перезагрузи окно VS Code (Ctrl+Shift+P → Reload Window) и попробуй снова.`));
+        reject(new Error(`Порт ${String(YANDEX_OAUTH_REDIRECT_PORT)} занят. Перезагрузи окно VS Code (Ctrl+Shift+P → Reload Window) и попробуй снова.`));
       } else {
         reject(e);
       }

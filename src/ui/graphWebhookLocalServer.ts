@@ -1,6 +1,9 @@
 import * as http from "node:http";
 import { URL } from "node:url";
 
+/** Hard cap on POST body size we are willing to buffer (DoS protection). */
+const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
+
 export interface StartGraphWebhookLocalServerOptions {
   port: number;
   /** Microsoft Graph `clientState` in JSON notification batches. */
@@ -52,11 +55,31 @@ export async function startGraphWebhookLocalServer(
         return;
       }
 
+      const declared = Number(req.headers["content-length"] ?? "0");
+      if (Number.isFinite(declared) && declared > MAX_WEBHOOK_BODY_BYTES) {
+        res.writeHead(413);
+        res.end();
+        req.resume();
+        return;
+      }
       const chunks: Buffer[] = [];
-      req.on("data", (d) => {
-        chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d));
+      let total = 0;
+      let aborted = false;
+      req.on("data", (d: unknown) => {
+        if (aborted) return;
+        const buf = Buffer.isBuffer(d) ? d : Buffer.from(d as ArrayBufferView | string);
+        total += buf.length;
+        if (total > MAX_WEBHOOK_BODY_BYTES) {
+          aborted = true;
+          res.writeHead(413);
+          res.end();
+          req.destroy();
+          return;
+        }
+        chunks.push(buf);
       });
       req.on("end", () => {
+        if (aborted) return;
         try {
           const raw = Buffer.concat(chunks).toString("utf8");
           if (raw.length > 0) {

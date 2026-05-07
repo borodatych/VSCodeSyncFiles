@@ -28,7 +28,7 @@ export function resolveEffectiveSyncRoot(
   machineName: string,
 ): { effectiveRoot: string } {
   const ws = path.resolve(workspaceRoot);
-  const key = (machineName ?? "").trim();
+  const key = machineName.trim();
   const mappedRaw = key !== "" ? pathMapping?.[key]?.trim() : undefined;
   if (!mappedRaw) {
     return { effectiveRoot: ws };

@@ -28,7 +28,7 @@ import { noteProviderApiRequest } from "./syncRateLimitState.js";
  */
 export function wrapWithQueue(provider: ICloudProvider): ICloudProvider {
   const q = (): ReturnType<typeof getGlobalQueue> => getGlobalQueue(provider.type);
-  const track = (): void => noteProviderApiRequest(provider.type);
+  const track = (): void => { noteProviderApiRequest(provider.type); };
 
   const wrapped: ICloudProvider = {
     get type() {

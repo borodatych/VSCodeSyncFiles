@@ -580,22 +580,39 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
 
   private async workspacesUnderFolder(folder: vscode.WorkspaceFolder): Promise<SyncTreeElement[]> {
     const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-    return wc.activeWorkspaces
+    // Pre-compute lastSync per workspace once: max(file.lastSync) within the workspace.
+    const lastSyncByWs = new Map<string, string>();
+    for (const f of wc.files) {
+      if (!f.lastSync) continue;
+      const cur = lastSyncByWs.get(f.workspaceId) ?? "";
+      if (f.lastSync > cur) lastSyncByWs.set(f.workspaceId, f.lastSync);
+    }
+    const visible = wc.activeWorkspaces
       .filter((e) => this.workspaceRowVisible(e))
-      .filter((e) => !this._pendingDeleteIds.has(e.workspaceId))
-      .map((e) => {
-        const health = workspaceHealthFromLocalCfg(wc, e.workspaceId);
-        return {
-          kind: "workspace" as const,
-          folderRoot: folder.uri,
-          workspaceId: e.workspaceId,
-          note: e.workspaceNote,
-          tags: e.tags ?? [],
-          manifestMachines: e.manifestMachines ?? [],
-          health,
-          syncState: e.syncState,
-        };
-      });
+      .filter((e) => !this._pendingDeleteIds.has(e.workspaceId));
+    // Sort by recent activity (lastSync desc); workspaces without activity fall
+    // to the end alphabetically so the list stays stable.
+    visible.sort((a, b) => {
+      const la = lastSyncByWs.get(a.workspaceId) ?? "";
+      const lb = lastSyncByWs.get(b.workspaceId) ?? "";
+      if (la && lb) return la < lb ? 1 : la > lb ? -1 : 0;
+      if (la) return -1;
+      if (lb) return 1;
+      return a.workspaceNote.localeCompare(b.workspaceNote);
+    });
+    return visible.map((e) => {
+      const health = workspaceHealthFromLocalCfg(wc, e.workspaceId);
+      return {
+        kind: "workspace" as const,
+        folderRoot: folder.uri,
+        workspaceId: e.workspaceId,
+        note: e.workspaceNote,
+        tags: e.tags ?? [],
+        manifestMachines: e.manifestMachines ?? [],
+        health,
+        syncState: e.syncState,
+      };
+    });
   }
 
   private async filesUnderWorkspace(ws: Extract<SyncTreeElement, { kind: "workspace" }>): Promise<SyncTreeElement[]> {
