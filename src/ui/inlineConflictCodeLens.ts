@@ -28,16 +28,19 @@ export class InlineConflictCodeLensProvider implements vscode.CodeLensProvider, 
     const lenses: vscode.CodeLens[] = [];
     for (const block of blocks) {
       const top = new vscode.Range(block.startLine, 0, block.startLine, 0);
+      // Pass the 1-based line range so the heatmap records real ranges
+      // instead of the file-level "1..1" sentinel.
+      const rangeArg = { startLine: block.startLine + 1, endLine: block.endLine + 1 };
       lenses.push(
         new vscode.CodeLens(top, {
           title: "$(check) Keep mine",
-          command: "vscodesync.keepMine",
-          arguments: [document.uri],
+          command: "vscodesync.keepMineWithRange",
+          arguments: [document.uri, rangeArg],
         }),
         new vscode.CodeLens(top, {
           title: "$(arrow-down) Take theirs",
-          command: "vscodesync.takeTheirs",
-          arguments: [document.uri],
+          command: "vscodesync.takeTheirsWithRange",
+          arguments: [document.uri, rangeArg],
         }),
       );
       if (aiOn) {

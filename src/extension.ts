@@ -988,17 +988,12 @@ export function activate(context: vscode.ExtensionContext): void {
     } else if (ev.kind === "conflict") {
       recordDigestConflict(ev.relPath);
     }
-    // Feed into conflict heatmap (file-level — line ranges aren't surfaced
-    // by the resolve commands; the helper clusters by overlapping ranges so
-    // sentinel 1..1 collapses to "file-level entry").
-    if (ev.kind === "resolve_keep_mine" || ev.kind === "resolve_take_theirs") {
-      void (async () => {
-        try {
-          const { recordConflictResolution } = await import("./ui/conflictHeatmapStoreFs.js");
-          await recordConflictResolution(globalConfig.getStorageDir(), ev.relPath);
-        } catch { /* heatmap is best-effort; silent on I/O errors */ }
-      })();
-    }
+    // The conflict heatmap is fed only by the inline-CodeLens commands
+    // (vscodesync.{keepMine,takeTheirs}WithRange) which know the real line
+    // range of the resolved block. Tree- and palette-level resolve commands
+    // operate file-level and are intentionally not recorded — a file-level
+    // 1..1 sentinel hid the actual hot-zones in the data.
+
     // Feed into the sync-replay recorder when an active session is running.
     void (async () => {
       try {
@@ -3004,7 +2999,43 @@ export function activate(context: vscode.ExtensionContext): void {
         notifiedConflictKeys.delete(`${fileEntry.workspaceId}:${rel}`);
       }, target.root);
     }),
+
+    // Inline-CodeLens variants — same effect, but record the conflict's real
+    // line range in the heatmap before delegating. Internal commands (no
+    // palette title) so users still see "Keep mine" / "Take theirs" in the
+    // command center.
+    vscode.commands.registerCommand(
+      "vscodesync.keepMineWithRange",
+      async (uri: vscode.Uri | undefined, range: { startLine: number; endLine: number } | undefined) => {
+        await recordHeatmapRangeForUri(uri, range);
+        await vscode.commands.executeCommand("vscodesync.keepMine", uri);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "vscodesync.takeTheirsWithRange",
+      async (uri: vscode.Uri | undefined, range: { startLine: number; endLine: number } | undefined) => {
+        await recordHeatmapRangeForUri(uri, range);
+        await vscode.commands.executeCommand("vscodesync.takeTheirs", uri);
+      },
+    ),
   );
+
+  async function recordHeatmapRangeForUri(
+    uri: vscode.Uri | undefined,
+    range: { startLine: number; endLine: number } | undefined,
+  ): Promise<void> {
+    if (!uri || !range) return;
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (!folder) return;
+    const rel = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/");
+    if (!rel || rel.startsWith("..")) return;
+    try {
+      const { recordConflictResolution } = await import("./ui/conflictHeatmapStoreFs.js");
+      await recordConflictResolution(globalConfig.getStorageDir(), rel, range.startLine, range.endLine);
+    } catch {
+      /* heatmap is best-effort; silent on I/O errors */
+    }
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("vscodesync.showStatus", async () => {
