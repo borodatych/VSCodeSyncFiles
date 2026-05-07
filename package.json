@@ -935,6 +935,10 @@
         "title": "%cmd.showStorageReport.title%"
       },
       {
+        "command": "vscodesync.showInsightsWeeklyDigest",
+        "title": "%cmd.showInsightsWeeklyDigest.title%"
+      },
+      {
         "command": "vscodesync.detectGarbageTracked",
         "title": "%cmd.detectGarbageTracked.title%"
       },

@@ -31,6 +31,6 @@
 - [ ] Smart Conflict Prediction (M) — требует расширения `editingBy[path]` и presence wire
 - [ ] Bulk Push Wizard (M) — требует engine.pushAll progress callback
 - [ ] Hover Diff Preview (M) — требует API «diff summary без раскачки blob»
-- [ ] Workspace Templates / Achievements / Insights weekly digest
+- [~] Workspace Templates / Achievements / **Insights weekly digest** — Insights weekly digest сделан: `src/core/insightsWeeklyDigest.ts` (pure: `buildWeeklyDigest / formatWeeklyDigest`, 9 unit-тестов; window 7 дней по умолчанию, агрегаты по kind / file / machine / workspace / day, busiest/quietest day) + команда `vscodesync.showInsightsWeeklyDigest` (OutputChannel). Templates / Achievements — пока skeleton-ниша (см. отдельный пункт).
 - [x] Wiring F1/F2/F3/F5 в реальные UI-points — закрыто в Phase 13 как W1–W5 (sparkline → status bar; online indicator → quick-transfer; mass-delete guard → putManifest pre-flight; AI commit message → snapshot InputBox; formatNotification → unified notifications + digest).
 - [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way`

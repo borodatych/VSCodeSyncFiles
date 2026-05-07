@@ -110,6 +110,7 @@
   "cmd.aiPathMapper.title": "VSCodeSync: AI Path Mapper (переадресовать абсолютные пути)",
   "cmd.showConflictHeatmap.title": "VSCodeSync: Показать heatmap конфликтов",
   "cmd.showStorageReport.title": "VSCodeSync: Показать отчёт по облачному хранилищу",
+  "cmd.showInsightsWeeklyDigest.title": "VSCodeSync: Insights — недельный отчёт",
   "cmd.detectGarbageTracked.title": "VSCodeSync: Найти мусорные tracked файлы (предложить .vscodesync.ignore)",
   "cmd.startSyncRecording.title": "VSCodeSync: Начать запись sync-сессии (replay)",
   "cmd.stopSyncRecording.title": "VSCodeSync: Остановить запись и сохранить replay JSON",

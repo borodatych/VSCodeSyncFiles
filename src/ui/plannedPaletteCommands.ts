@@ -916,6 +916,18 @@ export function registerPlannedPaletteCommands(
       }
       channel.show(true);
     }),
+    vscode.commands.registerCommand("vscodesync.showInsightsWeeklyDigest", async () => {
+      const { loadActivityFile } = await import("../core/activityLog.js");
+      const { buildWeeklyDigest, formatWeeklyDigest } = await import(
+        "../core/insightsWeeklyDigest.js"
+      );
+      const file = await loadActivityFile(extras.globalConfig.getStorageDir());
+      const digest = buildWeeklyDigest({ events: file.events, nowMs: Date.now() });
+      const channel = vscode.window.createOutputChannel("VSCodeSync · insights");
+      channel.clear();
+      channel.appendLine(formatWeeklyDigest(digest));
+      channel.show(true);
+    }),
   );
 }
 
