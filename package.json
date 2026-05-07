@@ -1,0 +1,1302 @@
+{
+  "name": "vscodesyncfiles",
+  "displayName": "VSCodeSyncFiles",
+  "description": "Синхронизация отдельных файлов между машинами через облако",
+  "version": "0.4.0",
+  "license": "MIT",
+  "publisher": "borodatych",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/borodatych/VSCodeSyncFiles.git"
+  },
+  "homepage": "https://github.com/borodatych/VSCodeSyncFiles#readme",
+  "bugs": {
+    "url": "https://github.com/borodatych/VSCodeSyncFiles/issues"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "icon": "media/vscodesync.png",
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "browser": "./dist/extension.web.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "submenus": [
+      {
+        "id": "vscodesync.submenu",
+        "label": "VSCodeSync"
+      }
+    ],
+    "configuration": {
+      "title": "VSCodeSync",
+      "properties": {
+        "vscodesync.onedriveClientId": {
+          "type": "string",
+          "default": "",
+          "description": "Azure AD public client ID для входа OneDrive (device code)"
+        },
+        "vscodesync.googleDriveClientId": {
+          "type": "string",
+          "default": "",
+          "description": "OAuth 2.0 Client ID (Desktop) для Google Drive (Google Cloud Console → APIs & Services → Credentials)"
+        },
+        "vscodesync.dropboxAppKey": {
+          "type": "string",
+          "default": "lsuphteciqwcykn",
+          "description": "App key Dropbox (OAuth). Оставьте пустым для использования встроенного. В консоли приложения добавьте redirect URI: http://127.0.0.1:8734/oauth-callback"
+        },
+        "vscodesync.yandexOAuthClientId": {
+          "type": "string",
+          "default": "6ee27a62c3ba4b05a69b682bef342570",
+          "description": "OAuth Client ID Яндекса. Оставьте пустым для использования встроенного. Redirect URI: http://127.0.0.1:8735/oauth-callback. Права зависят от vscodesync.yandexUseAppFolder."
+        },
+        "vscodesync.yandexUseAppFolder": {
+          "type": "boolean",
+          "default": false,
+          "description": "Использовать папку приложения Яндекс Диска (scope: cloud_api:disk.app_folder, путь app:/…). Файлы хранятся в «Приложения/{имя_приложения}/» и недоступны другим приложениям. При изменении этой настройки требуется повторная авторизация."
+        },
+        "vscodesync.notificationLevel": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "normal",
+            "verbose"
+          ],
+          "default": "normal",
+          "description": "Уровень уведомлений VSCodeSync (minimal / normal / verbose)"
+        },
+        "vscodesync.showFileDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Показывать значки синхронизации на файлах в проводнике"
+        },
+        "vscodesync.maxFileSizeMB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Максимальный размер одного файла для синхронизации (МБ). 0 — без лимита"
+        },
+        "vscodesync.warnOnBinaryFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Предупреждать перед синхронизацией, если файл похож на двоичный"
+        },
+        "vscodesync.showPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Показывать подтверждение перед добавлением файла в синхронизацию и перед Pull/Push/Sync workspace из панели Workspaces (план в Output + модальное окно)"
+        },
+        "vscodesync.syncSummaryOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "После запуска VS Code выполнить Pull для активных workspace и показать сводку, если локальное состояние отличается после pull"
+        },
+        "vscodesync.telemetry": {
+          "type": "boolean",
+          "default": false,
+          "description": "Разрешить телеметрию расширения (агрегаты: провайдер, число workspace, версия). Пути и имена файлов не отправляются. Учитывается также глобальная настройка телеметрии VS Code."
+        },
+        "vscodesync.telemetryIngestUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Необязательный URL приёма событий (POST JSON). Пусто — только канал телеметрии VS Code, без внешнего сервера (Application Insights / Posthog и т.п.). Только http(s) без учётных данных в URL."
+        },
+        "vscodesync.quickTransferTtlDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Сколько дней разовая передача (Quick Transfer) хранится в облаке"
+        },
+        "vscodesync.compressUploads": {
+          "type": "boolean",
+          "default": false,
+          "description": "Gzip сжатие текстовых файлов на загрузке; blob в облаке с суффиксом `.gz`, флаг `_meta.files[].wireGzip`. Несовместимо с шифрованием workspace — при включённом encryption сжатие отключается."
+        },
+        "vscodesync.lineEnding": {
+          "type": "string",
+          "enum": [
+            "lf",
+            "crlf",
+            "preserve"
+          ],
+          "default": "lf",
+          "description": "Нормализация окончаний строк при каноническом хэше и синхронизации: lf / crlf / preserve"
+        },
+        "vscodesync.fileEncoding": {
+          "type": "string",
+          "enum": [
+            "utf8"
+          ],
+          "default": "utf8",
+          "description": "Только UTF-8 в v1; при BOM или невалидном UTF-8 в текстовых файлах показывается предупреждение"
+        },
+        "vscodesync.workspaceInactiveDays": {
+          "type": "number",
+          "default": 90,
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "Если давность синхронизации (max lastSync среди файлов workspace) превышает столько дней — при старте предложить архивировать (0 — отключить проверку)"
+        },
+        "vscodesync.batchAddWarnThreshold": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "description": "Порог количества файлов для предупреждения при пакетном добавлении"
+        },
+        "vscodesync.pushOnCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Триггер push при коммите (фаза Reliability)"
+        },
+        "vscodesync.conflictRules": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Правила разрешения конфликтов (зарезервировано)"
+        },
+        "vscodesync.localBackupEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Локальный бэкап перед перезаписью при pull"
+        },
+        "vscodesync.localBackupRetentionDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 0,
+          "description": "Сколько дней хранить файлы в vscodesync-local-backup"
+        },
+        "vscodesync.snapshotRetentionDays": {
+          "type": "number",
+          "default": 180,
+          "minimum": 1,
+          "description": "TTL снапшотов workspace в облаке (дней)"
+        },
+        "vscodesync.maxSnapshotsPerWorkspace": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "Максимум снапшотов на один workspace"
+        },
+        "vscodesync.longAbsenceThresholdDays": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Порог «долгого отсутствия» для подсказок (дней)"
+        },
+        "vscodesync.monthlyBandwidthLimitMB": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Лимит трафика в месяц (МБ), 0 — без лимита"
+        },
+        "vscodesync.syncOnFocusDelayMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 0,
+          "description": "Задержка sync при фокусе окна (мс, фаза Reliability)"
+        },
+        "vscodesync.syncOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "При открытии отслеживаемого файла — pull, если в облаке новее (тихий conditional GET)"
+        },
+        "vscodesync.smartSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Анализ activity.json: подсказка сгруппировать часто синхронизируемые файлы; ранний вопрос об архиве (~60 дн.) если workspaceInactiveDays > 60"
+        },
+        "vscodesync.digestIntervalMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "Интервал дайджеста уведомлений (мин)"
+        },
+        "vscodesync.activityRetentionDays": {
+          "type": "number",
+          "default": 90,
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Сколько дней хранить записи Activity Feed в ~/.vscode/vscodeSync/activity.json"
+        },
+        "vscodesync.requireMachineApproval": {
+          "type": "boolean",
+          "default": false,
+          "description": "Требовать одобрение новой машины в workspace"
+        },
+        "vscodesync.pauseOnMeteredConnection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Пауза sync на лимитированном соединении"
+        },
+        "vscodesync.pauseBatteryThreshold": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Процент батареи — ниже этого приостанавливать sync (0 — отключено)"
+        },
+        "vscodesync.encryption": {
+          "type": "boolean",
+          "default": false,
+          "description": "Включить E2E-шифрование (AES-256-GCM) перед загрузкой на облако. Требует наличия ключа в SecretStorage. Первый Push после включения зашифрует данные; Pull на другой машине требует импорта того же ключа."
+        },
+        "vscodesync.aiMerge": {
+          "type": "boolean",
+          "default": false,
+          "description": "Включить AI-слияние конфликтов через VS Code Language Model API (Copilot). При активном конфликте в диалоге появляется кнопка «✨ Merge with AI». Требует активного Copilot-подписки."
+        },
+        "vscodesync.webhooks.tunnelEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Запустить встроенный smee.io туннель для webhooks при включённом режиме Watch + webhooks. Туннель даёт публичный URL для OneDrive/Google Drive без белого IP."
+        },
+        "vscodesync.gitBranchAutoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "При смене git-ветки: Suspend для VSCodeSync workspace'ов с другим gitBranch в манифесте; активация и sync для совпадающих. Требует расширение Git и настройку gitBranch (команда Set Git Branch for Workspace)."
+        },
+        "vscodesync.watchMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Режим наблюдения (фоновый sync — фаза Reliability)"
+        },
+        "vscodesync.watchIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "Интервал опроса в watch mode (сек)"
+        },
+        "vscodesync.watchMaxIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 30,
+          "description": "Максимальный интервал backoff watch mode (сек)"
+        },
+        "vscodesync.watchAdaptive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Адаптивный интервал watch mode"
+        },
+        "vscodesync.syncSchedule": {
+          "type": "object",
+          "markdownDescription": "Окно времени для **автоматических** триггеров (onSave debounce, onFocus, onOpen, Git push-on-commit, watch poll, startup pull). Ручные команды VSCodeSync выполняются всегда. Вне окна операции накапливаются в `schedule-deferred.json` в каталоге расширения и выполняются при входе в активное окно.",
+          "default": {
+            "enabled": false,
+            "activeHours": "09:00-18:00",
+            "activeDays": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri"
+            ],
+            "timezone": "auto"
+          },
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Включить ограничение автосинхронизации по расписанию"
+            },
+            "activeHours": {
+              "type": "string",
+              "default": "09:00-18:00",
+              "description": "Интервал локального времени «HH:mm-HH:mm» (допускается переход через полночь)"
+            },
+            "activeDays": {
+              "type": "array",
+              "default": [
+                "Mon",
+                "Tue",
+                "Wed",
+                "Thu",
+                "Fri"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "description": "Дни недели (Mon…Sun или полные имена). Пустой список = все дни"
+            },
+            "timezone": {
+              "type": "string",
+              "default": "auto",
+              "description": "IANA (Europe/Moscow) или auto — системная зона"
+            }
+          },
+          "additionalProperties": true
+        },
+        "vscodesync.deltaSync": {
+          "type": "boolean",
+          "default": false,
+          "description": "Дельта-синхронизация больших файлов"
+        },
+        "vscodesync.deltaThresholdKB": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "description": "Порог размера (КБ) для дельта-sync"
+        },
+        "vscodesync.webhooks.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Включить webhook уведомления"
+        },
+        "vscodesync.webhooks.url": {
+          "type": "string",
+          "default": "",
+          "description": "Публичный HTTPS URL для Microsoft Graph (например ngrok → локальный порт). Должен совпадать с тем, что прокидывает туннель на webhooks.localPort."
+        },
+        "vscodesync.webhooks.localPort": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Локальный HTTP-порт (127.0.0.1) для приёма validation и уведомлений Graph. 0 — не слушать локально (внешний relay сам принимает POST)."
+        },
+        "vscodesync.webhooks.fallbackAfterMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 10080,
+          "description": "Watch Mode: если за это время не было push-уведомлений от Graph, снова использовать interval polling и показать предупреждение. 0 — не переключаться на polling из-за тишины (только пока активна подписка)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscodesync",
+          "title": "VSCodeSync",
+          "icon": "media/vscodesync.svg"
+        }
+      ]
+    },
+    "views": {
+      "vscodesync": [
+        {
+          "id": "vscodesync.workspaces",
+          "name": "Workspaces"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "vscodesync",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": [
+              "push",
+              "pull",
+              "push-all",
+              "pull-all",
+              "create-snapshot"
+            ],
+            "description": "Операция VSCodeSync: sync по workspace, все файлы или снапшот."
+          },
+          "workspace": {
+            "type": "string",
+            "description": "Идентификатор облачного workspace. Если в папке один workspace — можно опустить."
+          },
+          "file": {
+            "type": "string",
+            "description": "Путь файла относительно корня (POSIX); для push/pull одного файла."
+          },
+          "snapshotName": {
+            "type": "string",
+            "description": "Имя снапшота для задачи create-snapshot."
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "vscodesync.showStatus",
+        "title": "VSCodeSync: Показать статус"
+      },
+      {
+        "command": "vscodesync.createWorkspace",
+        "title": "VSCodeSync: Создать воркспейс",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vscodesync.connectCloudWorkspace",
+        "title": "VSCodeSync: Подключиться к облачному воркспейсу"
+      },
+      {
+        "command": "vscodesync.startOnboarding",
+        "title": "VSCodeSync: Запустить мастер настройки"
+      },
+      {
+        "command": "vscodesync.addCurrentFile",
+        "title": "VSCodeSync: Добавить файл или папку…"
+      },
+      {
+        "command": "vscodesync.addFolderToSync",
+        "title": "VSCodeSync: Добавить папку в синхронизацию"
+      },
+      {
+        "command": "vscodesync.addToNewWorkspace",
+        "title": "VSCodeSync: Добавить в новый воркспейс…"
+      },
+      {
+        "command": "vscodesync.pushAll",
+        "title": "VSCodeSync: Отправить всё"
+      },
+      {
+        "command": "vscodesync.pullAll",
+        "title": "VSCodeSync: Получить всё"
+      },
+      {
+        "command": "vscodesync.syncWorkspace",
+        "title": "VSCodeSync: Синхронизировать воркспейс"
+      },
+      {
+        "command": "vscodesync.pushWorkspace",
+        "title": "VSCodeSync: Отправить воркспейс..."
+      },
+      {
+        "command": "vscodesync.pullWorkspace",
+        "title": "VSCodeSync: Получить воркспейс..."
+      },
+      {
+        "command": "vscodesync.detachWorkspace",
+        "title": "VSCodeSync: Отвязать воркспейс..."
+      },
+      {
+        "command": "vscodesync.renameWorkspaceNote",
+        "title": "VSCodeSync: Переименовать заметку воркспейса"
+      },
+      {
+        "command": "vscodesync.openSyncSettings",
+        "title": "VSCodeSync: Открыть настройки",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "vscodesync.toggleTelemetry",
+        "title": "VSCodeSync: Переключить телеметрию"
+      },
+      {
+        "command": "vscodesync.showSyncSummary",
+        "title": "VSCodeSync: Показать сводку синхронизации"
+      },
+      {
+        "command": "vscodesync.previewSync",
+        "title": "VSCodeSync: Предпросмотр синхронизации..."
+      },
+      {
+        "command": "vscodesync.resolveConflicts",
+        "title": "VSCodeSync: Разрешить конфликты"
+      },
+      {
+        "command": "vscodesync.keepMine",
+        "title": "VSCodeSync: Оставить моё (разрешить конфликт)"
+      },
+      {
+        "command": "vscodesync.takeTheirs",
+        "title": "VSCodeSync: Взять чужое (разрешить конфликт)"
+      },
+      {
+        "command": "vscodesync.openConflictDiff3way",
+        "title": "VSCodeSync: Открыть трёхстороннее сравнение (конфликт)"
+      },
+      {
+        "command": "vscodesync.setActiveProvider",
+        "title": "VSCodeSync: Сменить провайдер"
+      },
+      {
+        "command": "vscodesync.migrateToAnotherProvider",
+        "title": "VSCodeSync: Мигрировать на другой провайдер"
+      },
+      {
+        "command": "vscodesync.onedriveSignIn",
+        "title": "VSCodeSync: Войти в OneDrive"
+      },
+      {
+        "command": "vscodesync.onedriveSignInHeadless",
+        "title": "VSCodeSync: Войти в OneDrive (Device Code, headless)"
+      },
+      {
+        "command": "vscodesync.googleDriveSignIn",
+        "title": "VSCodeSync: Войти в Google Drive"
+      },
+      {
+        "command": "vscodesync.googleDriveSignInHeadless",
+        "title": "VSCodeSync: Войти в Google Drive (Device Code, headless)"
+      },
+      {
+        "command": "vscodesync.dropboxSignIn",
+        "title": "VSCodeSync: Войти в Dropbox"
+      },
+      {
+        "command": "vscodesync.dropboxSignInHeadless",
+        "title": "VSCodeSync: Войти в Dropbox (loopback URL in Output)"
+      },
+      {
+        "command": "vscodesync.yandexDiskSignIn",
+        "title": "VSCodeSync: Войти в Яндекс Диск"
+      },
+      {
+        "command": "vscodesync.yandexDiskSignInHeadless",
+        "title": "VSCodeSync: Войти в Яндекс Диск (loopback URL in Output)"
+      },
+      {
+        "command": "vscodesync.yandexDiskEnterToken",
+        "title": "VSCodeSync: Ввести токен Яндекс Диска вручную"
+      },
+      {
+        "command": "vscodesync.showProviderSetupGuide",
+        "title": "VSCodeSync: Руководство по настройке провайдера",
+        "icon": "$(book)"
+      },
+      {
+        "command": "vscodesync.showCommandCenter",
+        "title": "VSCodeSync: Центр команд",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "vscodesync.showSettingsPanel",
+        "title": "VSCodeSync: Панель настроек",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "vscodesync.collapseAllWorkspaces",
+        "title": "VSCodeSync: Свернуть всё",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "vscodesync.resolveKeepMine",
+        "title": "VSCodeSync: Разрешить конфликт — Оставить моё"
+      },
+      {
+        "command": "vscodesync.showSyncDashboard",
+        "title": "VSCodeSync: Показать панель синхронизации"
+      },
+      {
+        "command": "vscodesync.focusWorkspacesView",
+        "title": "VSCodeSync: Перейти к панели воркспейсов"
+      },
+      {
+        "command": "vscodesync.takeSyncOwnership",
+        "title": "VSCodeSync: Стать основным окном синхронизации"
+      },
+      {
+        "command": "vscodesync.refreshWorkspacesView",
+        "title": "VSCodeSync: Обновить панель воркспейсов",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vscodesync.filterWorkspaces",
+        "title": "VSCodeSync: Фильтровать воркспейсы…",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "vscodesync.clearWorkspacesFilter",
+        "title": "VSCodeSync: Сбросить фильтр воркспейсов",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "vscodesync.pickWorkspaceTagFilters",
+        "title": "VSCodeSync: Фильтровать воркспейсы по тегам…",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "vscodesync.toggleShowArchivedWorkspaces",
+        "title": "VSCodeSync: Показать/скрыть архивные воркспейсы",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "vscodesync.treeWorkspacePushAll",
+        "title": "VSCodeSync: Отправить воркспейс"
+      },
+      {
+        "command": "vscodesync.treeWorkspacePullAll",
+        "title": "VSCodeSync: Получить воркспейс"
+      },
+      {
+        "command": "vscodesync.treeWorkspaceSync",
+        "title": "VSCodeSync: Синхронизировать воркспейс (Tree)"
+      },
+      {
+        "command": "vscodesync.treeWorkspaceDetach",
+        "title": "VSCodeSync: Отвязать воркспейс (дерево)"
+      },
+      {
+        "command": "vscodesync.deleteWorkspaceFromCloud",
+        "title": "VSCodeSync: Удалить воркспейс из облака..."
+      },
+      {
+        "command": "vscodesync.treeWorkspaceRenameNote",
+        "title": "VSCodeSync: Переименовать заметку воркспейса (Tree)"
+      },
+      {
+        "command": "vscodesync.treeWorkspaceHealthCheck",
+        "title": "VSCodeSync: Проверка состояния (дерево)"
+      },
+      {
+        "command": "vscodesync.treeRemoteWorkspaceConnect",
+        "title": "VSCodeSync: Подключить облачный воркспейс (дерево)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vscodesync.treeRemoteWorkspaceDelete",
+        "title": "VSCodeSync: Удалить облачный воркспейс",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vscodesync.treeWorkspaceShowMenu",
+        "title": "VSCodeSync: Меню воркспейса",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "vscodesync.treeWorkspaceAddTagToPanelFilter",
+        "title": "VSCodeSync: Добавить тег воркспейса в фильтр панели"
+      },
+      {
+        "command": "vscodesync.treeFilePush",
+        "title": "VSCodeSync: Отправить файл"
+      },
+      {
+        "command": "vscodesync.treeFilePull",
+        "title": "VSCodeSync: Получить файл"
+      },
+      {
+        "command": "vscodesync.treeFileShowHistory",
+        "title": "VSCodeSync: Показать историю файла (дерево)"
+      },
+      {
+        "command": "vscodesync.treeFileOpenInCloud",
+        "title": "VSCodeSync: Открыть в облаке (дерево)"
+      },
+      {
+        "command": "vscodesync.treeFileKeepMine",
+        "title": "VSCodeSync: Разрешить конфликт — Оставить моё (Tree)"
+      },
+      {
+        "command": "vscodesync.setNotificationLevel",
+        "title": "VSCodeSync: Уровень уведомлений"
+      },
+      {
+        "command": "vscodesync.removeFromSync",
+        "title": "VSCodeSync: Убрать из синхронизации"
+      },
+      {
+        "command": "vscodesync.pushCurrentFile",
+        "title": "VSCodeSync: Отправить текущий файл"
+      },
+      {
+        "command": "vscodesync.pullCurrentFile",
+        "title": "VSCodeSync: Получить текущий файл"
+      },
+      {
+        "command": "vscodesync.moveCurrentFileToWorkspace",
+        "title": "VSCodeSync: Переместить текущий файл в воркспейс"
+      },
+      {
+        "command": "vscodesync.diffWithCloud",
+        "title": "VSCodeSync: Сравнить с облаком"
+      },
+      {
+        "command": "vscodesync.showFileHistory",
+        "title": "VSCodeSync: Показать историю файла"
+      },
+      {
+        "command": "vscodesync.openInCloudStorage",
+        "title": "VSCodeSync: Открыть в облаке"
+      },
+      {
+        "command": "vscodesync.resolveTakeTheirs",
+        "title": "VSCodeSync: Разрешить конфликт — Взять чужое"
+      },
+      {
+        "command": "vscodesync.treeFileTakeTheirs",
+        "title": "VSCodeSync: Разрешить конфликт — Взять чужое (Tree)"
+      },
+      {
+        "command": "vscodesync.treeFileForceSync",
+        "title": "VSCodeSync: Force Sync — Отправить моё (перезаписать)"
+      },
+      {
+        "command": "vscodesync.sendQuickTransfer",
+        "title": "VSCodeSync: Отправить файл (разовая передача)"
+      },
+      {
+        "command": "vscodesync.togglePause",
+        "title": "VSCodeSync: Пауза"
+      },
+      {
+        "command": "vscodesync.resume",
+        "title": "VSCodeSync: Возобновить"
+      },
+      {
+        "command": "vscodesync.enableWatchMode",
+        "title": "VSCodeSync: Включить режим наблюдения"
+      },
+      {
+        "command": "vscodesync.disableWatchMode",
+        "title": "VSCodeSync: Выключить режим наблюдения"
+      },
+      {
+        "command": "vscodesync.toggleWatchMode",
+        "title": "VSCodeSync: Переключить режим наблюдения"
+      },
+      {
+        "command": "vscodesync.exportWorkspaceStructure",
+        "title": "VSCodeSync: Экспортировать структуру воркспейса"
+      },
+      {
+        "command": "vscodesync.importWorkspaceStructure",
+        "title": "VSCodeSync: Импортировать структуру воркспейса"
+      },
+      {
+        "command": "vscodesync.openStats",
+        "title": "VSCodeSync: Открыть статистику"
+      },
+      {
+        "command": "vscodesync.createSnapshot",
+        "title": "VSCodeSync: Создать снимок"
+      },
+      {
+        "command": "vscodesync.restoreSnapshot",
+        "title": "VSCodeSync: Восстановить снимок..."
+      },
+      {
+        "command": "vscodesync.migrateProvider",
+        "title": "VSCodeSync: Мигрировать на другой провайдер"
+      },
+      {
+        "command": "vscodesync.repairState",
+        "title": "VSCodeSync: Восстановить состояние"
+      },
+      {
+        "command": "vscodesync.suspendWorkspace",
+        "title": "VSCodeSync: Приостановить воркспейс..."
+      },
+      {
+        "command": "vscodesync.resumeWorkspace",
+        "title": "VSCodeSync: Возобновить Workspace..."
+      },
+      {
+        "command": "vscodesync.freezeWorkspace",
+        "title": "VSCodeSync: Заморозить воркспейс..."
+      },
+      {
+        "command": "vscodesync.unfreezeWorkspace",
+        "title": "VSCodeSync: Разморозить воркспейс..."
+      },
+      {
+        "command": "vscodesync.openActivityFeed",
+        "title": "VSCodeSync: Открыть ленту активности"
+      },
+      {
+        "command": "vscodesync.configurePathMapping",
+        "title": "VSCodeSync: Настроить маппинг путей"
+      },
+      {
+        "command": "vscodesync.editWorkspaceIgnorePatterns",
+        "title": "VSCodeSync: Редактировать исключения воркспейса"
+      },
+      {
+        "command": "vscodesync.exportEncryptionKey",
+        "title": "VSCodeSync: Экспортировать ключ шифрования"
+      },
+      {
+        "command": "vscodesync.importEncryptionKey",
+        "title": "VSCodeSync: Импортировать ключ шифрования"
+      },
+      {
+        "command": "vscodesync.rotateEncryptionKey",
+        "title": "VSCodeSync: Сменить ключ шифрования"
+      },
+      {
+        "command": "vscodesync.archiveWorkspace",
+        "title": "VSCodeSync: Архивировать воркспейс..."
+      },
+      {
+        "command": "vscodesync.unarchiveWorkspace",
+        "title": "VSCodeSync: Разархивировать воркспейс..."
+      },
+      {
+        "command": "vscodesync.setGitBranchWorkspace",
+        "title": "VSCodeSync: Установить Git-ветку для воркспейса..."
+      },
+      {
+        "command": "vscodesync.editWorkspaceTags",
+        "title": "VSCodeSync: Редактировать теги воркспейса"
+      },
+      {
+        "command": "vscodesync.purgeEncryptedWorkspace",
+        "title": "VSCodeSync: Очистить зашифрованный воркспейс..."
+      },
+      {
+        "command": "vscodesync.healthCheck",
+        "title": "VSCodeSync: Проверка состояния"
+      },
+      {
+        "command": "vscodesync.mergeWorkspaces",
+        "title": "VSCodeSync: Объединить воркспейсы"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vscodesync.treeWorkspacePushAll",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspacePullAll",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceSync",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceDetach",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceRenameNote",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceHealthCheck",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceConnect",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceDelete",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceShowMenu",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceAddTagToPanelFilter",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFilePush",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFilePull",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFileShowHistory",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFileOpenInCloud",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFileKeepMine",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFileTakeTheirs",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFileForceSync",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.addFolderToSync",
+          "when": "false"
+        }
+      ],
+      "statusBar/item/context": [
+        {
+          "command": "vscodesync.setNotificationLevel",
+          "when": "statusBarItem == vscodesync.syncStatus",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vscodesync.createWorkspace",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@0"
+        },
+        {
+          "command": "vscodesync.refreshWorkspacesView",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vscodesync.filterWorkspaces",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vscodesync.clearWorkspacesFilter",
+          "when": "view == vscodesync.workspaces && vscodesync.workspacesFilterActive",
+          "group": "navigation@3"
+        },
+        {
+          "command": "vscodesync.pickWorkspaceTagFilters",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@4"
+        },
+        {
+          "command": "vscodesync.toggleShowArchivedWorkspaces",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@5"
+        },
+        {
+          "command": "vscodesync.collapseAllWorkspaces",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@6"
+        },
+        {
+          "command": "vscodesync.showCommandCenter",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@7"
+        },
+        {
+          "command": "vscodesync.showSettingsPanel",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@8"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vscodesync.treeWorkspacePushAll",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceActive$/",
+          "group": "sync@1"
+        },
+        {
+          "command": "vscodesync.treeWorkspacePullAll",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceActive$/",
+          "group": "sync@2"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceSync",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceActive$/",
+          "group": "sync@3"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceDetach",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended|Frozen)(Archived)?$/",
+          "group": "manage@1"
+        },
+        {
+          "command": "vscodesync.suspendWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceActive$/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.resumeWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceSuspended$/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.unarchiveWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceArchived/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.archiveWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceActive$/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.freezeWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended)$/",
+          "group": "manage@3"
+        },
+        {
+          "command": "vscodesync.unfreezeWorkspace",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspaceFrozen$/",
+          "group": "manage@3"
+        },
+        {
+          "command": "vscodesync.deleteWorkspaceFromCloud",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended|Frozen)(Archived)?$/",
+          "group": "danger@1"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceRenameNote",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended)(Archived)?$/",
+          "group": "info@1"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceHealthCheck",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended|Frozen)(Archived)?$/",
+          "group": "info@2"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceConnect",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.remoteOffer",
+          "group": "connect@1"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceDelete",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.remoteOffer",
+          "group": "danger@1"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceConnect",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.remoteOffer",
+          "group": "inline@1"
+        },
+        {
+          "command": "vscodesync.treeRemoteWorkspaceDelete",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.remoteOffer",
+          "group": "inline@2"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceShowMenu",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended|Frozen)(Archived)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "vscodesync.treeWorkspaceAddTagToPanelFilter",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended|Frozen)(Archived)?$/",
+          "group": "filter@1"
+        },
+        {
+          "command": "vscodesync.treeFilePush",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@1"
+        },
+        {
+          "command": "vscodesync.treeFilePull",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@2"
+        },
+        {
+          "command": "vscodesync.diffWithCloud",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@2.65"
+        },
+        {
+          "command": "vscodesync.treeFileShowHistory",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@2.5"
+        },
+        {
+          "command": "vscodesync.treeFileOpenInCloud",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@2.6"
+        },
+        {
+          "command": "vscodesync.sendQuickTransfer",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@3"
+        },
+        {
+          "command": "vscodesync.removeFromSync",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "group": "file@4"
+        },
+        {
+          "command": "vscodesync.treeFileKeepMine",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.fileConflict",
+          "group": "conflict@1"
+        },
+        {
+          "command": "vscodesync.treeFileTakeTheirs",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.fileConflict",
+          "group": "conflict@2"
+        },
+        {
+          "command": "vscodesync.treeFileForceSync",
+          "when": "view == vscodesync.workspaces && viewItem == vscodeSync.fileLocked",
+          "group": "conflict@1"
+        }
+      ],
+      "vscodesync.submenu": [
+        {
+          "command": "vscodesync.addCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@1"
+        },
+        {
+          "command": "vscodesync.addToNewWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@2"
+        },
+        {
+          "command": "vscodesync.sendQuickTransfer",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@3"
+        },
+        {
+          "command": "vscodesync.pushCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@1"
+        },
+        {
+          "command": "vscodesync.pullCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@2"
+        },
+        {
+          "command": "vscodesync.diffWithCloud",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@3"
+        },
+        {
+          "command": "vscodesync.showFileHistory",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@4"
+        },
+        {
+          "command": "vscodesync.openInCloudStorage",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@5"
+        },
+        {
+          "command": "vscodesync.moveCurrentFileToWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "vscodesync.removeFromSync",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@2"
+        },
+        {
+          "command": "vscodesync.resolveKeepMine",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "4_conflict@1"
+        },
+        {
+          "command": "vscodesync.resolveTakeTheirs",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "4_conflict@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "vscodesync.addFolderToSync",
+          "when": "explorerResourceIsFolder",
+          "group": "vscodesync@1"
+        },
+        {
+          "command": "vscodesync.addToNewWorkspace",
+          "when": "explorerResourceIsFolder",
+          "group": "vscodesync@2"
+        },
+        {
+          "submenu": "vscodesync.submenu",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "vscodesync@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "vscodesync.submenu",
+          "when": "resourceScheme == file",
+          "group": "vscodesync@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "submenu": "vscodesync.submenu",
+          "when": "resourceScheme == file",
+          "group": "vscodesync@1"
+        }
+      ],
+      "keybindings": [
+        {
+          "command": "vscodesync.pushCurrentFile"
+        },
+        {
+          "command": "vscodesync.pullCurrentFile"
+        },
+        {
+          "command": "vscodesync.pushAll"
+        },
+        {
+          "command": "vscodesync.pullAll"
+        },
+        {
+          "command": "vscodesync.showFileHistory"
+        },
+        {
+          "command": "vscodesync.pushWorkspace"
+        },
+        {
+          "command": "vscodesync.pullWorkspace"
+        },
+        {
+          "command": "vscodesync.sendQuickTransfer"
+        },
+        {
+          "command": "vscodesync.connectCloudWorkspace"
+        },
+        {
+          "command": "vscodesync.resolveConflicts"
+        },
+        {
+          "command": "vscodesync.keepMine"
+        },
+        {
+          "command": "vscodesync.takeTheirs"
+        },
+        {
+          "command": "vscodesync.openConflictDiff3way"
+        },
+        {
+          "command": "vscodesync.openSyncSettings"
+        },
+        {
+          "command": "vscodesync.toggleTelemetry"
+        },
+        {
+          "command": "vscodesync.togglePause"
+        },
+        {
+          "command": "vscodesync.toggleWatchMode"
+        },
+        {
+          "command": "vscodesync.openActivityFeed"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node scripts/generate-web-stub-commands.mjs && node esbuild.mjs",
+    "verify:web": "node scripts/verify-web-bundle.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "lint": "eslint ./src ./tests ./cli/src",
+    "pretest": "npm run compile",
+    "test": "vitest run",
+    "test:integration": "npm run compile && node ./tests/integration/runTest.cjs",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/mocha": "^10.0.9",
+    "@types/node": "^20.17.6",
+    "@types/vscode": "~1.80.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.15.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.15.0",
+    "vitest": "^2.1.5"
+  }
+}

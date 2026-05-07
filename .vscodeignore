@@ -1,0 +1,48 @@
+# Source & tests — not needed at runtime
+src/**
+tests/**
+scripts/**
+
+# Docs & references
+docs/**
+references/
+references/**
+.cursor/**
+*.plan.md
+CLAUDE.md
+
+# Dev configs
+.github/**
+.vscode-test/**
+esbuild.mjs
+eslint.config.mjs
+tsconfig*.json
+.eslintrc*
+.eslintignore
+vitest.config*
+biome.json
+.editorconfig
+
+# Build artifacts that aren't the final bundle
+dist-types/**
+dist/**/*.map
+dist/test/**
+
+# Node
+node_modules/**
+
+# Git
+.git/**
+.gitignore
+
+# Local tooling / Cursor agent worktrees / IDE configs — never ship
+.kilo/**
+.claude/**
+.vibe/**
+
+# Misc
+*.vsix
+builds/**
+.DS_Store
+nul
+cli/**
