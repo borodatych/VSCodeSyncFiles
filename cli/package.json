@@ -1,0 +1,21 @@
+{
+  "name": "vscodesync-cli",
+  "version": "0.0.1",
+  "description": "VSCodeSync CLI — синхронизация без открытого VS Code",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "vscodesync": "./dist/cli.cjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "vscodesync",
+    "onedrive",
+    "sync"
+  ]
+}
