@@ -147,6 +147,7 @@
   "cfg.yandexUseAppFolder.description": "Использовать папку приложения Яндекс Диска (scope: cloud_api:disk.app_folder, путь app:/…). Файлы хранятся в «Приложения/{имя_приложения}/» и недоступны другим приложениям. При изменении этой настройки требуется повторная авторизация.",
   "cfg.inlineConflictCodeLens.enabled.description": "Показывать inline CodeLens над git-merge маркер-блоками (<<<<<<< / >>>>>>>): Keep mine | Take theirs | AI merge",
   "cfg.conflictHotZoneCodeLens.enabled.description": "Показывать CodeLens-«флейм» на строках, которые ≥ 1 раза участвовали в разрешённых конфликтах за 180 дней (данные из conflict heatmap).",
+  "cfg.hoverDiffPreview.enabled.description": "Показывать hover поверх tracked-файлов с sync-статусом, возрастом последнего sync и ссылкой Pull / Resolve.",
   "cfg.massChangeGuard.description": "Подтверждение перед push манифеста, который удалит много файлов (≥ 25 абсолютно или ≥ 50% от активных). Отключить — чтобы убрать модалку.",
   "cfg.presenceHeartbeatMinutes.description": "Live presence heartbeat: периодически обновлять lastSeen в _machines.json. 0 — отключено. Рекомендуется 5 (~12 запросов/ч).",
   "cfg.backup.secondaryProvider.description": "Cross-cloud backup: вторичный провайдер для периодического зеркала манифестов + _meta.json. Пусто — отключено. Должен быть авторизован и отличаться от primary.",

@@ -90,6 +90,11 @@
           "default": true,
           "description": "%cfg.conflictHotZoneCodeLens.enabled.description%"
         },
+        "vscodesync.hoverDiffPreview.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.hoverDiffPreview.enabled.description%"
+        },
         "vscodesync.massChangeGuard": {
           "type": "boolean",
           "default": true,

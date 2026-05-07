@@ -145,6 +145,7 @@
   "cfg.codeLens.enabled.description": "Show CodeLens with last-sync time and Pull button above tracked files",
   "cfg.inlineConflictCodeLens.enabled.description": "Show inline CodeLens above git-merge marker blocks (<<<<<<< / >>>>>>>): Keep mine | Take theirs | AI merge",
   "cfg.conflictHotZoneCodeLens.enabled.description": "Show a CodeLens flame on lines that have been part of resolved conflicts ≥ 1 time in the last 180 days (data from the conflict heatmap).",
+  "cfg.hoverDiffPreview.enabled.description": "Show a MarkdownString hover over tracked files with sync status, last-sync age, and a Pull / Resolve action link.",
   "cfg.massChangeGuard.description": "Confirm before pushing a manifest that would tombstone many files (≥ 25 absolute or ≥ 50% of active). Disable to silence the modal.",
   "cfg.presenceHeartbeatMinutes.description": "Live presence heartbeat: periodically refresh lastSeen in _machines.json. 0 = disabled. Recommended 5 (~12 req/h).",
   "cfg.backup.secondaryProvider.description": "Cross-cloud backup: secondary provider used for periodic mirror of manifests + _meta.json. Empty = disabled. Must be authenticated and different from the primary provider.",

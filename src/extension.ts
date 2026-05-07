@@ -99,6 +99,7 @@ import {
 import { registerTunnelBackend } from "./ui/tunnelProviderRegistry.js";
 import { cloudflaredTunnelBackend } from "./ui/tunnelBackendCloudflared.js";
 import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
+import { HoverDiffPreviewProvider } from "./ui/hoverDiffPreviewProvider.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
@@ -1122,6 +1123,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, hotZoneLens),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("vscodesync.conflictHotZoneCodeLens")) hotZoneLens.refresh();
+    }),
+  );
+
+  // Hover Diff Preview — MarkdownString hover over tracked files showing
+  // sync status + last-sync age + Pull / Resolve action links.
+  const hoverDiff = new HoverDiffPreviewProvider();
+  context.subscriptions.push(
+    hoverDiff,
+    vscode.languages.registerHoverProvider({ scheme: "file" }, hoverDiff),
+    vscode.workspace.onDidSaveTextDocument(() => { hoverDiff.refresh(); }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("vscodesync.hoverDiffPreview")) hoverDiff.refresh();
     }),
   );
   context.subscriptions.push(fileDecorationRegistration);

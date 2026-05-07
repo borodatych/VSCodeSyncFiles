@@ -21,11 +21,7 @@ import {
   SmartConflictPredictionNotImplementedError,
 } from "../../src/core/smartConflictPrediction.js";
 import { planBulkPush } from "../../src/core/bulkPushWizard.js";
-import {
-  summariseHoverDiff,
-  attachHoverProvider,
-  HoverDiffPreviewNotImplementedError,
-} from "../../src/core/hoverDiffPreview.js";
+import { summariseHoverDiff } from "../../src/core/hoverDiffPreview.js";
 import {
   validateWorkspaceTemplate,
   installTemplate,
@@ -137,9 +133,9 @@ describe("hoverDiffPreview", () => {
     });
     expect(text).toContain("identical");
   });
-  it("attachHoverProvider throws sentinel", () => {
-    expect(() => attachHoverProvider()).toThrow(HoverDiffPreviewNotImplementedError);
-  });
+  // Note: HoverDiffPreview skeleton was upgraded to a full HoverProvider on
+  // roadmap-max pass 6; the sentinel was removed. summariseHoverDiff stays
+  // as the canonical "summary string" helper.
 });
 
 describe("workspaceTemplates", () => {
