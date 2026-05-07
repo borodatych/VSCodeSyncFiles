@@ -339,7 +339,7 @@ describe("SyncEngine (mock)", () => {
       await engineB.pushFile(cfgB, wid, rel, entry);
 
       await expect(fs.readFile(absB, "utf8")).resolves.toBe("version-two-from-work\n");
-      const cloudAfter = await provider.downloadFile(cfgB.files[0]!.cloudPath);
+      const cloudAfter = await provider.downloadFile(cfgB.files[0].cloudPath);
       expect(cloudAfter.body.toString("utf8")).toBe("version-two-from-work\n");
     } finally {
       await fs.rm(rootA, { recursive: true, force: true });

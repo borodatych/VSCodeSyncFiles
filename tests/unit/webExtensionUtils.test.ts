@@ -39,8 +39,8 @@ describe("webPowerMonitorStub contract", () => {
       startMonitoring: (_cb: (pct: number | null) => void): void => { /* no-op */ },
       stopMonitoring: (): void => { /* no-op */ },
     };
-    expect(() => stub.startMonitoring(cb)).not.toThrow();
-    expect(() => stub.stopMonitoring()).not.toThrow();
+    expect(() => { stub.startMonitoring(cb); }).not.toThrow();
+    expect(() => { stub.stopMonitoring(); }).not.toThrow();
     expect(cb).not.toHaveBeenCalled();
   });
 });
@@ -65,28 +65,31 @@ describe("web OAuth URL parsing", () => {
   });
 
   it("rejects mismatched state (CSRF guard)", () => {
+    // Mimic the URLSearchParams.get() return type so the validation logic is tested as written.
+    const params = new URLSearchParams("code=somecode&state=different-state");
     const expectedState = "secure-random-state-abc123";
-    const actualState = "different-state";
-    const code = "somecode";
+    const code = params.get("code");
+    const actualState = params.get("state");
     const valid = code !== null && actualState === expectedState;
     expect(valid).toBe(false);
   });
 
   it("accepts correct state", () => {
+    const params = new URLSearchParams("code=AUTH_CODE_123&state=secure-random-state-abc123");
     const expectedState = "secure-random-state-abc123";
-    const actualState = "secure-random-state-abc123";
-    const code = "AUTH_CODE_123";
+    const code = params.get("code");
+    const actualState = params.get("state");
     const valid = code !== null && actualState === expectedState;
     expect(valid).toBe(true);
   });
 
   it("buildWebOAuthRedirectUri format matches vscode URI scheme pattern", () => {
     // Simulate the function logic without vscode API
-    const publisher = "vscodesync";
-    const name = "vscodesync";
+    const publisher = "borodatych";
+    const name = "vscodesyncfiles";
     const scheme = "vscode";
     const uri = `${scheme}://${publisher}.${name}/oauth-callback`;
-    expect(uri).toBe("vscode://vscodesync.vscodesync/oauth-callback");
+    expect(uri).toBe("vscode://borodatych.vscodesyncfiles/oauth-callback");
     expect(uri.startsWith("vscode://")).toBe(true);
     expect(uri.endsWith("/oauth-callback")).toBe(true);
   });
@@ -146,7 +149,7 @@ describe("smee.io SSE payload parsing", () => {
     if (!data || data === "connected") return null;
     try {
       const parsed = JSON.parse(data) as Record<string, unknown>;
-      const body = (parsed["body"] as Record<string, unknown> | undefined) ?? parsed;
+      const body = (parsed.body as Record<string, unknown> | undefined) ?? parsed;
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(parsed)) {
         if (k !== "body" && typeof v === "string") {
@@ -190,7 +193,7 @@ describe("smee.io SSE payload parsing", () => {
     const result = parseSmeePayload(block);
     expect(result).not.toBeNull();
     expect((result!.body as { x: number }).x).toBe(1);
-    expect(result!.headers["header"]).toBe("val");
+    expect(result!.headers.header).toBe("val");
   });
 });
 

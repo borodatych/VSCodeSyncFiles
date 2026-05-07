@@ -21,4 +21,21 @@ describe("parseRetryAfterToDelayMs", () => {
     expect(parseRetryAfterToDelayMs("")).toBeUndefined();
     expect(parseRetryAfterToDelayMs("not-a-date")).toBeUndefined();
   });
+
+  it("clamps HTTP-date in the past to 0 (server saying retry now)", () => {
+    const now = Date.UTC(2026, 3, 29, 12, 0, 0);
+    const past = new Date(now - 30_000).toUTCString();
+    expect(parseRetryAfterToDelayMs(past, now, 300_000)).toBe(0);
+  });
+
+  it("rejects mixed-format strings (digits with letters)", () => {
+    expect(parseRetryAfterToDelayMs("60s")).toBeUndefined();
+    expect(parseRetryAfterToDelayMs("0x10")).toBeUndefined();
+  });
+
+  it("HTTP-date in the very-far future is capped to maxDelay", () => {
+    const now = Date.UTC(2026, 3, 29, 12, 0, 0);
+    const yearAway = new Date(now + 365 * 24 * 3600_000).toUTCString();
+    expect(parseRetryAfterToDelayMs(yearAway, now, 60_000)).toBe(60_000);
+  });
 });

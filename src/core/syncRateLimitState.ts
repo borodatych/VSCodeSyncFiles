@@ -59,7 +59,7 @@ export function resetRateLimitStateForTests(): void {
 // ─── Per-provider request counter (sliding window) ───────────────────────────
 
 /** Approximate API rate limits per provider (requests / window ms). */
-export const PROVIDER_RATE_LIMITS: Record<string, { requests: number; windowMs: number }> = {
+export const PROVIDER_RATE_LIMITS: Partial<Record<string, { requests: number; windowMs: number }>> = {
   onedrive: { requests: 10_000, windowMs: 600_000 },
   gdrive: { requests: 1_000, windowMs: 100_000 },
   yandex: { requests: 1_000, windowMs: 60_000 },
@@ -94,7 +94,7 @@ export function getProviderRequestCount(providerType: string, windowMs: number):
   const cutoff = Date.now() - windowMs;
   let count = 0;
   for (let i = times.length - 1; i >= 0; i--) {
-    if ((times[i] as number) > cutoff) {
+    if ((times[i]) > cutoff) {
       count++;
     } else {
       break;

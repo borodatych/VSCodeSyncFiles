@@ -75,7 +75,7 @@ describe("computeChunks", () => {
     const c2 = computeChunks(data);
     expect(c1.length).toBe(c2.length);
     for (let i = 0; i < c1.length; i++) {
-      expect(c1[i]!.hash).toBe(c2[i]!.hash);
+      expect(c1[i].hash).toBe(c2[i].hash);
     }
   });
 
@@ -223,17 +223,18 @@ describe("Delta Sync integration scenario: big file", () => {
 
     // Mock GET: returns cloud content
     let getCount = 0;
-    const mockGet = async (): Promise<Buffer> => {
+    const mockGet = (): Promise<Buffer> => {
       getCount += 1;
-      return cloudContent;
+      return Promise.resolve(cloudContent);
     };
 
     // Mock PUT: records what was uploaded
     let putCount = 0;
     let uploadedContent: Buffer | null = null;
-    const mockPut = async (content: Buffer): Promise<void> => {
+    const mockPut = (content: Buffer): Promise<void> => {
       putCount += 1;
       uploadedContent = content;
+      return Promise.resolve();
     };
 
     // Simulate the delta sync pull:

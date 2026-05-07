@@ -7,10 +7,10 @@ import { EXIT_AUTH, EXIT_GENERAL, EXIT_NOT_FOUND, EXIT_OK } from "../../cli/src/
  * with the documented spec (docs/v1/08-platform/cli.md).
  */
 describe("exit code constants", () => {
-  it("EXIT_OK is 0", () => expect(EXIT_OK).toBe(0));
-  it("EXIT_GENERAL is 1", () => expect(EXIT_GENERAL).toBe(1));
-  it("EXIT_AUTH is 2", () => expect(EXIT_AUTH).toBe(2));
-  it("EXIT_NOT_FOUND is 4", () => expect(EXIT_NOT_FOUND).toBe(4));
+  it("EXIT_OK is 0", () => { expect(EXIT_OK).toBe(0); });
+  it("EXIT_GENERAL is 1", () => { expect(EXIT_GENERAL).toBe(1); });
+  it("EXIT_AUTH is 2", () => { expect(EXIT_AUTH).toBe(2); });
+  it("EXIT_NOT_FOUND is 4", () => { expect(EXIT_NOT_FOUND).toBe(4); });
   it("all exit codes are unique", () => {
     const codes = [EXIT_OK, EXIT_GENERAL, EXIT_AUTH, EXIT_NOT_FOUND];
     expect(new Set(codes).size).toBe(codes.length);

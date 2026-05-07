@@ -24,7 +24,7 @@ describe("workspaceInstanceLock", () => {
       const roots = [path.join(dir, "w")];
 
       await new Promise<void>((resolve) => {
-        scheduleWorkspaceInstanceLockRefresh(dir, roots, () => resolve());
+        scheduleWorkspaceInstanceLockRefresh(dir, roots, () => { resolve(); });
       });
       expect(isSecondaryWorkspaceInstanceReadOnly()).toBe(false);
       const h = hashWorkspaceRoots(roots);
@@ -40,7 +40,7 @@ describe("workspaceInstanceLock", () => {
       await fs.writeFile(lockPath, `${JSON.stringify(foreign, null, 2)}\n`, "utf8");
 
       await new Promise<void>((resolve) => {
-        scheduleWorkspaceInstanceLockRefresh(dir, roots, () => resolve());
+        scheduleWorkspaceInstanceLockRefresh(dir, roots, () => { resolve(); });
       });
       expect(isSecondaryWorkspaceInstanceReadOnly()).toBe(false);
       const raw2 = await fs.readFile(lockPath, "utf8");

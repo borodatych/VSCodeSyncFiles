@@ -7,7 +7,9 @@ describe("graphWebhookLocalServer", () => {
     const srv = await startGraphWebhookLocalServer({
       port: 0,
       graphClientState: "abc",
-      onDriveChangeHint: () => {},
+      onDriveChangeHint: () => {
+        /* no-op for this test */
+      },
     });
     try {
       const token = "hello-validation";
@@ -21,7 +23,10 @@ describe("graphWebhookLocalServer", () => {
           },
           (res) => {
             const chunks: Buffer[] = [];
-            res.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+            res.on("data", (c: unknown) => {
+              const buf = Buffer.isBuffer(c) ? c : Buffer.from(c as ArrayBufferView | string);
+              chunks.push(buf);
+            });
             res.on("end", () => {
               resolve(Buffer.concat(chunks).toString("utf8"));
             });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { RequestQueue, getGlobalQueue, disposeGlobalQueue } from "../../src/core/requestQueue.js";
 
 describe("RequestQueue — concurrency serialization", () => {
