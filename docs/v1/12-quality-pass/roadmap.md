@@ -24,13 +24,20 @@
 - [x] **F2. Multi-machine Online Indicator** — `src/ui/machinePresenceStatus.ts` (`classifyPresence` → online/recent/offline по lastSeen, `describePresence` для tooltip). 11 unit-тестов на boundary windows + clock-skew. Tree-integration (ThemeColor dot icon) — следующая итерация.
 - [x] **F5. AI commit message helper** — `src/core/aiCommitPrompt.ts` (vscode-free `buildCommitPrompt / truncatePath / MAX_FILES=30 / MAX_PATH_LEN=80`, 10 unit-тестов) + `src/core/aiCommitMessage.ts` (LM-обвязка, lazy-load, fail-soft через `vscode.lm`). Pre-fill для snapshot/quick-transfer notes. Integration в command flows — следующая итерация.
 
-## Что НЕ сделано (отложено / blocked)
+## Skeletons (готовы pure shapes + sentinel; UI ждёт реализации)
 
-- [ ] Snapshot Diff Viewer (M) — большой webview, требует UI-итерации
-- [ ] Time Travel scrubber (L) — тяжёлый UI с slider
-- [ ] Smart Conflict Prediction (M) — требует расширения `editingBy[path]` и presence wire
-- [ ] Bulk Push Wizard (M) — требует engine.pushAll progress callback
-- [ ] Hover Diff Preview (M) — требует API «diff summary без раскачки blob»
-- [~] Workspace Templates / Achievements / **Insights weekly digest** — Insights weekly digest сделан: `src/core/insightsWeeklyDigest.ts` (pure: `buildWeeklyDigest / formatWeeklyDigest`, 9 unit-тестов; window 7 дней по умолчанию, агрегаты по kind / file / machine / workspace / day, busiest/quietest day) + команда `vscodesync.showInsightsWeeklyDigest` (OutputChannel). Templates / Achievements — пока skeleton-ниша (см. отдельный пункт).
+- [~] **Snapshot Diff Viewer** — `src/core/snapshotDiffViewer.ts` (`planSnapshotDiff`, `SnapshotDiffViewerNotImplementedError`). Что осталось: webview side-by-side с diff-рендером.
+- [~] **Time Travel scrubber** — `src/core/timeTravelScrubber.ts` (`buildTimeTravelModel` со slider tick'ами, `TimeTravelScrubberNotImplementedError`). Что осталось: slider-widget + binding к `.history/{path}/`.
+- [~] **Smart Conflict Prediction** — `src/core/smartConflictPrediction.ts` (`scoreConflictRisk`, `SmartConflictPredictionNotImplementedError`). Что осталось: presence-wire `editingBy[path]` через `_machines.json` + heartbeat propagation.
+- [~] **Bulk Push Wizard** — `src/core/bulkPushWizard.ts` (`planBulkPush`, `BulkPushWizardNotImplementedError`). Что осталось: `engine.pushAll(progressCb)` API + multi-step UI.
+- [~] **Hover Diff Preview** — `src/core/hoverDiffPreview.ts` (`summariseHoverDiff`, `HoverDiffPreviewNotImplementedError`). Что осталось: `vscode.languages.registerHoverProvider` + диффер «без раскачки blob».
+- [~] **Workspace Templates** — `src/core/workspaceTemplates.ts` (`validateWorkspaceTemplate` со path-traversal guard, `WorkspaceTemplatesNotImplementedError`). Что осталось: каталог + один-клик install (clone + register + track).
+- [~] **Achievements** — `src/core/achievements.ts` (`evaluateAchievements` для first-push/first-pull/100-pushes/5-machines, `AchievementsNotImplementedError`). Что осталось: persistent unlock log + popup.
+- [x] **Insights weekly digest** — `src/core/insightsWeeklyDigest.ts` (pure: `buildWeeklyDigest / formatWeeklyDigest`, 9 unit-тестов; window 7 дней, агрегаты по kind/file/machine/workspace/day, busiest/quietest) + команда `vscodesync.showInsightsWeeklyDigest`.
 - [x] Wiring F1/F2/F3/F5 в реальные UI-points — закрыто в Phase 13 как W1–W5 (sparkline → status bar; online indicator → quick-transfer; mass-delete guard → putManifest pre-flight; AI commit message → snapshot InputBox; formatNotification → unified notifications + digest).
+
+Скелетные тесты: `tests/unit/skeletonSentinels.test.ts` (18 кейсов) — гарантируют, что pure shapes работают и что вызов незакрытой UI-точки бросает свой `*NotImplementedError`.
+
+## Что НЕ сделано (blocked)
+
 - [ ] 1 hard flaky test `engineCallbacks > onNewConflict 3-way`
