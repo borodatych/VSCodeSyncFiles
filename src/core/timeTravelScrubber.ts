@@ -1,20 +1,11 @@
 /**
- * Time Travel scrubber — skeleton.
+ * Time Travel scrubber — pure model + filename parser.
  *
- * Goal: a slider over .history/{path}/ snapshots that lets the user scrub
- * across versions in real time. The pure helper here orders versions and
- * produces a tick model that the future slider widget will bind to.
- *
- * Slider rendering itself throws a sentinel — UI must catch and route to
- * a "needs work" placeholder.
+ * The slider widget lives in `src/ui/timeTravelScrubberPanel.ts`; this
+ * module produces the tick layout and parses the `.history/{relPath}/`
+ * filename convention (`STAMP_machineName.ext`) into a structured
+ * HistoryVersion record.
  */
-
-export class TimeTravelScrubberNotImplementedError extends Error {
-  constructor(message = "Time Travel scrubber UI is not implemented yet") {
-    super(message);
-    this.name = "TimeTravelScrubberNotImplementedError";
-  }
-}
 
 export interface HistoryVersion {
   cloudPath: string;
@@ -53,6 +44,25 @@ export function buildTimeTravelModel(versions: readonly HistoryVersion[]): TimeT
   return { ticks, earliestMs, latestMs, totalSpanMs };
 }
 
-export function renderScrubber(_model: TimeTravelModel): never {
-  throw new TimeTravelScrubberNotImplementedError();
+/**
+ * Parse a `.history/{relPath}/STAMP_machineName.ext` cloudPath into a
+ * structured version record. The STAMP format is the one written by
+ * `syncEngine.snapshotHistory`: ISO 8601 with `:` and `.` replaced by `-`,
+ * e.g. `2026-05-08T01-23-45-678Z`. Returns null on shape mismatch — never
+ * throws on bad input (this is the trust boundary for what the cloud
+ * provider returns from listFolder).
+ */
+export function parseHistoryFilename(cloudPath: string, size = 0): HistoryVersion | null {
+  const filename = cloudPath.split("/").pop();
+  if (!filename) return null;
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)_(.+?)(?:\.[^.]*)?$/.exec(filename);
+  if (!m) return null;
+  const [, stamp, machineName] = m;
+  const iso = stamp.replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/,
+    "$1:$2:$3.$4Z",
+  );
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return { cloudPath, createdAtMs: t, machineName, size };
 }

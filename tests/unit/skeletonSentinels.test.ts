@@ -11,8 +11,7 @@ import {
 } from "../../src/core/snapshotDiffViewer.js";
 import {
   buildTimeTravelModel,
-  renderScrubber,
-  TimeTravelScrubberNotImplementedError,
+  parseHistoryFilename,
 } from "../../src/core/timeTravelScrubber.js";
 import { scoreConflictRisk } from "../../src/core/smartConflictPrediction.js";
 import { planBulkPush } from "../../src/core/bulkPushWizard.js";
@@ -65,11 +64,22 @@ describe("timeTravelScrubber", () => {
     expect(m.ticks[0].positionFraction).toBe(0);
     expect(m.ticks[2].positionFraction).toBe(1);
   });
-  it("renderScrubber throws sentinel", () => {
-    expect(() => renderScrubber({ ticks: [], earliestMs: 0, latestMs: 0, totalSpanMs: 0 })).toThrow(
-      TimeTravelScrubberNotImplementedError,
+  it("parseHistoryFilename round-trips a real STAMP_machine.ext path", () => {
+    const v = parseHistoryFilename(
+      ".vscodesync/ws/.history/src/foo.ts/2026-05-08T01-23-45-678Z_alpha.ts",
     );
+    expect(v).not.toBeNull();
+    if (v) {
+      expect(v.machineName).toBe("alpha");
+      expect(new Date(v.createdAtMs).toISOString()).toBe("2026-05-08T01:23:45.678Z");
+    }
   });
+  it("parseHistoryFilename rejects unrecognised shapes", () => {
+    expect(parseHistoryFilename(".history/foo/random_blob.bin")).toBeNull();
+    expect(parseHistoryFilename("")).toBeNull();
+  });
+  // Note: TimeTravelScrubber skeleton was upgraded to a full webview on
+  // roadmap-max pass 8; the sentinel was removed.
 });
 
 describe("smartConflictPrediction", () => {

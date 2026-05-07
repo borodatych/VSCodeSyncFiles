@@ -3599,6 +3599,28 @@ export function activate(context: vscode.ExtensionContext): void {
       await runShowFileHistory(runWithEngine, globalConfig, target);
     }),
 
+    vscode.commands.registerCommand("vscodesync.openTimeTravelScrubber", async (uri?: vscode.Uri) => {
+      const target = await resolveFileTarget(uri);
+      if (!target) return;
+      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const cfg = await WorkspaceConfigManager.load(target.root);
+      const row = cfg.files.find((f) => f.localPath === rel);
+      if (!row) {
+        await vscode.window.showWarningMessage("VSCodeSync: файл не отслеживается этим расширением.");
+        return;
+      }
+      await runWithEngine(async (engine) => {
+        const provider = engine.deps.provider;
+        const { openTimeTravelScrubber } = await import("./ui/timeTravelScrubberPanel.js");
+        await openTimeTravelScrubber({
+          context,
+          provider,
+          workspaceId: row.workspaceId,
+          relPath: rel,
+        });
+      }, target.root);
+    }),
+
     vscode.commands.registerCommand("vscodesync.openInCloudStorage", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) {

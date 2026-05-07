@@ -970,6 +970,10 @@
         "title": "%cmd.diffSnapshots.title%"
       },
       {
+        "command": "vscodesync.openTimeTravelScrubber",
+        "title": "%cmd.openTimeTravelScrubber.title%"
+      },
+      {
         "command": "vscodesync.detectGarbageTracked",
         "title": "%cmd.detectGarbageTracked.title%"
       },
