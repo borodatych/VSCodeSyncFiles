@@ -27,11 +27,7 @@ import {
   installTemplate,
   WorkspaceTemplatesNotImplementedError,
 } from "../../src/core/workspaceTemplates.js";
-import {
-  evaluateAchievements,
-  showAchievementPopup,
-  AchievementsNotImplementedError,
-} from "../../src/core/achievements.js";
+import { evaluateAchievements, newlyUnlocked } from "../../src/core/achievements.js";
 import type { ActivityEvent } from "../../src/core/activityLog.js";
 
 describe("snapshotDiffViewer", () => {
@@ -191,9 +187,17 @@ describe("achievements", () => {
     const got = evaluateAchievements(events).map((a) => a.id);
     expect(got).toContain("five-machines");
   });
-  it("showAchievementPopup throws sentinel", () => {
-    expect(() =>
-      showAchievementPopup({ id: "x", title: "X", description: "", unlockedAtMs: 0 }),
-    ).toThrow(AchievementsNotImplementedError);
+  it("newlyUnlocked filters out already-known ids", () => {
+    const got = newlyUnlocked(
+      [
+        { id: "a", title: "A", description: "", unlockedAtMs: 1 },
+        { id: "b", title: "B", description: "", unlockedAtMs: 2 },
+      ],
+      new Set(["a"]),
+    );
+    expect(got.map((x) => x.id)).toEqual(["b"]);
   });
+  // Note: Achievements skeleton was upgraded to a full
+  // src/ui/achievementsService.ts on roadmap-max pass 6; the sentinel was
+  // removed.
 });

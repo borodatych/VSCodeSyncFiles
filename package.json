@@ -953,6 +953,10 @@
         "title": "%cmd.showInsightsWeeklyDigest.title%"
       },
       {
+        "command": "vscodesync.showAchievements",
+        "title": "%cmd.showAchievements.title%"
+      },
+      {
         "command": "vscodesync.detectGarbageTracked",
         "title": "%cmd.detectGarbageTracked.title%"
       },

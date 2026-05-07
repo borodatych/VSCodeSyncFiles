@@ -1,20 +1,12 @@
 /**
- * Achievements — skeleton.
+ * Achievements — gamified milestones unlocked by accumulated activity.
  *
- * Goal: gamified milestones unlocked by accumulated activity (first push,
- * 100 pulls, 10 different machines, no conflicts for 7 days, …). The pure
- * helper evaluates which achievements are unlocked given an activity event
- * stream. Persisting progress and showing a popup throws a sentinel.
+ * The pure helper here evaluates which achievements are unlocked given an
+ * activity event stream. Persistence + popup live in
+ * `src/ui/achievementsService.ts` (vscode-bound).
  */
 
 import type { ActivityEvent } from "./activityLog.js";
-
-export class AchievementsNotImplementedError extends Error {
-  constructor(message = "Achievements popup + persistence is not implemented yet") {
-    super(message);
-    this.name = "AchievementsNotImplementedError";
-  }
-}
 
 export interface Achievement {
   id: string;
@@ -103,6 +95,14 @@ export function evaluateAchievements(events: readonly ActivityEvent[]): Achievem
   return unlocked;
 }
 
-export function showAchievementPopup(_a: Achievement): never {
-  throw new AchievementsNotImplementedError();
+/**
+ * Diff a fresh evaluation against the persisted set of already-unlocked ids.
+ * Returns achievements that just crossed the threshold this tick — the UI
+ * layer is responsible for popping them and persisting the new ids.
+ */
+export function newlyUnlocked(
+  evaluated: readonly Achievement[],
+  alreadyKnown: ReadonlySet<string>,
+): Achievement[] {
+  return evaluated.filter((a) => !alreadyKnown.has(a.id));
 }

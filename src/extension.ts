@@ -100,6 +100,10 @@ import { registerTunnelBackend } from "./ui/tunnelProviderRegistry.js";
 import { cloudflaredTunnelBackend } from "./ui/tunnelBackendCloudflared.js";
 import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
 import { HoverDiffPreviewProvider } from "./ui/hoverDiffPreviewProvider.js";
+import {
+  runShowAchievements,
+  scheduleAchievementsWarmup,
+} from "./ui/achievementsService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
@@ -1137,6 +1141,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration("vscodesync.hoverDiffPreview")) hoverDiff.refresh();
     }),
   );
+
+  // Achievements — fire one-shot popups for newly-crossed milestones (5 s
+  // after activate so we don't pile onto startup), plus a manual command
+  // listing all known achievements with lock state.
+  context.subscriptions.push(
+    scheduleAchievementsWarmup(context, globalConfig.getStorageDir()),
+    vscode.commands.registerCommand("vscodesync.showAchievements", async () => {
+      await runShowAchievements(context, globalConfig.getStorageDir());
+    }),
+  );
+
   context.subscriptions.push(fileDecorationRegistration);
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
