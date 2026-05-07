@@ -58,6 +58,8 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 
 **Symmetric Tailscale skeleton:** `src/ui/tunnelBackendTailscale.ts` (`tailscaleFunnelTunnelBackend`) — параллельный backend с `tailscale --version` probe, fail-soft с подсказкой про Funnel ACL. 4 unit-теста на shape + config_invalid пути (probe не запускается, чтобы тест не блокировался на spawn timeout).
 
+**Backends зарегистрированы:** оба backend'а регистрируются в registry в `extension.ts:activate()` (sync, top-level imports). Теперь `openTunnel("cloudflared", port)` / `openTunnel("tailscale-funnel", port)` возвращают полезный `not_available` detail (probe + TODO) вместо «backend not registered». Миграция `webhookTunnel.ts` на `openTunnel(resolveTunnelType(setting), port)` с smee fallback — отдельная итерация.
+
 **Зачем:** smee.io — публичный relay без SLA; для серьёзных пользователей deal-breaker.
 
 **Что:**

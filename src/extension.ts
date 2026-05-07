@@ -96,6 +96,9 @@ import {
   ConflictHotZoneCodeLensProvider,
   makeToRelPath,
 } from "./ui/conflictHotZoneCodeLens.js";
+import { registerTunnelBackend } from "./ui/tunnelProviderRegistry.js";
+import { cloudflaredTunnelBackend } from "./ui/tunnelBackendCloudflared.js";
+import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
@@ -967,6 +970,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);
   const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
   const offlineQueueStore = new SyncOfflineQueueStore(globalConfig.getStorageDir());
+
+  // Tunnel backends — register both v2 backends in their skeleton form so the
+  // dispatcher returns "not_available" with a useful detail (probe + TODO)
+  // instead of "backend not registered". The actual spawn lands in v2.4.
+  registerTunnelBackend(cloudflaredTunnelBackend);
+  registerTunnelBackend(tailscaleFunnelTunnelBackend);
 
   registerVsCodeSyncTelemetry(context, globalConfig, CFG_SECTION);
   registerProviderSetupGuide(context);
