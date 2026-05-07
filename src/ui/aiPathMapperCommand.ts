@@ -157,3 +157,30 @@ export async function runAiPathMapper(): Promise<void> {
   }
   await vscode.window.showInformationMessage(`VSCodeSync: применено ${String(edits.length)} правок.`);
 }
+
+/**
+ * One-shot prompt offered the first time a given cloud workspace is attached
+ * on this machine: "run AI Path Mapper to fix old absolute paths in your
+ * configs?". Idempotent — the answer is recorded in globalState so the prompt
+ * is shown at most once per (machine × workspaceId).
+ */
+export async function maybePromptPathMapperAfterAttach(
+  context: vscode.ExtensionContext,
+  workspaceId: string,
+): Promise<void> {
+  const key = `vscodesync.aiPathMapper.promptedFor:${workspaceId}`;
+  if (context.globalState.get<boolean>(key)) return;
+  await context.globalState.update(key, true);
+
+  const lm = (vscode as unknown as VscodeWithLm).lm;
+  if (!lm) return;
+
+  const choice = await vscode.window.showInformationMessage(
+    "VSCodeSync: workspace подключён. Проверить абсолютные пути в .vscode/launch.json и др. через AI Path Mapper?",
+    "Запустить",
+    "Не сейчас",
+  );
+  if (choice === "Запустить") {
+    await vscode.commands.executeCommand("vscodesync.aiPathMapper");
+  }
+}

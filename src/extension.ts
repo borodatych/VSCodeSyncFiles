@@ -2059,6 +2059,10 @@ export function activate(context: vscode.ExtensionContext): void {
           }, el.anchorFolder.fsPath);
           // Workspace moved from remote to local — invalidate so the section updates
           workspacesTree.invalidateRemoteCache();
+          void (async () => {
+            const { maybePromptPathMapperAfterAttach } = await import("./ui/aiPathMapperCommand.js");
+            await maybePromptPathMapperAfterAttach(context, el.workspaceId);
+          })();
         } finally {
           workspacesTree.setWorkspaceLoading(el.workspaceId, false);
           // runWithEngine's finally already calls workspacesTree.refresh() — it merges with any pending refresh
@@ -3158,6 +3162,10 @@ export function activate(context: vscode.ExtensionContext): void {
           try {
             await engine.attachCloudWorkspace(pick.workspaceId);
             connected++;
+            void (async () => {
+              const { maybePromptPathMapperAfterAttach } = await import("./ui/aiPathMapperCommand.js");
+              await maybePromptPathMapperAfterAttach(context, pick.workspaceId);
+            })();
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             await vscode.window.showErrorMessage(
