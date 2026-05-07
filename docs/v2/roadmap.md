@@ -56,6 +56,8 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 
 **Прогресс ночной волны:** tunnel-dispatcher contract готов — `src/ui/tunnelProviderRegistry.ts` (`TunnelBackend` interface + `openTunnel` / `registerTunnelBackend` / `resolveTunnelType`), 5 unit-тестов. Backend `cloudflaredTunnelBackend` есть в skeleton-режиме (probes `cloudflared --version` на PATH; не spawn-ит долгоживущий процесс). Setting `vscodesync.webhooks.tunnelProvider` (smee | cloudflared | tailscale-funnel) объявлен. Полная реализация spawn + URL-scrape — отдельная итерация.
 
+**Symmetric Tailscale skeleton:** `src/ui/tunnelBackendTailscale.ts` (`tailscaleFunnelTunnelBackend`) — параллельный backend с `tailscale --version` probe, fail-soft с подсказкой про Funnel ACL. 4 unit-теста на shape + config_invalid пути (probe не запускается, чтобы тест не блокировался на spawn timeout).
+
 **Зачем:** smee.io — публичный relay без SLA; для серьёзных пользователей deal-breaker.
 
 **Что:**
