@@ -78,9 +78,10 @@ add files один за другим.
 
 **Что:**
 - [x] Pure planner `src/core/gitImportPlanner.ts` — `planGitImport(.gitignoreContent)` парсит .gitignore, отделяет patterns / comments / unsupported negations. `renderVscodesyncIgnore(plan)` рендерит готовый файл с header+notes. 5 unit-тестов.
-- [ ] CLI команда `vscodesync init from-git <repo-url> [--folder ...]` (skeleton — pure planner ready).
-- [ ] VS Code команда `vscodesync.initFromGit` (skeleton).
-- [ ] Sync git HEAD при push (skeleton — pure helper в gitHeadCompare.ts ready, engine hook не сделан).
+- [x] Pure step planner `src/core/gitImportFromUrl.ts` — `parseRepoUrl(url)` (HTTPS / SSH формы, host/owner/repo extraction) + `planImportFromGit({ url, targetFolderAbs })` возвращает 8 ordered steps (validate_url → ensure_target_folder → git_clone → read_gitignore → translate → scan_files → create_workspace → add_files). 9 unit-тестов.
+- [ ] CLI команда `vscodesync init from-git` — skeleton (planner ready, нужен `child_process.spawn` для git clone и обвязка над workspace API).
+- [ ] VS Code команда `vscodesync.initFromGit` — skeleton.
+- [ ] Sync git HEAD при push — skeleton (pure helper в `gitHeadCompare.ts` ready, engine hook не сделан).
 
 ---
 
