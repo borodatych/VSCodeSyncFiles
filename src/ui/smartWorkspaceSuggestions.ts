@@ -14,6 +14,10 @@ import {
   COEDIT_WINDOW_MS,
 } from "../core/smartSuggestionsModel.js";
 import { hasArchivedTag, newestTrackedLastSyncMs } from "../utils/workspaceLastActivity.js";
+import {
+  findInactiveWorkspaceCandidates,
+  inactiveSnoozeKey,
+} from "../core/inactiveWorkspaceCandidates.js";
 
 /** After other startup tasks (sync summary, inactive scan). */
 const STARTUP_DELAY_MS = 22_000;
@@ -65,9 +69,6 @@ function isSnoozeActive(map: Record<string, string>, key: string): boolean {
   return Number.isFinite(t) && Date.now() < t;
 }
 
-function archive60Key(folderRootFsPath: string, workspaceId: string): string {
-  return `${folderRootFsPath}\u0000${workspaceId}`;
-}
 
 /** Minimal provider check for smart suggestions (archive path). */
 export interface ICloudProviderLike {
@@ -217,49 +218,46 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
 
   const earlySnooze = snoozeMap(context, EARLY_ARCHIVE_SNOOZE_KEY);
 
-  for (const { root, wc } of configs) {
-    for (const ent of wc.activeWorkspaces) {
-      if (hasArchivedTag(ent.tags)) {
-        continue;
-      }
-      if (normalizeWorkspaceSyncState(ent) !== "active") {
-        continue;
-      }
-      const newest = newestTrackedLastSyncMs(wc, ent.workspaceId);
-      if (newest === undefined) {
-        continue;
-      }
-      const inactiveDays = (Date.now() - newest) / DAY_MS;
-      if (inactiveDays < SMART_SUGGESTIONS_ARCHIVE_DAYS || inactiveDays >= inactiveThreshold) {
-        continue;
-      }
-      const sk = archive60Key(root, ent.workspaceId);
-      if (isSnoozeActive(earlySnooze, sk)) {
-        continue;
-      }
-      const note = ent.workspaceNote.trim() || ent.workspaceId;
-      const picked = await vscode.window.showInformationMessage(
-        `VSCodeSync: workspace «${note}» не использовался около ${String(Math.round(inactiveDays))} дн. (более 2 месяцев без синхронизации отслеживаемых файлов). Архивировать?`,
-        "Архивировать",
-        `Через ${String(SNOOZE_DAYS)} дней`,
-        "Не напоминать для этого workspace",
-      );
-      if (picked === undefined || picked === `Через ${String(SNOOZE_DAYS)} дней`) {
-        const until = new Date(Date.now() + SNOOZE_DAYS * DAY_MS).toISOString();
-        await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, until);
-        continue;
-      }
-      if (picked === "Не напоминать для этого workspace") {
-        await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, NEVER);
-        continue;
-      }
-      await deps.onEarlyArchive({
-        folderRootFsPath: root,
-        workspaceId: ent.workspaceId,
-        workspaceNote: ent.workspaceNote,
-      });
-      break;
+  const earlyFolderInputs = configs.map(({ root, wc }) => ({
+    folderRootFsPath: root,
+    workspaces: wc.activeWorkspaces.map((ent) => ({
+      workspaceId: ent.workspaceId,
+      workspaceNote: ent.workspaceNote,
+      archived: hasArchivedTag(ent.tags),
+      active: normalizeWorkspaceSyncState(ent) === "active",
+      lastSyncMs: newestTrackedLastSyncMs(wc, ent.workspaceId),
+    })),
+  }));
+  const earlyCandidates = findInactiveWorkspaceCandidates({
+    folders: earlyFolderInputs,
+    minInactiveDays: SMART_SUGGESTIONS_ARCHIVE_DAYS,
+    maxInactiveDays: inactiveThreshold,
+    snoozes: earlySnooze,
+  });
+  for (const c of earlyCandidates) {
+    const sk = inactiveSnoozeKey(c.folderRootFsPath, c.workspaceId);
+    const note = c.workspaceNote.trim() || c.workspaceId;
+    const picked = await vscode.window.showInformationMessage(
+      `VSCodeSync: workspace «${note}» не использовался около ${String(Math.round(c.inactiveDays))} дн. (более 2 месяцев без синхронизации отслеживаемых файлов). Архивировать?`,
+      "Архивировать",
+      `Через ${String(SNOOZE_DAYS)} дней`,
+      "Не напоминать для этого workspace",
+    );
+    if (picked === undefined || picked === `Через ${String(SNOOZE_DAYS)} дней`) {
+      const until = new Date(Date.now() + SNOOZE_DAYS * DAY_MS).toISOString();
+      await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, until);
+      continue;
     }
+    if (picked === "Не напоминать для этого workspace") {
+      await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, NEVER);
+      continue;
+    }
+    await deps.onEarlyArchive({
+      folderRootFsPath: c.folderRootFsPath,
+      workspaceId: c.workspaceId,
+      workspaceNote: c.workspaceNote,
+    });
+    break;
   }
 }
 
