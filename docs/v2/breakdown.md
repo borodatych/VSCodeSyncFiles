@@ -194,7 +194,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.6.6. Smart features
 
-- [ ] **`src/commands/registerSmartFeatures.ts`** — `aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `aiSessionSummary`, `installWorkspaceTemplate`, `showAchievements`, `bulkPush`, `showInsightsWeeklyDigest`, `diffSnapshots`, `openTimeTravelScrubber`.
+- [~] **`src/commands/registerSmartFeatures.ts`** — bundle с контрактом `{ context, storageDir }`: `showAchievements` + `installWorkspaceTemplate` (закрыто). Остальные (`aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `bulkPush`, `showInsightsWeeklyDigest`, `diffSnapshots`, `openTimeTravelScrubber`) требуют `runWithEngine` / `globalConfig` / `registry` — отдельный файл `registerSmartFeaturesEngine.ts` со своим richer-контрактом, следующая итерация.
 
 ### v2.6.7. Validation
 

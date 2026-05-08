@@ -100,10 +100,8 @@ import { registerTunnelBackend } from "./ui/tunnelProviderRegistry.js";
 import { cloudflaredTunnelBackend } from "./ui/tunnelBackendCloudflared.js";
 import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
 import { HoverDiffPreviewProvider } from "./ui/hoverDiffPreviewProvider.js";
-import {
-  runShowAchievements,
-  scheduleAchievementsWarmup,
-} from "./ui/achievementsService.js";
+import { scheduleAchievementsWarmup } from "./ui/achievementsService.js";
+import { registerSmartFeaturesCommands } from "./commands/registerSmartFeatures.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -1143,17 +1141,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Achievements — fire one-shot popups for newly-crossed milestones (5 s
-  // after activate so we don't pile onto startup), plus a manual command
-  // listing all known achievements with lock state.
+  // Achievements warmup (5 s after activate so we don't pile onto startup)
+  // and the smart-features command bundle (showAchievements,
+  // installWorkspaceTemplate) are wired separately — see
+  // src/commands/registerSmartFeatures.ts for the bundle contract.
   context.subscriptions.push(
     scheduleAchievementsWarmup(context, globalConfig.getStorageDir()),
-    vscode.commands.registerCommand("vscodesync.showAchievements", async () => {
-      await runShowAchievements(context, globalConfig.getStorageDir());
-    }),
-    vscode.commands.registerCommand("vscodesync.installWorkspaceTemplate", async () => {
-      const { runInstallWorkspaceTemplate } = await import("./ui/workspaceTemplatesCommand.js");
-      await runInstallWorkspaceTemplate();
+    ...registerSmartFeaturesCommands({
+      context,
+      storageDir: globalConfig.getStorageDir(),
     }),
   );
 
