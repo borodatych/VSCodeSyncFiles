@@ -58,6 +58,7 @@ import { scheduleSmartWorkspaceSuggestions } from "./ui/smartWorkspaceSuggestion
 import { scheduleMachineApprovalNotifier } from "./ui/machineApprovalNotifications.js";
 import { applyArchivedTagAndSuspend, stripArchivedTagAndActivate } from "./ui/workspaceArchiveOps.js";
 import { hasArchivedTag, newestTrackedLastSyncMs } from "./utils/workspaceLastActivity.js";
+import { evaluateLongAbsence, type LongAbsenceWorkspaceInput } from "./core/longAbsenceEvaluator.js";
 import { syncAutoPause } from "./core/syncAutoPause.js";
 import { registerAutoPauseMonitor } from "./ui/syncAutoPauseMonitor.js";
 import { registerSyncScheduleTransition } from "./ui/syncScheduleTransition.js";
@@ -4690,26 +4691,30 @@ export function activate(context: vscode.ExtensionContext): void {
       if (threshDays <= 0) {
         return;
       }
-      const cutoff = Date.now() - threshDays * 24 * 60 * 60 * 1000;
+      const folders: LongAbsenceWorkspaceInput[] = [];
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
         const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-        for (const ws of wc.activeWorkspaces) {
-          const lastSyncMs = newestTrackedLastSyncMs(wc, ws.workspaceId);
-          if (lastSyncMs !== undefined && lastSyncMs < cutoff) {
-            const daysSince = Math.floor((Date.now() - lastSyncMs) / 86400000);
-            const choice = await vscode.window.showWarningMessage(
-              `VSCodeSync ⏰ Workspace «${ws.workspaceNote || ws.workspaceId}» не синхронизировался ${String(daysSince)} дней.`,
-              "Preview изменений",
-              "Синхронизировать",
-              "Пропустить",
-            );
-            if (choice === "Синхронизировать") {
-              await vscode.commands.executeCommand("vscodesync.pullAll");
-            } else if (choice === "Preview изменений") {
-              await vscode.commands.executeCommand("vscodesync.previewSync");
-            }
-            break; // one notification per folder per session
-          }
+        folders.push({
+          folderPath: folder.uri.fsPath,
+          workspaces: wc.activeWorkspaces.map((ws) => ({
+            workspaceId: ws.workspaceId,
+            workspaceNote: ws.workspaceNote || ws.workspaceId,
+            lastSyncMs: newestTrackedLastSyncMs(wc, ws.workspaceId),
+          })),
+        });
+      }
+      const warnings = evaluateLongAbsence({ folders, thresholdDays: threshDays });
+      for (const w of warnings) {
+        const choice = await vscode.window.showWarningMessage(
+          `VSCodeSync ⏰ Workspace «${w.workspaceNote}» не синхронизировался ${String(w.daysSinceLastSync)} дней.`,
+          "Preview изменений",
+          "Синхронизировать",
+          "Пропустить",
+        );
+        if (choice === "Синхронизировать") {
+          await vscode.commands.executeCommand("vscodesync.pullAll");
+        } else if (choice === "Preview изменений") {
+          await vscode.commands.executeCommand("vscodesync.previewSync");
         }
       }
     } catch {
