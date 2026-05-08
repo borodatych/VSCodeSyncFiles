@@ -232,7 +232,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.10.1. Mock lifecycle test matrix
 
-- [ ] Full mock matrix для `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` — оба модуля импортируют `vscode` напрямую (showWarningMessage и т.п.); честные мок-тесты требуют рефакторинга на vscode-free pure-core + thin wrapper. Skeleton — следующая итерация.
+- [~] Full mock matrix для `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` — pure decision tree выделен в `src/core/webhookLifecycleReconcileDecision.ts:planWebhookLifecycleReconcile(input)`. Возвращает `{ actions[], lifecycleActive, inactiveReason? }` с discriminated-union actions (`delete_stale_subscription` / `clear_local_state` / `start_local_server` / `create_subscription` / `keep_subscription` / `register_webhook_push` / `start_renew_loop`). Покрывает 4 inactiveReasons (`provider_mismatch` / `webhooks_disabled` / `no_notification_url` / `no_token`) + URL-drift recreate с переиспользованием clientState. 14 unit-тестов. Wrapper в `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` остаётся переписать на pure planner.
 - [ ] **412 PreconditionFailed** edge-cases (EPERM rename, OneDrive Upload Session chunk, smee.io reconnect) — те же блокеры (зависят от рефакторинга lifecycle модулей).
 
 ### v2.10.2. Auto-renewal
