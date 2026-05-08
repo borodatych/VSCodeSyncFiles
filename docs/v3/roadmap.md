@@ -17,10 +17,10 @@
 per-file. Хочется per-file include/exclude по паттернам с инвертированной логикой.
 
 **Что:**
-- [ ] Setting `vscodesync.selectiveSync.mode`: `"all-tracked"` (default — текущее) | `"include-list"` | `"exclude-list"`.
-- [ ] Per-workspace файл `.vscodesync-include` (gitignore-синтаксис) — workspaceConfig.files фильтруется по нему перед push.
-- [ ] UI команда `vscodesync.selectiveSyncEditList` — open `.vscodesync-include` с template и подсветкой.
-- [ ] Diff-preview: «эти файлы перестанут синкаться при сохранении» с возможностью отмены.
+- [~] Setting `vscodesync.selectiveSync.mode` — pure helper готов; обвязка к `package.json` и `pushFile`/`pullFile` остаётся.
+- [x] Pure filter `src/core/selectiveSyncFilter.ts`: `evaluateSelectiveSync(relPath, { mode, patterns })` + `parseSelectiveSyncFile(text)`. Поддержка `*` / `**` / `?` / trailing slash для директорий. 5 unit-тестов.
+- [ ] UI команда `vscodesync.selectiveSyncEditList` — открыть `.vscodesync-include` с template (skeleton).
+- [ ] Diff-preview перед удалением (skeleton — нужен engine hook).
 
 **Риск:** добавление exclude может «потерять» файл на других машинах (его удалят как stale). Нужен safeguard: пред-удаление warning + grace period.
 
@@ -33,11 +33,11 @@ per-file. Хочется per-file include/exclude по паттернам с и�
 ~3000 OneDrive API calls за день, лимит 10000».
 
 **Что:**
-- [ ] Pure helper `src/core/quotaTracker.ts` — счётчик per-provider per-window (rolling 24 ч).
-- [ ] Hook в `queuedProvider.ts` — каждый API call инкрементирует счётчик.
-- [ ] UI команда `vscodesync.showQuotaDashboard` — webview с per-provider графиками (использовать существующий `sparkline` или CSS-grid bars).
-- [ ] Alerts: при 70% / 90% от известного лимита → warning. При 95% → auto-pause sync на 1 час.
-- [ ] Per-provider known limits: уже частично есть в `PROVIDER_RATE_LIMITS` — расширить дневными лимитами (Google Drive: 1B reads/day, etc.).
+- [x] Pure helper `src/core/quotaTracker.ts` — `createQuotaTracker({ windowMs?, overrideLimits? })` с `recordCall / snapshot / snapshotAll`. Severity ladder (`ok` / `warning` ≥70% / `critical` ≥90% / `auto_pause` ≥95%). 5 unit-тестов.
+- [ ] Hook в `queuedProvider.ts` — обвязка для инкремента (skeleton; нужно прокинуть tracker через DI).
+- [ ] UI команда `vscodesync.showQuotaDashboard` — webview (skeleton).
+- [x] Severity ladder реализован — alerts генерируются вызывающей стороной по `severity`.
+- [x] Per-provider limits в `PROVIDER_DAILY_LIMITS` (gdrive: 1B; остальные null = unknown).
 
 ---
 
@@ -63,10 +63,10 @@ work account для рабочего workspace, personal для личного.
 старым→новым ключом, загрузить.
 
 **Что:**
-- [ ] Pure planner `src/core/keyRotationPlan.ts` — для каждого workspace, для каждого encrypted file: planRotation(oldKey, newKey) → batches.
-- [ ] UI команда `vscodesync.rotateEncryptionKey` — modal warning → progress bar → вкл./выкл. workspace temporarily.
-- [ ] Resumable: если прервалось — `_meta.json` хранит флаг `rotationInProgress: { from: keyId, to: keyId, completed: rels[] }`. Re-run продолжает с того же места.
-- [ ] Multi-machine sync of new key: write encrypted-with-old-pwd-protected blob `_keyrotation/{rotationId}.json` чтобы другие машины подхватили.
+- [x] Pure planner `src/core/keyRotationPlan.ts` — `planKeyRotation(items, { maxBytesPerBatch?, maxFilesPerBatch? })` с детерминированной сортировкой `(workspaceId, relPath)` и пропуском `done: true`. 3 unit-теста.
+- [ ] UI команда `vscodesync.rotateEncryptionKey` (skeleton — пока зарегистрирована в `package.json`, привязка к engine остаётся).
+- [ ] Resumable: caller персистит `done` флаг в `_meta.json.rotationInProgress` — supported by planner shape.
+- [ ] Multi-machine key sync через `_keyrotation/{rotationId}.json` (skeleton).
 
 ---
 
@@ -155,9 +155,9 @@ AI-review summary каждого файла перед apply.
 **Зачем:** «отправь коллеге ссылку на read-only снэпшот моего workspace».
 
 **Что:**
-- [ ] Pure helper `src/core/shareLink.ts` — generate signed URL `vscode://borodatych.vscodesyncfiles/share?workspace=...&snapshot=...&pwd=hash`.
-- [ ] При open ссылки на другой машине — invitee получает read-only access, может скачать snapshot, но не push'ить.
-- [ ] Storage: ACL field в snapshot meta — `sharedTo: { hashedPwd, expiresAt, readOnly: true }`.
+- [x] Pure helper `src/core/shareLink.ts` — `buildShareLink({ workspaceId, snapshotName, expiresAtMs?, passwordHashHex? })` + `parseShareLink(raw, now?)` с проверками expired/wrong_path/bad_field. 5 unit-тестов.
+- [ ] При open ссылки на другой машине — invitee получает read-only access (skeleton — обвязка `vscode.window.registerUriHandler` остаётся).
+- [ ] Storage: ACL field в snapshot meta — `sharedTo: { hashedPwd, expiresAt, readOnly: true }` (skeleton).
 
 **Риск:** создаёт «sharing» которого раньше не было. Можно вызвать confusion. Подумать: нужно ли это вообще, или достаточно «share via cloud provider's native share».
 
@@ -180,9 +180,9 @@ AI-review summary каждого файла перед apply.
 выучило когда я работаю».
 
 **Что:**
-- [ ] Pure helper `src/core/autoPauseLearner.ts` — анализ activity log за 30 дней, кластеризация по hour-of-day → классификация «active hours» / «quiet hours».
-- [ ] Auto-pause во время quiet hours (но manual sync доступен).
-- [ ] Setting `vscodesync.autoPause.learnedSchedule.enabled` (opt-in).
+- [x] Pure helper `src/core/autoPauseLearner.ts` — `learnAutoPauseSchedule(timestamps, { quietHourRatio?, minEvents?, timezoneOffsetMinutes? })` возвращает 24-element `hourActive[]` + counts + mean. `isQuietHour(schedule, nowMs)` для runtime check. 3 unit-теста.
+- [ ] Auto-pause во время quiet hours (skeleton — нужен hook в `queuedProvider`).
+- [ ] Setting `vscodesync.autoPause.learnedSchedule.enabled` (skeleton).
 
 ---
 
