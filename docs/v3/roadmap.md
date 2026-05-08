@@ -138,15 +138,9 @@ AI-review summary каждого файла перед apply.
 **Зачем:** workspace может содержать папки с разной chesterчувствительностью. `node_modules/` — never sync, `src/` — cloud + P2P, `secrets/` — P2P-only (не на облако), `.vscode/` — local-only.
 
 **Что:**
-- [ ] Конфиг-файл `.vscodesync-strategy` (gitignore-синтаксис + per-pattern strategy):
-  ```
-  node_modules/   never
-  secrets/        p2p-only
-  .vscode/        local-only
-  *               cloud
-  ```
-- [ ] Hook в `pushFile` / `pullFile`: respect strategy.
-- [ ] UI команда `vscodesync.editStrategy` — открыть файл с template.
+- [x] Конфиг-файл `.vscodesync-strategy` parser в `src/core/perFolderSyncStrategy.ts` — `parseStrategyFile(text)` + `resolveStrategy(relPath, rules)`. Strategies: `never | local-only | p2p-only | cloud`. First-matching-rule-wins, default fallback `cloud`. 8 unit-тестов.
+- [ ] Hook в `pushFile` / `pullFile` (skeleton — нужна обвязка к engine).
+- [ ] UI команда `vscodesync.editStrategy` — skeleton (открыть файл template).
 
 ---
 
