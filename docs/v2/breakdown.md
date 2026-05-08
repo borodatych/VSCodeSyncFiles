@@ -38,9 +38,9 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.4. Файловая передача через P2P
 
-- [ ] **`src/core/p2pFileTransfer.ts`** — pure planner: разбить файл на frames фиксированного размера (16 KB chunks), encode через `wrapAuthenticated.sendFrame("file_chunk", payload)` с `{ relPath, chunkIndex, totalChunks, hash }` в первом frame.
-- [ ] Receiver: собирает chunks, проверяет hash, пишет атомарно через `writeTextFileAtomic`.
-- [ ] Hook в `syncEngine.pushFile`: если active P2P session с peer, который держит этот workspace — отправлять через P2P вместо upload в облако. Manifest всё равно идёт через провайдер.
+- [x] **`src/core/p2pFileTransfer.ts`** — pure planner `planP2PFileChunks` (16 KB default, last chunk = remainder, empty file = 1 zero-length chunk), `encodeManifestPayload`/`decodeManifestPayload` (strict shape + 16 KB cap), `encodeFileChunkPayload`/`decodeFileChunkPayload` (8-byte BE header: u32 chunkIndex + u32 length). 19 unit-тестов.
+- [x] Receiver: `createChunkAssembler(manifest)` — out-of-order delivery, idempotent на duplicates, finalize() возвращает `{ content, hashOk }` (recompute SHA-256 + compare с manifest). Пишет в файл — обвязка наверху (UI layer).
+- [~] Hook в `syncEngine.pushFile` — pure planner готов, обвязка к live engine ждёт `vscodesync.startP2PSession` UI команды (v2.1.3, остаётся skeleton).
 
 ### v2.1.5. Lifecycle и health
 
