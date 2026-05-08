@@ -3,6 +3,8 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { readSnoozeMap, setSnoozeEntry } from "../utils/snoozeStore.js";
+import { isInactiveSnoozeActive } from "../core/inactiveWorkspaceCandidates.js";
 
 const CFG = "vscodesync";
 const PROMPT_HANDLED_KEY = "vscodesync.machineApprovalHandledIds";
@@ -30,23 +32,13 @@ async function rememberHandled(ctx: vscode.ExtensionContext, id: string): Promis
   await ctx.globalState.update(PROMPT_HANDLED_KEY, [...s]);
 }
 
-function snoozeMap(ctx: vscode.ExtensionContext): Record<string, string> {
-  return ctx.globalState.get<Record<string, string>>(SNOOZE_UNTIL_KEY) ?? {};
-}
-
 async function snoozeUntil(ctx: vscode.ExtensionContext, id: string, msFromNow: number): Promise<void> {
-  const prev = snoozeMap(ctx);
   const until = new Date(Date.now() + msFromNow).toISOString();
-  await ctx.globalState.update(SNOOZE_UNTIL_KEY, { ...prev, [id]: until });
+  await setSnoozeEntry(ctx, SNOOZE_UNTIL_KEY, id, until);
 }
 
 function isSnoozed(ctx: vscode.ExtensionContext, id: string): boolean {
-  const v = snoozeMap(ctx)[id];
-  if (!v) {
-    return false;
-  }
-  const t = Date.parse(v);
-  return Number.isFinite(t) && Date.now() < t;
+  return isInactiveSnoozeActive(readSnoozeMap(ctx, SNOOZE_UNTIL_KEY)[id], Date.now());
 }
 
 export interface MachineApprovalNotifierDeps {
