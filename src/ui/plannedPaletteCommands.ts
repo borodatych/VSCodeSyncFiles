@@ -11,9 +11,11 @@ import {
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
 import {
   createWorkspaceSnapshot,
+  deleteWorkspaceSnapshot,
   listWorkspaceSnapshots,
   restoreWorkspaceSnapshot,
 } from "../core/snapshotsEngine.js";
+import { planSnapshotRetention } from "../core/snapshotRetentionPlan.js";
 import { exportKeyWithPassword, importKeyWithPassword, generateEncryptionKey, encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { readEncryptionKey, storeEncryptionKey } from "../core/encryptionKey.js";
 import type { SyncEngine } from "../core/syncEngine.js";
@@ -161,11 +163,23 @@ export function registerPlannedPaletteCommands(
       }
 
       const wsId = workspaceId;
+      const conf = configuration();
+      const retentionDays = conf.get<number>("snapshotRetentionDays", 180);
+      const maxPerWorkspace = conf.get<number>("maxSnapshotsPerWorkspace", 20);
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: создание снапшота…", cancellable: false },
         async () => {
           const finalName = await createWorkspaceSnapshot(provider, root, wsId, nameInput, gc.machineName);
           await vscode.window.showInformationMessage(`VSCodeSync: снапшот «${finalName}» создан.`);
+          try {
+            const snapshots = await listWorkspaceSnapshots(provider, wsId);
+            const plan = planSnapshotRetention({ snapshots, retentionDays, maxPerWorkspace });
+            for (const s of plan.delete) {
+              await deleteWorkspaceSnapshot(provider, wsId, s.name);
+            }
+          } catch {
+            /* retention is best-effort — never fail the create itself */
+          }
         },
       );
     }),
