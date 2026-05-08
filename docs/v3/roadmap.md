@@ -93,7 +93,7 @@ add files один за другим.
 **Что:**
 - [x] Pure planner `src/core/syncSchedulePlanner.ts` — `parseSyncSchedule(raw)` поддерживает `hourly` / `daily HH:MM[,HH:MM]*` / `weekly <day> HH:MM` / `workhours Nm`. `isSyncDueAt(schedule, lastRunMs, nowMs)` для polling. 11 unit-тестов.
 - [x] Setting `vscodesync.syncScheduleExtended` (отдельная от существующего `snapshotSchedule`) + en/ru NLS.
-- [ ] Hook через polling в `scheduledSnapshots.ts` (skeleton — engine-side wiring).
+- [~] Hook через polling в `scheduledSnapshots.ts` — pure tick-decision wrapper `planSyncTickAction({ enabled, schedule, lastRunMs, nowMs, defaultProbeMs? })` готов в `src/core/syncTickPlanner.ts`. Возвращает `{ action: 'sync_now', reason: 'first_run' | 'schedule_due' }` или `{ action: 'wait', reason: 'disabled' | 'no_schedule' | 'schedule_pending', nextProbeMs }`. Shape согласован с `planBackupVerifyTick` (engine drains оба через единый dispatcher). 7 unit-тестов. `scheduledSnapshots` polling integration остаётся.
 
 ---
 
