@@ -130,5 +130,6 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.editWorkspaceTags",
   "vscodesync.purgeEncryptedWorkspace",
   "vscodesync.healthCheck",
-  "vscodesync.mergeWorkspaces"
+  "vscodesync.mergeWorkspaces",
+  "vscodesync.showTunnelStatus"
 ];
