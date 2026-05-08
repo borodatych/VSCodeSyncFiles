@@ -128,9 +128,10 @@ AI-review summary каждого файла перед apply.
 проверяет целостность. Backup без verify ≠ backup.
 
 **Что:**
-- [ ] Background job (раз в неделю): для случайного workspace — download manifest из secondary, compare с primary. Mismatch → alert.
-- [ ] Команда `vscodesync.verifyBackup` — manual full check для всех workspace.
-- [ ] Restore-test: для каждого snapshot в backup — temp restore в `_verify/`, проверить hash совпадает с `_meta.json`, удалить.
+- [x] Pure planner `src/core/backupVerifyPlanner.ts` — `planBackupVerify(workspaceId, primary[], secondary[], { freshnessSlackMs? })` возвращает per-entry mismatches (`missing_in_secondary` / `hash_mismatch` / `stale_in_secondary` / `extra_in_secondary`) + `consistent` flag. `scoreVerifyReport(r)` severity ladder (ok/drift/stale/broken). 9 unit-тестов.
+- [ ] Engine background job (skeleton — engine wiring к scheduler).
+- [ ] Команда `vscodesync.verifyBackup` (skeleton).
+- [ ] Restore-test (skeleton — engine wiring).
 
 ---
 
