@@ -160,7 +160,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 - [ ] **Status-bar:** widget с эмодзи `$(plug)` и активным backend — отдельная итерация (зависит от `tunnelStatusRegistry` events; пока команда даёт текстовый отчёт).
 - [x] **Команда `vscodesync.showTunnelStatus`** → OutputChannel `VSCodeSync · Tunnel` с rendered `formatTunnelStatusReport(getTunnelStatus())`. Backend `tunnelStatusRegistry.ts` (pure module) обновляется dispatcher'ом на каждый relay open / fallback / dispose. Уптайм формата `1h 2m 3s`. 9 unit-тестов на registry + format.
-- [ ] Auto-restart на network change остаётся следующей итерацией (требует engine-level lifecycle и reactive subscription на configChange).
+- [x] Pure decision helper `src/core/tunnelConfigWatcher.ts` — `compareTunnelConfig(prev, next)` возвращает `{ action: 'no_change' | 'start' | 'stop' | 'restart', reason }`. Триггеры: tunnel enabled/disabled, provider change, URL change. 8 unit-тестов. Engine-side подписка на `onDidChangeConfiguration` остаётся следующей итерацией (pure decision готов).
 
 ---
 
