@@ -137,15 +137,15 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.2. Cloudflared spawn
 
-- [ ] **`tunnelBackendCloudflared.open` real impl:**
+- [~] **`tunnelBackendCloudflared.open` real impl:** pure URL-scrape ready (`src/core/tunnelUrlScrape.ts:scrapeTunnelUrl(buf, "cloudflared")` + `isValidTunnelUrl`); spawn-watchdog wiring остаётся (нет binary на dev-машине).
   - Spawn `cloudflared tunnel --url http://localhost:<port> --no-autoupdate --metrics 127.0.0.1:0`.
   - Scrape stderr на regex `https://[a-z0-9-]+\.trycloudflare\.com`. Timeout 30 с.
   - Watchdog: процесс умер → respawn до 3 раз с exponential backoff. После — `not_available` + alert.
-- [ ] Тесты: smoke с fake spawn (mock child_process.spawn).
+- [x] Тесты на pure scrape логику (`tests/unit/tunnelUrlScrape.test.ts`, 9 тестов с real-world stderr/stdout fixtures без spawn). Полный smoke с fake spawn остаётся (нужен mock `child_process.spawn` который завершит через event-loop tick).
 
 ### v2.4.3. Tailscale spawn
 
-- [ ] **`tunnelBackendTailscale.open` real impl:**
+- [~] **`tunnelBackendTailscale.open` real impl:** pure URL-scrape ready (`scrapeTunnelUrl(buf, "tailscale-funnel")` + `isValidTunnelUrl` принимает `https://*.ts.net` с/без trailing slash); `tailscale funnel <port>` spawn + polling `tailscale funnel status` остаётся.
   - Spawn `tailscale funnel --bg <port>`.
   - Polling `tailscale funnel status` каждые 2 с до URL `https://<machine>.<tailnet>.ts.net/`. Timeout 15 с.
   - Cleanup: `tailscale funnel reset` на dispose.
