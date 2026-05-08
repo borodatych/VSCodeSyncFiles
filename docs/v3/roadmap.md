@@ -77,9 +77,10 @@ work account для рабочего workspace, personal для личного.
 add files один за другим.
 
 **Что:**
-- [ ] CLI команда `vscodesync init from-git <repo-url> [--folder ...]` — clone репо в указанную папку, создать workspace, добавить все файлы (с применением `.gitignore` как `.vscodesync-ignore`).
-- [ ] VS Code команда `vscodesync.initFromGit` — same flow через QuickPick + showOpenDialog.
-- [ ] Sync git HEAD: при push на VSCodeSync делать также `git push` (опционально, через setting).
+- [x] Pure planner `src/core/gitImportPlanner.ts` — `planGitImport(.gitignoreContent)` парсит .gitignore, отделяет patterns / comments / unsupported negations. `renderVscodesyncIgnore(plan)` рендерит готовый файл с header+notes. 5 unit-тестов.
+- [ ] CLI команда `vscodesync init from-git <repo-url> [--folder ...]` (skeleton — pure planner ready).
+- [ ] VS Code команда `vscodesync.initFromGit` (skeleton).
+- [ ] Sync git HEAD при push (skeleton — pure helper в gitHeadCompare.ts ready, engine hook не сделан).
 
 ---
 
@@ -162,9 +163,9 @@ AI-review summary каждого файла перед apply.
 **Зачем:** часто workspace = git repo. Хочется синхронизировать не только файлы, но и git state (текущий branch, pending commits) между машинами.
 
 **Что:**
-- [ ] Track `gitBranch` в `_meta.json` (уже есть).
-- [ ] При sync — read local `.git/HEAD`, compare с `_meta.json.gitBranch`. Mismatch → toast «локальная ветка `feature/x`, на машине alpha — `main`. Switch?».
-- [ ] Опционально: автоматически делать `git fetch` после pull (без `git checkout` — пользователь сам решает).
+- [x] Track `gitBranch` в `_meta.json` — уже есть.
+- [x] Pure helper `src/core/gitHeadCompare.ts` — `parseGitHead(content)` (branch / detached / unparseable) + `compareGitBranches(localHead, cloudBranch)` с verdicts (match / diverged / local_detached / cloud_unset / local_unparseable) + `describeBranchVerdict(v)` для toast. 9 unit-тестов.
+- [ ] Опциональный `git fetch` после pull (skeleton — engine hook).
 
 ---
 
