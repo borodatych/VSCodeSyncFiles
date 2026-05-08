@@ -17,7 +17,10 @@ import { hasArchivedTag, newestTrackedLastSyncMs } from "../utils/workspaceLastA
 import {
   findInactiveWorkspaceCandidates,
   inactiveSnoozeKey,
+  isInactiveSnoozeActive,
+  INACTIVE_SNOOZE_NEVER,
 } from "../core/inactiveWorkspaceCandidates.js";
+import { readSnoozeMap, setSnoozeEntry } from "../utils/snoozeStore.js";
 
 /** After other startup tasks (sync summary, inactive scan). */
 const STARTUP_DELAY_MS = 22_000;
@@ -28,7 +31,6 @@ const COEDIT_SNOOZE_KEY = "vscodesync.smartSuggestions.coeditSnoozeUntil";
 const EARLY_ARCHIVE_SNOOZE_KEY = "vscodesync.smartSuggestions.earlyArchive60Snooze";
 
 const SNOOZE_DAYS = 7;
-const NEVER = "__never";
 const DAY_MS = 86_400_000;
 
 function todayLocalKey(): string {
@@ -39,35 +41,8 @@ function todayLocalKey(): string {
   return `${String(y)}-${m}-${day}`;
 }
 
-function snoozeMap(ctx: vscode.ExtensionContext, key: string): Record<string, string> {
-  return ctx.globalState.get<Record<string, string>>(key) ?? {};
-}
 
-async function updateSnooze(
-  ctx: vscode.ExtensionContext,
-  mapKey: string,
-  entryKey: string,
-  value: string | undefined,
-): Promise<void> {
-  const prev = snoozeMap(ctx, mapKey);
-  const next =
-    value === undefined
-      ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== entryKey))
-      : { ...prev, [entryKey]: value };
-  await ctx.globalState.update(mapKey, next);
-}
 
-function isSnoozeActive(map: Record<string, string>, key: string): boolean {
-  const v = map[key];
-  if (v === NEVER) {
-    return true;
-  }
-  if (!v) {
-    return false;
-  }
-  const t = Date.parse(v);
-  return Number.isFinite(t) && Date.now() < t;
-}
 
 
 /** Minimal provider check for smart suggestions (archive path). */
@@ -142,7 +117,7 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
   let showedCoEdit = false;
   const clusters = analyzeCoEditClusters(file.events, Date.now());
   const dismissed = new Set(context.globalState.get<string[]>(DISMISSED_COEDIT_KEY) ?? []);
-  const coSnooze = snoozeMap(context, COEDIT_SNOOZE_KEY);
+  const coSnooze = readSnoozeMap(context, COEDIT_SNOOZE_KEY);
 
   for (const c of clusters) {
     if (c.paths.length > 12) {
@@ -155,7 +130,7 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
       continue;
     }
     const fp = coEditClusterFingerprint(c.paths);
-    if (dismissed.has(fp) || isSnoozeActive(coSnooze, fp)) {
+    if (dismissed.has(fp) || isInactiveSnoozeActive(coSnooze[fp], Date.now())) {
       continue;
     }
 
@@ -173,7 +148,7 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
       await context.globalState.update(DISMISSED_COEDIT_KEY, [...dismissed]);
     } else if (picked === "Игнорировать") {
       const until = new Date(Date.now() + SNOOZE_DAYS * DAY_MS).toISOString();
-      await updateSnooze(context, COEDIT_SNOOZE_KEY, fp, until);
+      await setSnoozeEntry(context, COEDIT_SNOOZE_KEY, fp, until);
     } else if (picked === "Создать") {
       const note =
         (await vscode.window.showInputBox({
@@ -216,7 +191,7 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
     return;
   }
 
-  const earlySnooze = snoozeMap(context, EARLY_ARCHIVE_SNOOZE_KEY);
+  const earlySnooze = readSnoozeMap(context, EARLY_ARCHIVE_SNOOZE_KEY);
 
   const earlyFolderInputs = configs.map(({ root, wc }) => ({
     folderRootFsPath: root,
@@ -245,11 +220,11 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
     );
     if (picked === undefined || picked === `Через ${String(SNOOZE_DAYS)} дней`) {
       const until = new Date(Date.now() + SNOOZE_DAYS * DAY_MS).toISOString();
-      await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, until);
+      await setSnoozeEntry(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, until);
       continue;
     }
     if (picked === "Не напоминать для этого workspace") {
-      await updateSnooze(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, NEVER);
+      await setSnoozeEntry(context, EARLY_ARCHIVE_SNOOZE_KEY, sk, INACTIVE_SNOOZE_NEVER);
       continue;
     }
     await deps.onEarlyArchive({
