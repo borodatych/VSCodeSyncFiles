@@ -5,7 +5,10 @@ import {
   hashesEqual,
   selectHashProvider,
 } from "../../src/core/hashProviders.js";
-import { runHashAlgoMigrationCheck } from "../../src/core/hashMigrationCheck.js";
+import {
+  planBlake3MigrationTasks,
+  runHashAlgoMigrationCheck,
+} from "../../src/core/hashMigrationCheck.js";
 
 const buf = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -149,5 +152,73 @@ describe("runHashAlgoMigrationCheck", () => {
     const r = runHashAlgoMigrationCheck([{ workspaceId: "ws1", entries: [] }]);
     expect(r.perWorkspace[0]?.ratioWithBlake3).toBe(1);
     expect(r.safeToSwitchToBlake3).toBe(true);
+  });
+});
+
+describe("planBlake3MigrationTasks", () => {
+  const sha = "0".repeat(64);
+  const b3 = "1".repeat(64);
+
+  it("emits a task per entry missing hashBlake3 with relPath", () => {
+    const r = planBlake3MigrationTasks([
+      {
+        workspaceId: "ws1",
+        entries: [
+          { relPath: "a.ts", hash: sha, hashBlake3: b3 }, // skip
+          { relPath: "b.ts", hash: sha }, // include
+          { relPath: "c.ts", hash: sha, hashBlake3: "not-hex" }, // include (corrupt)
+        ],
+      },
+    ]);
+    expect(r.totalTasks).toBe(2);
+    expect(r.tasks.map((t) => t.relPath)).toEqual(["b.ts", "c.ts"]);
+    expect(r.affectedWorkspaceIds).toEqual(["ws1"]);
+  });
+
+  it("skips entries without relPath (legacy meta)", () => {
+    const r = planBlake3MigrationTasks([
+      { workspaceId: "ws1", entries: [{ hash: sha }] },
+    ]);
+    expect(r.totalTasks).toBe(0);
+  });
+
+  it("orders tasks by (workspaceId, relPath) deterministically", () => {
+    const r = planBlake3MigrationTasks([
+      {
+        workspaceId: "ws2",
+        entries: [
+          { relPath: "z.ts", hash: sha },
+          { relPath: "a.ts", hash: sha },
+        ],
+      },
+      {
+        workspaceId: "ws1",
+        entries: [
+          { relPath: "m.ts", hash: sha },
+          { relPath: "b.ts", hash: sha },
+        ],
+      },
+    ]);
+    expect(r.tasks.map((t) => `${t.workspaceId}:${t.relPath}`)).toEqual([
+      "ws1:b.ts",
+      "ws1:m.ts",
+      "ws2:a.ts",
+      "ws2:z.ts",
+    ]);
+  });
+
+  it("affectedWorkspaceIds is sorted and deduped", () => {
+    const r = planBlake3MigrationTasks([
+      { workspaceId: "ws-z", entries: [{ relPath: "x", hash: sha }] },
+      { workspaceId: "ws-a", entries: [{ relPath: "y", hash: sha }] },
+      { workspaceId: "ws-m", entries: [{ relPath: "z", hash: sha, hashBlake3: b3 }] }, // no task
+    ]);
+    expect(r.affectedWorkspaceIds).toEqual(["ws-a", "ws-z"]);
+  });
+
+  it("empty input → empty plan", () => {
+    const r = planBlake3MigrationTasks([]);
+    expect(r.totalTasks).toBe(0);
+    expect(r.affectedWorkspaceIds).toEqual([]);
   });
 });

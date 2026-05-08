@@ -10,6 +10,8 @@
  */
 
 export interface HashMigrationMetaEntry {
+  /** Workspace-relative POSIX path (used by the migration task planner). */
+  relPath?: string;
   /** sha256 lowercase hex (always present, even on legacy entries). */
   hash: string;
   /** blake3 lowercase hex; only present after the workspace ran on
@@ -73,5 +75,63 @@ export function runHashAlgoMigrationCheck(
     totalWithBlake3,
     ratioWithBlake3: totalEntries === 0 ? 1 : totalWithBlake3 / totalEntries,
     safeToSwitchToBlake3: perWorkspace.every((ws) => ws.safeToSwitchToBlake3),
+  };
+}
+
+/**
+ * v2.3.4 — task planner for the `vscodesync.completeBlake3Migration`
+ * background command. Walks the same workspace inventory used by
+ * `runHashAlgoMigrationCheck` and emits a flat, deterministic list of
+ * `(workspaceId, relPath)` tuples that still need BLAKE3 backfill.
+ *
+ * The command itself iterates the returned tasks, recomputes BLAKE3 over the
+ * local file (no download needed — local hash is canonical), then writes the
+ * updated `MetaEntry` back to `_meta.json` via the engine's pushFile path
+ * with `wireZstd`/`wireGzip` flags untouched.
+ */
+export interface Blake3MigrationTask {
+  workspaceId: string;
+  relPath: string;
+  /** Existing sha256 — kept for the meta entry merge. */
+  existingSha256: string;
+}
+
+export interface Blake3MigrationPlan {
+  tasks: Blake3MigrationTask[];
+  totalTasks: number;
+  /** Workspaces that contributed at least one task. */
+  affectedWorkspaceIds: string[];
+}
+
+export function planBlake3MigrationTasks(
+  workspaces: { workspaceId: string; entries: HashMigrationMetaEntry[] }[],
+): Blake3MigrationPlan {
+  const tasks: Blake3MigrationTask[] = [];
+  const affected = new Set<string>();
+
+  for (const ws of workspaces) {
+    for (const e of ws.entries) {
+      if (e.hashBlake3 !== undefined && /^[0-9a-f]{64}$/.test(e.hashBlake3)) continue;
+      if (e.relPath === undefined || e.relPath.length === 0) continue; // skip legacy entries without path
+      tasks.push({
+        workspaceId: ws.workspaceId,
+        relPath: e.relPath,
+        existingSha256: e.hash,
+      });
+      affected.add(ws.workspaceId);
+    }
+  }
+
+  // Deterministic order: workspaceId asc, then relPath asc.
+  tasks.sort((a, b) =>
+    a.workspaceId === b.workspaceId
+      ? a.relPath.localeCompare(b.relPath)
+      : a.workspaceId.localeCompare(b.workspaceId),
+  );
+
+  return {
+    tasks,
+    totalTasks: tasks.length,
+    affectedWorkspaceIds: [...affected].sort(),
   };
 }

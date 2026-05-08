@@ -116,7 +116,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.3.4. Transition window
 
 - [ ] Default workflow: пользователь ставит setting `dual` → next sync пишет оба хеша → через 7 дней (или command «complete migration») setting → `blake3` → старые sha256-only meta entries lazily upgrade на следующий push.
-- [ ] **Команда `vscodesync.completeBlake3Migration`** — фоновая задача: для каждого workspace, для каждого файла без `hashBlake3` → recompute и write meta (без download blob — берём local hash, поскольку local hash должен совпадать).
+- [~] **Команда `vscodesync.completeBlake3Migration`** — pure planner ready: `planBlake3MigrationTasks(workspaces[])` в `src/core/hashMigrationCheck.ts` возвращает упорядоченный список `{ workspaceId, relPath, existingSha256 }`. Engine wiring (читать `_meta.json` всех workspace, для каждого task recompute BLAKE3 локально + write meta back) остаётся.
 
 ### v2.3.5. Performance + telemetry
 
