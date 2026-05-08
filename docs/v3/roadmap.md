@@ -178,7 +178,7 @@ AI-review summary каждого файла перед apply.
 
 **Что:**
 - [x] Pure helper `src/core/autoPauseLearner.ts` — `learnAutoPauseSchedule(timestamps, { quietHourRatio?, minEvents?, timezoneOffsetMinutes? })` возвращает 24-element `hourActive[]` + counts + mean. `isQuietHour(schedule, nowMs)` для runtime check. 3 unit-теста.
-- [ ] Auto-pause во время quiet hours (skeleton — нужен hook в `queuedProvider`).
+- [~] Auto-pause во время quiet hours — pure decision helper `decideAutoPauseAtTick({ schedule, enabled, nowMs, manualResumedAtMs?, manualResumeTtlMs?, timezoneOffsetMinutes? })` готов в `src/core/autoPauseTickPlanner.ts`. Возвращает `{ paused: false, reason: 'no_schedule' | 'disabled' | 'manual_resume_active' | 'active_hour' }` или `{ paused: true, reason: 'quiet_hour', resumesAtMs }`. Manual override TTL = 1 час (configurable). 9 unit-тестов с timezone-anchored fixtures. `queuedProvider` hook остаётся.
 - [x] Setting `vscodesync.autoPause.learnedSchedule.enabled` объявлен в `package.json` + en/ru NLS. Engine hook остаётся (нужен `queuedProvider` integration).
 
 ---
