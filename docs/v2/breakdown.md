@@ -158,9 +158,9 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.5. UI + observability
 
-- [ ] **Status-bar:** `$(plug) Tunnel: cloudflared (https://abc.trycloudflare.com)` или `$(plug) Tunnel: smee.io (fallback)`.
-- [ ] Команда `vscodesync.showTunnelStatus` → OutputChannel с активным backend, public URL, uptime, restarts count.
-- [ ] Auto-restart на network change: hook `vscode.workspace.onDidChangeConfiguration` для `vscodesync.webhooks.tunnelProvider` + reconnect.
+- [ ] **Status-bar:** widget с эмодзи `$(plug)` и активным backend — отдельная итерация (зависит от `tunnelStatusRegistry` events; пока команда даёт текстовый отчёт).
+- [x] **Команда `vscodesync.showTunnelStatus`** → OutputChannel `VSCodeSync · Tunnel` с rendered `formatTunnelStatusReport(getTunnelStatus())`. Backend `tunnelStatusRegistry.ts` (pure module) обновляется dispatcher'ом на каждый relay open / fallback / dispose. Уптайм формата `1h 2m 3s`. 9 unit-тестов на registry + format.
+- [ ] Auto-restart на network change остаётся следующей итерацией (требует engine-level lifecycle и reactive subscription на configChange).
 
 ---
 

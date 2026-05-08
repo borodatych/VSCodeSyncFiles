@@ -31,6 +31,11 @@ import {
   type LocalWebhookServer,
   type WebhookHandler,
 } from "./webhookLocalServer.js";
+import {
+  clearTunnelStatus,
+  noteTunnelFallback,
+  setTunnelStatus,
+} from "../core/tunnelStatusRegistry.js";
 
 // Re-export the types so callers don't have to know two different modules.
 export type { SmeePayload } from "./webhookSseParser.js";
@@ -74,15 +79,61 @@ export async function createAndStartTunnelRelay(
   const requested = resolveTunnelType(options.rawProviderSetting);
 
   if (requested === "smee") {
-    return startSmeePath(options);
+    const handle = await startSmeePath(options);
+    setTunnelStatus({
+      effectiveProvider: "smee",
+      requestedProvider: requested,
+      publicUrl: handle.publicUrl,
+      restartCount: 0,
+      startedAtMs: Date.now(),
+    });
+    return wrapWithStatusCleanup(handle);
   }
 
   const channel = await tryOpenTunnel(requested, options);
-  if (channel) return channel;
+  if (channel) {
+    setTunnelStatus({
+      effectiveProvider: requested,
+      requestedProvider: requested,
+      publicUrl: channel.publicUrl,
+      restartCount: 0,
+      startedAtMs: Date.now(),
+    });
+    return wrapWithStatusCleanup(channel);
+  }
 
-  if (options.noFallback) return undefined;
+  if (options.noFallback) {
+    noteTunnelFallback(`backend_${requested}_unavailable`);
+    return undefined;
+  }
   warnLog("tunnel", `falling back to smee.io because backend "${requested}" was unavailable`);
-  return startSmeePath(options);
+  const fallback = await startSmeePath(options);
+  setTunnelStatus({
+    effectiveProvider: "smee",
+    requestedProvider: requested,
+    publicUrl: fallback.publicUrl,
+    restartCount: 0,
+    startedAtMs: Date.now(),
+    lastFallbackReason: `backend_${requested}_unavailable`,
+  });
+  return wrapWithStatusCleanup(fallback);
+}
+
+function wrapWithStatusCleanup(handle: TunnelRelayHandle): TunnelRelayHandle {
+  let disposed = false;
+  return {
+    publicUrl: handle.publicUrl,
+    provider: handle.provider,
+    dispose: async () => {
+      if (disposed) return;
+      disposed = true;
+      try {
+        await handle.dispose();
+      } finally {
+        clearTunnelStatus();
+      }
+    },
+  };
 }
 
 async function startSmeePath(

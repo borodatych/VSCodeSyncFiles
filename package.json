@@ -1138,6 +1138,10 @@
       {
         "command": "vscodesync.mergeWorkspaces",
         "title": "%cmd.mergeWorkspaces.title%"
+      },
+      {
+        "command": "vscodesync.showTunnelStatus",
+        "title": "%cmd.showTunnelStatus.title%"
       }
     ],
     "menus": {

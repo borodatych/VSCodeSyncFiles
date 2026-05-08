@@ -102,6 +102,7 @@ import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
 import { HoverDiffPreviewProvider } from "./ui/hoverDiffPreviewProvider.js";
 import { scheduleAchievementsWarmup } from "./ui/achievementsService.js";
 import { registerSmartFeaturesCommands } from "./commands/registerSmartFeatures.js";
+import { registerTunnelStatusCommand } from "./commands/registerTunnelStatusCommand.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -1151,6 +1152,7 @@ export function activate(context: vscode.ExtensionContext): void {
       context,
       storageDir: globalConfig.getStorageDir(),
     }),
+    ...registerTunnelStatusCommand(),
   );
 
   // Smart Conflict Prediction — status-bar warning when another machine has
