@@ -132,7 +132,7 @@ AI-review summary каждого файла перед apply.
 - [x] Pure planner `src/core/backupVerifyPlanner.ts` — `planBackupVerify(workspaceId, primary[], secondary[], { freshnessSlackMs? })` возвращает per-entry mismatches (`missing_in_secondary` / `hash_mismatch` / `stale_in_secondary` / `extra_in_secondary`) + `consistent` flag. `scoreVerifyReport(r)` severity ladder (ok/drift/stale/broken). 9 unit-тестов.
 - [~] Engine background job — pure scheduler `planBackupVerifyTick({ enabled, lastRunMs, lastSeverity, nowMs, intervalMs, brokenBackoffMs? })` готов в `src/core/backupVerifyScheduler.ts`. Возвращает `{ action: 'verify_now', reason: 'first_run' | 'interval_due' | 'broken_retry' }` или `{ action: 'wait', reason: 'interval_pending' | 'disabled', nextDueMs }`. Last-severity `broken` укорачивает cadence до `intervalMs/4` (по умолчанию 6 ч при daily). 8 unit-тестов. Engine polling wiring остаётся.
 - [ ] Команда `vscodesync.verifyBackup` (skeleton).
-- [ ] Restore-test (skeleton — engine wiring).
+- [~] Restore-test — pure validator `validateRestoreState({ workspaceId, manifest, meta, snapshots, nowMs, staleSnapshotMs? })` готов в `src/core/workspaceRestoreValidator.ts`. 7 issue kinds × 3 severity levels (`error` / `warning` / `info`): manifest_meta_path_mismatch / manifest_meta_hash_mismatch / meta_orphan / manifest_orphan / no_snapshots / stale_snapshot / duplicate_snapshot_name. Возвращает `{ issues[], errorCount, warningCount, infoCount, restoreSafe }` (safe iff errorCount=0). 9 unit-тестов. Engine integration остаётся.
 
 ---
 
