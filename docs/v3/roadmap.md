@@ -65,7 +65,7 @@ work account для рабочего workspace, personal для личного.
 **Что:**
 - [x] Pure planner `src/core/keyRotationPlan.ts` — `planKeyRotation(items, { maxBytesPerBatch?, maxFilesPerBatch? })` с детерминированной сортировкой `(workspaceId, relPath)` и пропуском `done: true`. 3 unit-теста.
 - [ ] UI команда `vscodesync.rotateEncryptionKey` (skeleton — пока зарегистрирована в `package.json`, привязка к engine остаётся).
-- [ ] Resumable: caller персистит `done` флаг в `_meta.json.rotationInProgress` — supported by planner shape.
+- [x] Resumable: `MetaJson.rotationInProgress: { fromKeyId, toKeyId, completed[], startedAt, initiatedByMachineId }` объявлен в `cloudLayout.ts`. Forward-compat — старые readers игнорируют.
 - [ ] Multi-machine key sync через `_keyrotation/{rotationId}.json` (skeleton).
 
 ---
@@ -177,7 +177,7 @@ AI-review summary каждого файла перед apply.
 **Что:**
 - [x] Pure helper `src/core/autoPauseLearner.ts` — `learnAutoPauseSchedule(timestamps, { quietHourRatio?, minEvents?, timezoneOffsetMinutes? })` возвращает 24-element `hourActive[]` + counts + mean. `isQuietHour(schedule, nowMs)` для runtime check. 3 unit-теста.
 - [ ] Auto-pause во время quiet hours (skeleton — нужен hook в `queuedProvider`).
-- [ ] Setting `vscodesync.autoPause.learnedSchedule.enabled` (skeleton).
+- [x] Setting `vscodesync.autoPause.learnedSchedule.enabled` объявлен в `package.json` + en/ru NLS. Engine hook остаётся (нужен `queuedProvider` integration).
 
 ---
 

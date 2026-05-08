@@ -82,6 +82,28 @@ export interface MachineEntry {
 
 export interface MetaJson {
   files: Partial<Record<string, MetaEntry>>;
+  /**
+   * v3.D — encryption key rotation in progress on this workspace. Optional;
+   * forward-compat: old readers ignore the field. When set, a new machine
+   * picking up the workspace knows to resume the rotation rather than start
+   * fresh.
+   */
+  rotationInProgress?: KeyRotationProgress;
+}
+
+/** Progress descriptor for a multi-step rotation that may resume across
+ * machines / restarts. `completed` lists the relPaths already migrated. */
+export interface KeyRotationProgress {
+  /** Identifier of the source key envelope (e.g. SHA-256 of the old DEK). */
+  fromKeyId: string;
+  /** Identifier of the destination key envelope. */
+  toKeyId: string;
+  /** Relative POSIX paths already migrated. */
+  completed: string[];
+  /** ISO timestamp when the rotation started. */
+  startedAt: string;
+  /** Machine that initiated. */
+  initiatedByMachineId: string;
 }
 
 export interface MetaEntry {
