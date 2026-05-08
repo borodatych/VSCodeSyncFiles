@@ -44,9 +44,9 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.5. Lifecycle и health
 
-- [ ] Heartbeat каждые 30 с (через тот же DataChannel: `wrapAuthenticated.sendFrame("ping", ...)`).
-- [ ] Reconnect-on-failure: discriminated-union state machine (`Connecting | Connected | Reconnecting | Disconnected`), retry с exponential backoff.
-- [ ] Activity log: `kind: "p2p_started" | "p2p_chunk_sent" | "p2p_ended"`.
+- [~] Heartbeat tick API готов (`onHeartbeatReceived` / `onHeartbeatTick`) — фактический wire `sendFrame("ping", ...)` ждёт регистрации `ping` в P2P_FRAME_TYPE и обвязки в `wrapAuthenticated`.
+- [x] Reconnect-on-failure: `src/core/p2pSessionStateMachine.ts` — discriminated-union state machine с exponential backoff (1 s / 2 s / 4 s … cap 30 s, max 5 attempts), события `p2p_session_*` для activity log. 11 unit-тестов.
+- [x] Activity log: эмитит события `p2p_session_started / connected / heartbeat_received / heartbeat_lost / reconnect_scheduled / reconnect_giveup / ended` через `events[]`. UI слой подхватит и запишет в `activity.json`.
 
 ### v2.1.6. Smoke-test environment
 
