@@ -76,7 +76,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 - [x] **5 одноразовых recovery codes** — `src/core/passkeyRecoveryCodes.ts`: `generateRecoveryCodes(count?)` (default 5, max 50) формат `xxxx-xxxx-xxxx-xxxx-xxxx` (28-symbol alphabet без 0/o/1/i/l). `hashRecoveryCode` нормализует case+dashes+whitespace перед SHA-256. `verifyRecoveryCode(code, hashes)` constant-time match, пропускает consumed (`""`). 7 unit-тестов.
 - [~] **Passphrase fallback** — pure step planner `planPassphraseFlow({ mode, hasEnrolledPassphrase, strengthScore?, recentFailedAttempts?, maxAttempts?, lockoutStartedAtMs?, lockoutDurationMs?, nowMs })` готов в `src/core/passphraseFallbackFlow.ts`. 3 modes (`enroll` / `unlock` / `recover`) × 4 warnings (`no_passphrase_enrolled` / `weak_passphrase_strength` < 0.5 / `lockout_active` / `near_lockout` ≤ 1 attempt). 5-attempt default with 5-min lockout, expired lockout автоматически clears. 13 unit-тестов. UI обвязка остаётся.
-- [ ] **Multi-device** — мульти-credential map (skeleton; recovery codes выше уже частично закрывают cross-device recovery).
+- [~] **Multi-device** — мульти-credential map. `src/core/passkeyCredentialRegistry.ts`: `PasskeyCredentialRegistry { version: 1, entries[], primaryId? }` + pure helpers `upsertCredential` / `removeCredential` / `setPrimaryCredential` / `findPrimaryCredential` (fallback to most-recent enrolled) / `findCredentialById` / `orderForDisplay` (primary → recency) / `noteCredentialUsed` + strict `parsePasskeyRegistry` (rejection: `bad_root_shape` / `bad_version` / `bad_entries` / `bad_entry_shape` / `bad_primary_id`). 28 unit-тестов. SecretStorage-обвязка остаётся.
 
 ### v2.2.5. Settings UI
 
