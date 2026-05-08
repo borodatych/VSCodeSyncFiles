@@ -233,7 +233,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.10.1. Mock lifecycle test matrix
 
 - [~] Full mock matrix для `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` — pure decision tree выделен в `src/core/webhookLifecycleReconcileDecision.ts:planWebhookLifecycleReconcile(input)`. Возвращает `{ actions[], lifecycleActive, inactiveReason? }` с discriminated-union actions (`delete_stale_subscription` / `clear_local_state` / `start_local_server` / `create_subscription` / `keep_subscription` / `register_webhook_push` / `start_renew_loop`). Покрывает 4 inactiveReasons (`provider_mismatch` / `webhooks_disabled` / `no_notification_url` / `no_token`) + URL-drift recreate с переиспользованием clientState. 14 unit-тестов. Wrapper в `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` остаётся переписать на pure planner.
-- [ ] **412 PreconditionFailed** edge-cases (EPERM rename, OneDrive Upload Session chunk, smee.io reconnect) — те же блокеры (зависят от рефакторинга lifecycle модулей).
+- [~] **412 PreconditionFailed** edge-cases (EPERM rename, OneDrive Upload Session chunk, smee.io reconnect) — pure renewTick decision выделен в `src/core/webhookLifecycleRenewTickDecision.ts:decideWebhookRenewTick(input)`. Discriminated-union `{ kind: "do_nothing" | "renew_now" | "stop_lifecycle", reason }`. 5 skip reasons (`no_state` / `webhooks_disabled` / `provider_mismatch` / `no_token` / `not_yet_due`) + fail-closed на unparseable expiration. 11 unit-тестов. Mock matrix для остальных edge-cases остаётся (зависят от полного рефакторинга lifecycle).
 
 ### v2.10.2. Auto-renewal
 
