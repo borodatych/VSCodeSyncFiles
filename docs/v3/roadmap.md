@@ -79,8 +79,8 @@ add files один за другим.
 **Что:**
 - [x] Pure planner `src/core/gitImportPlanner.ts` — `planGitImport(.gitignoreContent)` парсит .gitignore, отделяет patterns / comments / unsupported negations. `renderVscodesyncIgnore(plan)` рендерит готовый файл с header+notes. 5 unit-тестов.
 - [x] Pure step planner `src/core/gitImportFromUrl.ts` — `parseRepoUrl(url)` (HTTPS / SSH формы, host/owner/repo extraction) + `planImportFromGit({ url, targetFolderAbs })` возвращает 8 ordered steps (validate_url → ensure_target_folder → git_clone → read_gitignore → translate → scan_files → create_workspace → add_files). 9 unit-тестов.
-- [ ] CLI команда `vscodesync init from-git` — skeleton (planner ready, нужен `child_process.spawn` для git clone и обвязка над workspace API).
-- [ ] VS Code команда `vscodesync.initFromGit` — skeleton.
+- [~] CLI команда `vscodesync init from-git` — `buildGitCloneCommand({ url, parentDirAbs, folderName, depth?, branch?, recurseSubmodules? })` готов в `src/core/gitCloneCommand.ts`: возвращает `{ ok, argv, cwd, env }` с argv `clone [--depth N] [--branch B] [--recurse-submodules] -- <url> <folderName>` (separator `--` обязателен — защита от URL `--upload-pack=evil`). `sanitiseEnv` срезает `GIT_DIR` / `GIT_WORK_TREE` / `GIT_ASKPASS` / `SSH_ASKPASS` и форсит `GIT_TERMINAL_PROMPT=0`. Folder name validator отклоняет `..` / path separators / leading `-`. 13 unit-тестов. `child_process.spawn` обвязка остаётся.
+- [~] VS Code команда `vscodesync.initFromGit` — same `buildGitCloneCommand` (CLI и VSCode используют один argv builder).
 - [ ] Sync git HEAD при push — skeleton (pure helper в `gitHeadCompare.ts` ready, engine hook не сделан).
 
 ---
