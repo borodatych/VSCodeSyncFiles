@@ -153,11 +153,8 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.4. webhookTunnel migration
 
-- [ ] **`createAndStartTunnelRelay(handler, type?: TunnelProviderType): Promise<TunnelRelay>`** — high-level helper:
-  - `type === "smee"` → existing path (SSE pull).
-  - Иначе → start local HTTP server → `openTunnel(type, server.port)` → wire incoming HTTP POST → `handler`.
-  - На `not_available` → fallback на smee + warn.
-- [ ] **Replace direct calls** в `oneDriveWebhookLifecycle.ts`, `googleDriveWebhookLifecycle.ts` (если использует webhook): `createAndStartSmeeRelay` → `createAndStartTunnelRelay(handler, resolveTunnelType(setting))`.
+- [x] **`createAndStartTunnelRelay(options): Promise<TunnelRelayHandle | undefined>`** — `src/ui/tunnelRelayDispatcher.ts`. Setting `"smee"` → дефолтный SSE-relay; иначе → `startLocalWebhookServer` + `openTunnel`. Fallback на smee при `not_available` / `config_invalid` / `spawn_failed` / local-server bind failure (если `noFallback: true` — возвращает `undefined`). Lazy-import smee модуля чтобы юнит-тесты не тянули vscode. Тесты с overrides на `openTunnel` / `localServerFactory` / `smeeRelayOverride`. 9 unit-тестов.
+- [ ] **Replace direct calls** в `oneDriveWebhookLifecycle.ts`, `googleDriveWebhookLifecycle.ts`: миграция на `createAndStartTunnelRelay` остаётся следующей итерацией (требует обвязки и обновления интеграционных тестов).
 
 ### v2.4.5. UI + observability
 
