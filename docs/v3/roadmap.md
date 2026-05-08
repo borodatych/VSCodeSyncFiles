@@ -189,7 +189,7 @@ AI-review summary каждого файла перед apply.
 Replay-recorder уже есть (запись), но нет viewer'а.
 
 **Что:**
-- [ ] Webview `src/ui/syncReplayViewerPanel.ts` — skeleton (pure playback ready, render deferred).
+- [~] Webview `src/ui/syncReplayViewerPanel.ts` — pure HTML рендерер `renderSyncReplayViewerHtml(events, { cursor?, title?, colorByKind? })` готов в `src/core/syncReplayViewerHtml.ts` (vertical timeline, future-events dimmed past cursor, kind-coloured markers через VS Code `--vscode-charts-*` tokens, escape против XSS, 7 unit-тестов). Webview controller остаётся.
 - [x] Pure helper `src/core/syncReplayPlayback.ts` — `makeReplayCursor`, `stepReplayCursor`, `seekReplayByTime` (binary search), `filterReplayEvents` (kind / file / machine), `eventsToReleasePerTick(rate, elapsedMs, carry)` для адаптивного playback. 13 unit-тестов.
 - [ ] Команда `vscodesync.openSyncReplayViewer` (skeleton).
 
