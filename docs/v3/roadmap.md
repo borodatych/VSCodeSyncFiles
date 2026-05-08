@@ -167,7 +167,7 @@ AI-review summary каждого файла перед apply.
 **Что:**
 - [x] Track `gitBranch` в `_meta.json` — уже есть.
 - [x] Pure helper `src/core/gitHeadCompare.ts` — `parseGitHead(content)` (branch / detached / unparseable) + `compareGitBranches(localHead, cloudBranch)` с verdicts (match / diverged / local_detached / cloud_unset / local_unparseable) + `describeBranchVerdict(v)` для toast. 9 unit-тестов.
-- [~] Pure decision helper `src/core/branchMismatchPlanner.ts` — `planBranchMismatchAction({ verdict, autoFetchOnMatch, localDirty })` возвращает `{ action: noop | warn_toast | offer_fetch | auto_fetch, message? }`. Уважает `vscodesync.gitBranchAutoSync` setting. 7 unit-тестов. Engine hook (`vscode.window.showWarningMessage` + `child_process.spawn('git', ['fetch'])`) остаётся.
+- [~] Pure decision helper `src/core/branchMismatchPlanner.ts` — `planBranchMismatchAction({ verdict, autoFetchOnMatch, localDirty })` возвращает `{ action: noop | warn_toast | offer_fetch | auto_fetch, message? }`. Уважает `vscodesync.gitBranchAutoSync` setting. 7 unit-тестов. `buildGitFetchCommand({ repoDirAbs, remote?, branch?, prune?, tags?, depth? })` готов в `src/core/gitFetchCommand.ts` для `offer_fetch` / `auto_fetch` веток (использует `sanitiseEnv` из gitCloneCommand, отвергает remote/branch с leading `-`, depth integer ≥ 1). 10 unit-тестов. `vscode.window.showWarningMessage` + spawn обвязка остаётся.
 
 ---
 
