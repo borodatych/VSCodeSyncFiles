@@ -236,13 +236,13 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.10.1. Mock lifecycle test matrix
 
-- [ ] **`tests/unit/oneDriveWebhookLifecycle.test.ts`** — full mock provider: create → renew → expired → recreate cycle. Проверка идемпотентности.
-- [ ] **`tests/unit/googleDriveWebhookLifecycle.test.ts`** — то же самое для GDrive Files.watch API.
-- [ ] **412 PreconditionFailed** scenarios: `mergeCloudManifests` уже покрыт, добавить EPERM rename, chunk upload (OneDrive Upload Session), smee.io reconnect.
+- [ ] Full mock matrix для `oneDriveWebhookLifecycle.ts` / `googleDriveWebhookLifecycle.ts` — оба модуля импортируют `vscode` напрямую (showWarningMessage и т.п.); честные мок-тесты требуют рефакторинга на vscode-free pure-core + thin wrapper. Skeleton — следующая итерация.
+- [ ] **412 PreconditionFailed** edge-cases (EPERM rename, OneDrive Upload Session chunk, smee.io reconnect) — те же блокеры (зависят от рефакторинга lifecycle модулей).
 
 ### v2.10.2. Auto-renewal
 
-- [ ] Background timer: за 24 ч до `expiresAt` → renew. Пишет лог в OutputChannel `VSCodeSync · webhooks`.
+- [x] Pure planner `src/core/webhookAutoRenewal.ts` — `planWebhookRenewal(subscriptions, now?, slackMs?)` возвращает `actions[]` (`renew_now` / `expired_recreate` / `wait_until` с `nextDueMs`) + `nextWakeMs` (раннее время для `setTimeout`). Использует существующий `isNearOrPastExpiration` (slack 20 мин). 6 unit-тестов.
+- [ ] Подключение `setInterval`-таймера в extension.ts + лог в `VSCodeSync · webhooks` OutputChannel остаётся следующей итерацией.
 
 ---
 
