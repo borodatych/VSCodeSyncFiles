@@ -47,10 +47,10 @@ per-file. Хочется per-file include/exclude по паттернам с и�
 work account для рабочего workspace, personal для личного.
 
 **Что:**
-- [ ] Расширить `globalConfig`: `providers: { onedrive: AccountSlot[]; gdrive: AccountSlot[]; ... }` где `AccountSlot = { id, displayName, tokens }`.
-- [ ] Per-workspace сохранение: какой `accountSlot.id` использовать.
-- [ ] Migration: существующие single-account configs → переехать в `accounts[0]`, default workspace → `accounts[0]`.
-- [ ] UI: `vscodesync.addProviderAccount`, picker аккаунтов в `connectCloudWorkspace`.
+- [~] Расширить `globalConfig`: `MultiAccountConfig` shape (`accounts: { onedrive: AccountSlot[]; ... }`, `workspaceAccount?: Record<workspaceId, { providerType, slotId }>`) объявлен в `src/core/multiAccountConfig.ts`. Старая `providers` map срезается при миграции (одно-направленный schema swap). Persisten в `config.json` остаётся следующей итерацией.
+- [~] Per-workspace сохранение: `workspaceAccount: { [workspaceId]: { providerType, slotId } }` объявлен. `pickAccountSlot(config, providerType, workspaceId)` возвращает bound slot или fallback к первому слоту провайдера; ладдер reasons (`no_provider` / `unknown_slot`).
+- [~] Migration: `migrateToMultiAccountConfig(legacy)` идемпотентен, для каждой записи `providers[type]` создаёт один slot `{ id: 'primary', displayName: tokens.accountLabel ?? 'Primary', metadata: tokens }`. Strip-ит legacy `providers` field после миграции. 4 unit-теста (per-slot defaults, idempotency, missing label fallback, providers stripped). `globalConfigManager` integration остаётся.
+- [~] UI: `vscodesync.addProviderAccount` — pure helpers `addAccountSlot(config, providerType, slot)` (rejects duplicate id, empty id, empty display name) + `removeAccountSlot(config, providerType, slotId)` (returns `orphanedWorkspaceIds[]`, refuses last slot of activeProvider). 18 unit-тестов суммарно. UI обвязка остаётся.
 
 **Риск:** OAuth flow для нескольких аккаунтов одного провайдера — придётся signOut + signIn последовательно (одна машина не может быть logged-in в Google Drive под двумя аккаунтами одновременно из CLI). Решение: отдельный `tokenStore[accountId]`, использовать выбранный токен per-request.
 
