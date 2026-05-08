@@ -153,7 +153,7 @@ AI-review summary каждого файла перед apply.
 
 **Что:**
 - [x] Pure helper `src/core/shareLink.ts` — `buildShareLink({ workspaceId, snapshotName, expiresAtMs?, passwordHashHex? })` + `parseShareLink(raw, now?)` с проверками expired/wrong_path/bad_field. 5 unit-тестов.
-- [ ] При open ссылки на другой машине — invitee получает read-only access (skeleton — обвязка `vscode.window.registerUriHandler` остаётся).
+- [~] При open ссылки на другой машине — pure decision `planInviteeLanding({ parsed, nowMs, hasMatchingWorkspace, cloudAcl, suppliedPwdHashHex?, recentFailedAttempts?, maxAttempts? })` готов в `src/core/inviteeLandingPlanner.ts`. 5 действий: `reject_unknown_workspace` / `reject_expired` / `show_password_prompt` / `reject_bad_password` (с attemptsRemaining) / `mount_readonly`. Использует `verifySnapshotShareACL` для constant-time pwd compare + ACL TTL. Workspace-presence check идёт первым (unknown workspace всегда beats expired). 11 unit-тестов. `vscode.window.registerUriHandler` обвязка остаётся.
 - [x] Storage: ACL field `SnapshotMeta.sharedTo: SnapshotShareACL = { hashedPwdHex, expiresAtIso, readOnly: true }` объявлен в `cloudLayout.ts`. `verifySnapshotShareACL(acl, providedPwdHashHex, now)` в `shareLink.ts` для server-side проверки (constant-time compare + TTL). 7 unit-тестов. Engine-side enforcement в push/pull путях остаётся следующей итерацией.
 
 **Риск:** создаёт «sharing» которого раньше не было. Можно вызвать confusion. Подумать: нужно ли это вообще, или достаточно «share via cloud provider's native share».
