@@ -16,9 +16,9 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.1. Signaling channel поверх manifest cloud
 
-- [ ] **`src/core/p2pSignalingChannel.ts`** — pure helpers `cloudPathForSignaling(workspaceId, sessionId, kind: "offer"|"answer"|"ice"|"bye")`. Записываем в `_p2p/{sessionId}/{kind}.json`. TTL 60 секунд (старшие истекают и игнорируются). Тесты на path layout и envelope shape.
-- [ ] **`src/ui/p2pSignalingTransport.ts`** — wrapper над `ICloudProvider.uploadFile / downloadFile / listFolder`: writeOffer, pollAnswer (с retry / backoff), writeIceCandidate, listIceFromPeer, sendBye. Cleanup `_p2p/{sessionId}/` через 5 минут idle.
-- [ ] Permission-check: использовать `_p2p/` только если у обоих peers есть write-доступ к `workspaceRootPath`. Запрет если workspace read-only.
+- [x] **`src/core/p2pSignalingChannel.ts`** — pure helpers `cloudPathForSignaling`, `cloudPathForIceCandidate`, `cloudPathForSessionFolder`, `buildSignalingEnvelope`, `decodeSignalingEnvelope`. TTL 60 s, oversized + bad_json + kind/session-mismatch + stale rejection. 11 unit-тестов в `tests/unit/p2pSignalingChannel.test.ts`.
+- [x] **`src/ui/p2pSignalingTransport.ts`** — `createSignalingTransport({ provider, workspaceWritable, now })` с `writeOffer/Answer/Bye`, `writeIceCandidate`, `pollForOffer/Answer` (exponential backoff с timeout), `listIceFromPeer`, `cleanupSession` (после 5 мин idle). 11 unit-тестов в `tests/unit/p2pSignalingTransport.test.ts` через fake provider с in-memory blob store.
+- [x] Permission-check: `workspaceWritable: false` → `SignalingNotWritableError` на любой write. Read-only поток (poll/listIce) работает без write permissions.
 
 ### v2.1.2. Альтернативный air-gapped signaling через QR-обмен
 
