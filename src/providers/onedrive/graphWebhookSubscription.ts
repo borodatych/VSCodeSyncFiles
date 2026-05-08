@@ -1,3 +1,8 @@
+import {
+  decodeGraphRenewExpiration,
+  decodeGraphSubscriptionEnvelope,
+} from "../../core/graphSubscriptionResponseDecoder.js";
+
 const GRAPH_SUB = "https://graph.microsoft.com/v1.0/subscriptions";
 
 /** ~48h ahead (Graph caps per tenant/resource; may return shorter expiration). */
@@ -32,11 +37,11 @@ export async function graphCreateDriveRootSubscription(
   if (!r.ok) {
     throw new Error(`Graph subscription ${String(r.status)}: ${t}`);
   }
-  const j = JSON.parse(t) as { id?: string; expirationDateTime?: string };
-  if (!j.id || !j.expirationDateTime) {
-    throw new Error("Graph subscription: missing id or expirationDateTime in response");
+  const decoded = decodeGraphSubscriptionEnvelope(JSON.parse(t));
+  if (!decoded.ok) {
+    throw new Error(`Graph subscription: invalid response (${decoded.reason})`);
   }
-  return { id: j.id, expirationDateTime: j.expirationDateTime };
+  return decoded.value;
 }
 
 export async function graphRenewSubscription(
@@ -56,8 +61,11 @@ export async function graphRenewSubscription(
   if (!r.ok) {
     throw new Error(`Graph subscription renew ${String(r.status)}: ${txt}`);
   }
-  const j = JSON.parse(txt) as { expirationDateTime?: string };
-  return j.expirationDateTime ?? expirationDateTime;
+  const decoded = decodeGraphRenewExpiration(JSON.parse(txt), expirationDateTime);
+  if (!decoded.ok) {
+    throw new Error(`Graph subscription renew: invalid response (${decoded.reason})`);
+  }
+  return decoded.expirationDateTime;
 }
 
 export async function graphDeleteSubscription(accessToken: string, subscriptionId: string): Promise<void> {
