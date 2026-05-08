@@ -26,6 +26,7 @@ import {
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot } from "./snapshotsEngine.js";
+import { planLocalBackupRetention } from "./localBackupRetentionPlan.js";
 import { mergeMetaEntries } from "./metaMerge.js";
 import { detectChange, type ChangeAction } from "./changeDetection.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
@@ -3354,18 +3355,17 @@ async function pruneLocalBackups(workspaceRoot: string, retentionDays: number): 
   } catch {
     return;
   }
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const entries = [];
   for (const name of names) {
-    const p = path.join(root, name);
-    let st: Awaited<ReturnType<typeof fs.stat>>;
     try {
-      st = await fs.stat(p);
+      const st = await fs.stat(path.join(root, name));
+      entries.push({ name, mtimeMs: st.mtimeMs, isDirectory: st.isDirectory() });
     } catch {
-      continue;
+      /* skip — disappeared between readdir and stat */
     }
-    if (!st.isDirectory() || st.mtimeMs >= cutoff) {
-      continue;
-    }
-    await fs.rm(p, { recursive: true, force: true });
   }
+  const plan = planLocalBackupRetention({ entries, retentionDays });
+  await Promise.all(
+    plan.delete.map((name) => fs.rm(path.join(root, name), { recursive: true, force: true })),
+  );
 }
