@@ -1,4 +1,5 @@
 import { CLOUD_ROOT_DIR } from "../../core/cloudLayout.js";
+import { decodeGdrivePushChannelEnvelope } from "../../core/gdrivePushChannelResponseDecoder.js";
 
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const MIME_FOLDER = "application/vnd.google-apps.folder";
@@ -73,15 +74,15 @@ export async function gdriveStartFolderWatch(
   if (!r.ok) {
     throw new Error(`Google Drive watch ${String(r.status)}: ${txt}`);
   }
-  const j = JSON.parse(txt) as {
-    id?: string;
-    resourceId?: string;
-    expiration?: string;
-  };
-  if (!j.id || !j.resourceId || !j.expiration) {
-    throw new Error("Google Drive watch: missing id, resourceId, or expiration");
+  const decoded = decodeGdrivePushChannelEnvelope(JSON.parse(txt));
+  if (!decoded.ok) {
+    throw new Error(`Google Drive watch: invalid response (${decoded.reason})`);
   }
-  return { id: j.id, resourceId: j.resourceId, expiration: j.expiration };
+  return {
+    id: decoded.value.id,
+    resourceId: decoded.value.resourceId,
+    expiration: decoded.value.expiration,
+  };
 }
 
 export async function gdriveStopPushChannel(
