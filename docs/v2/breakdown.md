@@ -158,7 +158,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.5. UI + observability
 
-- [ ] **Status-bar:** widget с эмодзи `$(plug)` и активным backend — отдельная итерация (зависит от `tunnelStatusRegistry` events; пока команда даёт текстовый отчёт).
+- [~] **Status-bar:** widget pure formatter `formatTunnelStatusBar(snapshot, { commandId?, now? })` готов в `src/core/tunnelStatusBarFormatter.ts`. Возвращает `{ text, tooltip, severity, commandId }`. Severity ladder: `ok` ($(plug), no fallback) / `warn` ($(warning), requested ≠ effective OR lastFallbackReason set) / `error` ($(error), restartCount ≥ 3). Tooltip — markdown с public URL, requested/active providers, uptime, restart count, last fallback (omitted when undefined). Inactive snapshot → "Tunnel: off". 12 unit-тестов. `vscode.window.createStatusBarItem` обвязка остаётся.
 - [x] **Команда `vscodesync.showTunnelStatus`** → OutputChannel `VSCodeSync · Tunnel` с rendered `formatTunnelStatusReport(getTunnelStatus())`. Backend `tunnelStatusRegistry.ts` (pure module) обновляется dispatcher'ом на каждый relay open / fallback / dispose. Уптайм формата `1h 2m 3s`. 9 unit-тестов на registry + format.
 - [x] Pure decision helper `src/core/tunnelConfigWatcher.ts` — `compareTunnelConfig(prev, next)` возвращает `{ action: 'no_change' | 'start' | 'stop' | 'restart', reason }`. Триггеры: tunnel enabled/disabled, provider change, URL change. 8 unit-тестов. Engine-side подписка на `onDidChangeConfiguration` остаётся следующей итерацией (pure decision готов).
 
