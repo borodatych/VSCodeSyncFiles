@@ -120,7 +120,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.3.5. Performance + telemetry
 
-- [ ] Бенчмарк-тесты: типичный workspace (100 файлов × 50 KB) — sha256 vs blake3 wall-time. Опубликовать в `docs/v2/blake3-benchmark.md` (skeleton — нужно реальное измерение на машине пользователя).
+- [x] `docs/v2/blake3-benchmark.md` + `scripts/benchmarks/blake3-bench.mjs`. Markdown-friendly bench script (4 workspace sizes 10×5KB, 100×50KB, 100×500KB, 10×5MB), warm-up + perf_hooks timing, sample numbers + when-to-switch guidance + dual-hash workflow.
 - [x] Activity log: `kind: "hash_migration"` зарегистрирован в `ActivityKind` union.
 
 ---

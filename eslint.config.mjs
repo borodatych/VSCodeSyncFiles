@@ -19,6 +19,7 @@ export default tseslint.config(
       "dist-types/**",
       "node_modules/**",
       "*.mjs",
+      "scripts/**/*.mjs",
       "tests/integration/runTest.cjs",
       "vitest.config.ts",
     ],
