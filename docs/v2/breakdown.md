@@ -28,11 +28,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.3. UI команда «Start P2P session»
 
-- [ ] **`vscodesync.startP2PSession`** — multi-step QuickPick:
-  - Шаг 1: «Я приглашаю / Я присоединяюсь».
-  - Шаг 2 (inviter): pick target machine (из `_machines.json` online). Generate offer → write через signaling channel → poll answer.
-  - Шаг 2 (invitee): list active sessions on cloud → pick → read offer → generate answer → write.
-  - Шаг 3: ICE exchange → connection established.
+- [~] **`vscodesync.startP2PSession`** — pure step planner `planP2PSessionWizard({ role, onlinePeerCount, activeSessionCount, forceQrTransport?, cloudSignalingWritable?, estimatedSignalingPayloadBytes?, qrChunkLimitBytes? })` готов в `src/core/p2pSessionWizardSteps.ts`. Возвращает `{ role, transport: 'cloud' | 'qr', steps[], warnings[] }`. Inviter cloud: 6 шагов (pick_role → pick_target_machine → generate_offer → wait_for_answer → ice_exchange → connection_established). Invitee cloud: 5 шагов (pick_role → pick_active_session → generate_answer → ice_exchange → connection_established). QR variants для air-gapped pair (forceQrTransport=true OR cloudSignalingWritable=false). Abort flow при `onlinePeerCount=0` (inviter) / `activeSessionCount=0` (invitee). Warnings: `no_online_peers` / `no_active_invites` / `qr_oversized_payload` / `transport_fallback_to_qr`. 10 unit-тестов.
 - [ ] Status-bar widget: «$(broadcast) P2P: 1 peer (alpha)». Click → quick disconnect.
 - [ ] Auto-disconnect на 5 минут idle.
 
