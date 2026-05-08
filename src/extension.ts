@@ -33,6 +33,11 @@ import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./core/pathMapping.js";
 import type { ActiveWorkspaceEntry, TrackedFile, ProviderType } from "./core/types.js";
 import { normalizeWorkspaceSyncState } from "./core/types.js";
+import {
+  mapTransitionRejection,
+  transitionWorkspaceSyncState,
+  type WorkspaceTransitionInput,
+} from "./core/workspaceSuspendStateMachine.js";
 import { SyncStatusBarController } from "./ui/statusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { WorkspacesTreeDnD } from "./ui/workspacesTreeDnD.js";
@@ -529,6 +534,31 @@ async function pickWorkspaceId(root: string): Promise<string | undefined> {
     { placeHolder: "Выберите workspace" },
   );
   return picked?.id;
+}
+
+type WorkspaceTransitionValidation =
+  | { ok: true; newState: "active" | "suspended" | "frozen" }
+  | { ok: false; warning: string };
+
+async function validateWorkspaceTransition(
+  root: string,
+  workspaceId: string,
+  action: WorkspaceTransitionInput,
+  opts: { skipArchivedCheck?: boolean } = {},
+): Promise<WorkspaceTransitionValidation> {
+  const wc = await WorkspaceConfigManager.load(root);
+  const ent = wc.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+  if (!ent) {
+    return { ok: false, warning: "VSCodeSync: workspace не найден в vscodesync.json." };
+  }
+  if (!opts.skipArchivedCheck && hasArchivedTag(ent.tags)) {
+    return { ok: false, warning: "VSCodeSync: сначала разархивируйте workspace (Unarchive)." };
+  }
+  const t = transitionWorkspaceSyncState(normalizeWorkspaceSyncState(ent), action);
+  if (!t.ok) {
+    return { ok: false, warning: mapTransitionRejection(action, t.reason) };
+  }
+  return { ok: true, newState: t.newState };
 }
 
 async function pickWorkspaceIdMatching(
@@ -2337,18 +2367,6 @@ export function activate(context: vscode.ExtensionContext): void {
         const el = arg as SyncTreeElement & { kind: "workspace" };
         root = el.folderRoot.fsPath;
         wsId = el.workspaceId;
-        const wc = await WorkspaceConfigManager.load(root);
-        const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wsId);
-        if (
-          !ent ||
-          normalizeWorkspaceSyncState(ent) !== "active" ||
-          hasArchivedTag(ent.tags)
-        ) {
-          await vscode.window.showWarningMessage(
-            "VSCodeSync: Suspend только для активного workspace без archived.",
-          );
-          return;
-        }
       } else {
         root = pickRoot();
         if (!root) {
@@ -2363,11 +2381,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!wsId || !root) {
         return;
       }
+      const v = await validateWorkspaceTransition(root, wsId, "suspend");
+      if (!v.ok) {
+        await vscode.window.showWarningMessage(v.warning);
+        return;
+      }
       const ws = wsId;
       const rt = root;
+      const next = v.newState;
       await runWithEngine(
         async (engine) => {
-          await engine.setWorkspaceSyncState(ws, "suspended");
+          await engine.setWorkspaceSyncState(ws, next);
           await vscode.window.showInformationMessage(
             "VSCodeSync: workspace приостановлен (Suspend) — push/pull файлов отключены; манифест можно обновлять.",
           );
@@ -2385,14 +2409,6 @@ export function activate(context: vscode.ExtensionContext): void {
         const el = arg as SyncTreeElement & { kind: "workspace" };
         root = el.folderRoot.fsPath;
         wsId = el.workspaceId;
-        const wc = await WorkspaceConfigManager.load(root);
-        const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wsId);
-        if (!ent || normalizeWorkspaceSyncState(ent) !== "suspended" || hasArchivedTag(ent.tags)) {
-          await vscode.window.showWarningMessage(
-            "VSCodeSync: Resume только для workspace в Suspend (не archived — для разархивации: Unarchive).",
-          );
-          return;
-        }
       } else {
         root = pickRoot();
         if (!root) {
@@ -2407,11 +2423,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!wsId || !root) {
         return;
       }
+      const v = await validateWorkspaceTransition(root, wsId, "resume");
+      if (!v.ok) {
+        await vscode.window.showWarningMessage(v.warning);
+        return;
+      }
       const ws = wsId;
       const rt = root;
+      const next = v.newState;
       await runWithEngine(
         async (engine) => {
-          await engine.setWorkspaceSyncState(ws, "active");
+          await engine.setWorkspaceSyncState(ws, next);
           await vscode.window.showInformationMessage("VSCodeSync: workspace снова активен (Resume).");
         },
         rt,
@@ -2549,17 +2571,6 @@ export function activate(context: vscode.ExtensionContext): void {
         root = el.folderRoot.fsPath;
         wsId = el.workspaceId;
         noteLabel = el.note || el.workspaceId;
-        const wc = await WorkspaceConfigManager.load(root);
-        const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wsId);
-        const st = ent ? normalizeWorkspaceSyncState(ent) : "active";
-        if (hasArchivedTag(ent?.tags)) {
-          await vscode.window.showWarningMessage("VSCodeSync: сначала разархивируйте workspace (Unarchive).");
-          return;
-        }
-        if (st === "frozen") {
-          await vscode.window.showWarningMessage("VSCodeSync: workspace уже в Freeze.");
-          return;
-        }
       } else {
         root = pickRoot();
         if (!root) {
@@ -2577,6 +2588,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!wsId || !root) {
         return;
       }
+      const v = await validateWorkspaceTransition(root, wsId, "freeze");
+      if (!v.ok) {
+        await vscode.window.showWarningMessage(v.warning);
+        return;
+      }
       const lab = noteLabel ?? wsId;
       const confirm = await vscode.window.showWarningMessage(
         `Заморозить «${lab}» (Freeze)? Запись манифеста и файлов на облако будет заблокирована.`,
@@ -2588,9 +2604,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const ws = wsId;
       const rt = root;
+      const next = v.newState;
       await runWithEngine(
         async (engine) => {
-          await engine.setWorkspaceSyncState(ws, "frozen");
+          await engine.setWorkspaceSyncState(ws, next);
           await vscode.window.showInformationMessage(
             "VSCodeSync: Freeze — без push/pull и без записи манифеста/_meta.",
           );
@@ -2608,12 +2625,6 @@ export function activate(context: vscode.ExtensionContext): void {
         const el = arg as SyncTreeElement & { kind: "workspace" };
         root = el.folderRoot.fsPath;
         wsId = el.workspaceId;
-        const wc = await WorkspaceConfigManager.load(root);
-        const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wsId);
-        if (!ent || normalizeWorkspaceSyncState(ent) !== "frozen") {
-          await vscode.window.showWarningMessage("VSCodeSync: Unfreeze только для workspace в Freeze.");
-          return;
-        }
       } else {
         root = pickRoot();
         if (!root) {
@@ -2628,10 +2639,16 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!wsId || !root) {
         return;
       }
+      const v = await validateWorkspaceTransition(root, wsId, "unfreeze", { skipArchivedCheck: true });
+      if (!v.ok) {
+        await vscode.window.showWarningMessage(v.warning);
+        return;
+      }
       const ws = wsId;
       const rt = root;
+      const next = v.newState;
       await runWithEngine(async (engine) => {
-        await engine.setWorkspaceSyncState(ws, "active");
+        await engine.setWorkspaceSyncState(ws, next);
         await engine.repairLocalStateFromCloud(ws);
         await engine.syncWorkspace(ws);
         await vscode.window.showInformationMessage(

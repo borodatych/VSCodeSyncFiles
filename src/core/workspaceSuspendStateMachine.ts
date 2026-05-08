@@ -32,7 +32,10 @@ export type WorkspaceTransitionInput =
 const TRANSITIONS: Record<WorkspaceSyncState, Partial<Record<WorkspaceTransitionInput, WorkspaceSyncState>>> = {
   active: { suspend: "suspended", freeze: "frozen" },
   suspended: { resume: "active", freeze: "frozen" },
-  frozen: { unfreeze: "suspended" },
+  // Unfreeze returns directly to active because the unfreeze flow also runs
+  // a manifest repair + full sync — both are blocked when the destination
+  // state is suspended.
+  frozen: { unfreeze: "active" },
 };
 
 /** Move from `current` state via `action`. Returns the new state on success
@@ -77,4 +80,28 @@ export function describeWorkspaceState(state: WorkspaceSyncState): string {
 /** Enumerate the actions the UI menu should show for a given state. */
 export function listAvailableActions(state: WorkspaceSyncState): WorkspaceTransitionInput[] {
   return Object.keys(TRANSITIONS[state]) as WorkspaceTransitionInput[];
+}
+
+/** Map (action × rejection reason) to the user-facing Russian message the
+ * 4 lifecycle commands surface via `showWarningMessage`. */
+export function mapTransitionRejection(
+  action: WorkspaceTransitionInput,
+  reason: WorkspaceTransitionReason,
+): string {
+  if (action === "freeze" && reason === "frozen_requires_unfreeze_first") {
+    return "VSCodeSync: workspace уже в Freeze.";
+  }
+  if (reason === "frozen_requires_unfreeze_first") {
+    return "VSCodeSync: workspace заморожен — сначала Unfreeze.";
+  }
+  switch (action) {
+    case "suspend":
+      return "VSCodeSync: Suspend доступен только из Active.";
+    case "resume":
+      return "VSCodeSync: Resume только для workspace в Suspend.";
+    case "freeze":
+      return "VSCodeSync: Freeze недоступен из текущего состояния.";
+    case "unfreeze":
+      return "VSCodeSync: Unfreeze только для workspace в Freeze.";
+  }
 }

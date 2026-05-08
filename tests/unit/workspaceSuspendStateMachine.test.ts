@@ -3,6 +3,7 @@ import {
   canSyncFromWorkspace,
   describeWorkspaceState,
   listAvailableActions,
+  mapTransitionRejection,
   transitionWorkspaceSyncState,
 } from "../../src/core/workspaceSuspendStateMachine.js";
 
@@ -71,10 +72,10 @@ describe("transitionWorkspaceSyncState — frozen state", () => {
     });
   });
 
-  it("can unfreeze to suspended (not directly to active)", () => {
+  it("can unfreeze directly to active (unfreeze runs a full sync)", () => {
     expect(transitionWorkspaceSyncState("frozen", "unfreeze")).toEqual({
       ok: true,
-      newState: "suspended",
+      newState: "active",
     });
   });
 });
@@ -106,5 +107,33 @@ describe("listAvailableActions", () => {
 
   it("lists only unfreeze for frozen state", () => {
     expect(listAvailableActions("frozen")).toEqual(["unfreeze"]);
+  });
+});
+
+describe("mapTransitionRejection", () => {
+  it("returns 'уже в Freeze' for freeze on frozen", () => {
+    expect(mapTransitionRejection("freeze", "frozen_requires_unfreeze_first")).toContain("уже в Freeze");
+  });
+
+  it("returns 'сначала Unfreeze' for non-freeze actions on frozen", () => {
+    expect(mapTransitionRejection("suspend", "frozen_requires_unfreeze_first")).toContain("сначала Unfreeze");
+    expect(mapTransitionRejection("resume", "frozen_requires_unfreeze_first")).toContain("сначала Unfreeze");
+  });
+
+  it("returns action-specific message for unknown_action", () => {
+    expect(mapTransitionRejection("suspend", "unknown_action")).toContain("Suspend");
+    expect(mapTransitionRejection("resume", "unknown_action")).toContain("Resume");
+    expect(mapTransitionRejection("freeze", "unknown_action")).toContain("Freeze");
+    expect(mapTransitionRejection("unfreeze", "unknown_action")).toContain("Unfreeze");
+  });
+
+  it("returns a non-empty string for every (action, reason) pair", () => {
+    const actions = ["suspend", "resume", "freeze", "unfreeze"] as const;
+    const reasons = ["already_in_state", "frozen_requires_unfreeze_first", "unknown_action"] as const;
+    for (const a of actions) {
+      for (const r of reasons) {
+        expect(mapTransitionRejection(a, r).length).toBeGreaterThan(0);
+      }
+    }
   });
 });
