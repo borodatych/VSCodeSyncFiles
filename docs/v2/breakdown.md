@@ -78,9 +78,9 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.2.4. Recovery + fallback
 
-- [ ] **5 одноразовых recovery codes** — генерируются при enrollment, показываются один раз, hash сохраняется в SecretStorage. Каждый code — alternate KEK.
-- [ ] **Passphrase fallback** — пользователь вводит passphrase (PBKDF2 → KEK). Активируется если credential lost.
-- [ ] **Multi-device** — несколько credential id на разных машинах + recovery codes для cross-device recovery.
+- [x] **5 одноразовых recovery codes** — `src/core/passkeyRecoveryCodes.ts`: `generateRecoveryCodes(count?)` (default 5, max 50) формат `xxxx-xxxx-xxxx-xxxx-xxxx` (28-symbol alphabet без 0/o/1/i/l). `hashRecoveryCode` нормализует case+dashes+whitespace перед SHA-256. `verifyRecoveryCode(code, hashes)` constant-time match, пропускает consumed (`""`). 7 unit-тестов.
+- [ ] **Passphrase fallback** — `passphrase`-source уже есть в `KeyEnvelope`; UI поток остаётся skeleton.
+- [ ] **Multi-device** — мульти-credential map (skeleton; recovery codes выше уже частично закрывают cross-device recovery).
 
 ### v2.2.5. Settings UI
 
@@ -88,8 +88,8 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.2.6. Tests + telemetry
 
-- [ ] Unit-тесты на envelope wrap/unwrap (без реального WebAuthn — используем mock derive function).
-- [ ] Telemetry: track WebAuthn failure reasons (NotAllowedError, NotSupportedError, AbortError) для понимания edge cases у пользователей.
+- [x] Unit-тесты на envelope wrap/unwrap — `src/core/passkeyEnvelopeWrap.ts` с инжекцией `DeriveKekFn(credentialId, salt) → Uint8Array`. AES-256-GCM, authTag append к ciphertext (без расширения `KeyEnvelope` shape). 5 unit-тестов с deterministic mock derive: round-trip, auth_failure при mismatched derive, shape rejection.
+- [ ] Telemetry: track WebAuthn failure reasons — skeleton (нет реальной auth surface).
 
 ---
 
