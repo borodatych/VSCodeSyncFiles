@@ -225,8 +225,8 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.9.5. UX polish
 
-- [ ] **Auto-dismiss:** TTL для cached presence — следующая итерация (engine-side timer).
-- [ ] **Pre-save warning:** `scorePresenceRisk > 0.6` → modal на `onWillSaveTextDocument`. Pure scorer ready; обвязка остаётся.
+- [x] **Auto-dismiss:** `src/core/presenceCacheTTL.ts` — TTL cache (60 s default), entries evict on each `get` / `list` / `evict`. UI service `SmartConflictPredictionService` подключает кэш и автоматически прячет warning через 60 с idle.
+- [x] **Pre-save warning helper:** `findHighRiskPeer({ cache, myWorkspaceId, myRelPath, myAnonymised?, threshold? })` возвращает `{ entry, risk } | null` для `onWillSaveTextDocument` modal. `PRE_SAVE_RISK_THRESHOLD = 0.6`. UI обвязка — следующая итерация. 9 unit-тестов.
 
 ---
 
