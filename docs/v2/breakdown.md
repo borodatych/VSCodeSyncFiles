@@ -132,8 +132,8 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.1. Local HTTP server абстракция
 
-- [ ] **`src/ui/webhookLocalServer.ts`** — выделить из `graphWebhookLocalServer.ts` provider-agnostic shape: `startLocalWebhookServer(port?: number, handler: (payload, headers) => void): Promise<{ port: number; dispose(): Promise<void> }>`.
-- [ ] Тесты: ephemeral port allocation, dispose-then-start cycle, max body size (64 KB).
+- [x] **`src/ui/webhookLocalServer.ts`** — provider-agnostic abstraction. `startLocalWebhookServer({ port?, host?, maxBodyBytes?, handler })` → `{ port, dispose() }`. Handler receives `{ method, url, headers (lowercase keys), body: Buffer }` и возвращает `{ status, body?, contentType?, headers? }`. Идемпотентный dispose, 64 KB DoS-cap по-умолчанию, 413 на превышение, 500 при throw из handler.
+- [x] Тесты: ephemeral port allocation, dispose-then-start cycle, max body size, 413 на oversized, 500 на handler throw, header lowercasing, body echo. 7 unit-тестов.
 
 ### v2.4.2. Cloudflared spawn
 
