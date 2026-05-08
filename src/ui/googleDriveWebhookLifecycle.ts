@@ -19,6 +19,8 @@ import {
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
 import { reconcileFromFlags } from "./webhookExpirationMath.js";
+import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
+import { gdriveExpirationToIso } from "../core/gdrivePushChannelResponseDecoder.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "gdrive-push-channel.json";
@@ -224,22 +226,21 @@ export function registerGoogleDriveWebhookLifecycle(
 
     const renewTick = async (): Promise<void> => {
       const s = await readState(globalConfig);
-      if (!s) {
-        return;
-      }
       const cfgInner = vscode.workspace.getConfiguration(CFG);
-      if (!cfgInner.get<boolean>("webhooks.enabled", false)) {
-        return;
-      }
       const gci = await globalConfig.load();
-      if (gci.activeProvider !== "gdrive") {
-        return;
-      }
-      if (!isNearOrPastGdriveExpiration(s.expiration, 3600_000)) {
-        return;
-      }
       const b = await readGdriveTokens(secrets);
-      if (!b?.accessToken) {
+      const expirationIso = s ? gdriveExpirationToIso(s.expiration) ?? "" : "";
+      const decision = decideWebhookRenewTick({
+        state: s ? { subscriptionId: s.channelId, expirationDateTime: expirationIso } : null,
+        webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
+        activeProviderMatches: gci.activeProvider === "gdrive",
+        hasToken: Boolean(b?.accessToken),
+        renewSlackMs: 3600_000,
+      });
+      if (decision.kind !== "renew_now") {
+        return;
+      }
+      if (!s || !b?.accessToken) {
         return;
       }
       try {
