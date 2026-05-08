@@ -6,8 +6,10 @@
  *     [&pwd=<sha256-hex>]
  *
  * The `pwd` field is a *hash* of the password — it's a quick-check token, not a
- * cryptographic ACL. Cloud-side ACL is the actual access enforcement.
+ * cryptographic ACL. Cloud-side ACL is the actual access enforcement and
+ * lives in `SnapshotMeta.sharedTo` (see `cloudLayout.ts`).
  */
+import type { SnapshotShareACL } from "./cloudLayout.js";
 const SHARE_LINK_BASE = "vscode://borodatych.vscodesyncfiles/share";
 const WORKSPACE_RE = /^[A-Za-z0-9_-]{4,64}$/;
 const SNAPSHOT_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -47,6 +49,33 @@ export function buildShareLink(input: ShareLinkInput): string {
     params.set("pwd", input.passwordHashHex);
   }
   return `${SHARE_LINK_BASE}?${params.toString()}`;
+}
+
+export type ShareACLVerifyResult =
+  | { ok: true }
+  | { ok: false; reason: "expired" | "wrong_password" | "missing_acl" };
+
+/** Server-side check: combines ACL TTL + hashed-password match in one helper.
+ * `providedPwdHashHex` comes from the inbound share-link's `pwd` query param.
+ * Pure — no provider call. Caller has already loaded the snapshot meta. */
+export function verifySnapshotShareACL(
+  acl: SnapshotShareACL | undefined,
+  providedPwdHashHex: string | undefined,
+  now: number = Date.now(),
+): ShareACLVerifyResult {
+  if (!acl) return { ok: false, reason: "missing_acl" };
+  const exp = Date.parse(acl.expiresAtIso);
+  if (Number.isNaN(exp) || now > exp) return { ok: false, reason: "expired" };
+  // Constant-time compare against the stored hash.
+  if (providedPwdHashHex === undefined) return { ok: false, reason: "wrong_password" };
+  if (providedPwdHashHex.length !== acl.hashedPwdHex.length) {
+    return { ok: false, reason: "wrong_password" };
+  }
+  let acc = 0;
+  for (let i = 0; i < providedPwdHashHex.length; i++) {
+    acc |= providedPwdHashHex.charCodeAt(i) ^ acl.hashedPwdHex.charCodeAt(i);
+  }
+  return acc === 0 ? { ok: true } : { ok: false, reason: "wrong_password" };
 }
 
 export function parseShareLink(raw: string, now: number = Date.now()): ShareLinkParseResult {

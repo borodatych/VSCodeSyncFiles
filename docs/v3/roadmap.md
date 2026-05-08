@@ -153,7 +153,7 @@ AI-review summary каждого файла перед apply.
 **Что:**
 - [x] Pure helper `src/core/shareLink.ts` — `buildShareLink({ workspaceId, snapshotName, expiresAtMs?, passwordHashHex? })` + `parseShareLink(raw, now?)` с проверками expired/wrong_path/bad_field. 5 unit-тестов.
 - [ ] При open ссылки на другой машине — invitee получает read-only access (skeleton — обвязка `vscode.window.registerUriHandler` остаётся).
-- [ ] Storage: ACL field в snapshot meta — `sharedTo: { hashedPwd, expiresAt, readOnly: true }` (skeleton).
+- [x] Storage: ACL field `SnapshotMeta.sharedTo: SnapshotShareACL = { hashedPwdHex, expiresAtIso, readOnly: true }` объявлен в `cloudLayout.ts`. `verifySnapshotShareACL(acl, providedPwdHashHex, now)` в `shareLink.ts` для server-side проверки (constant-time compare + TTL). 7 unit-тестов. Engine-side enforcement в push/pull путях остаётся следующей итерацией.
 
 **Риск:** создаёт «sharing» которого раньше не было. Можно вызвать confusion. Подумать: нужно ли это вообще, или достаточно «share via cloud provider's native share».
 

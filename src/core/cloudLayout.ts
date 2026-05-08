@@ -158,4 +158,18 @@ export interface SnapshotMeta {
   createdAt: string;
   machineName: string;
   files: string[];
+  /**
+   * v3.K — optional ACL field activated when the user generates a public
+   * share link via `buildShareLink`. Forward-compat: old readers ignore.
+   * Caller hashes the share password (sha256 hex) and stores `expiresAtIso`
+   * to enforce TTL on the receive side. `readOnly: true` means the invitee
+   * can only download; push from them is rejected by the engine.
+   */
+  sharedTo?: SnapshotShareACL;
+}
+
+export interface SnapshotShareACL {
+  hashedPwdHex: string;
+  expiresAtIso: string;
+  readOnly: true;
 }
