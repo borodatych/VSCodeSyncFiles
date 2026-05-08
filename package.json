@@ -293,6 +293,11 @@
           "pattern": "^$|^daily \\d{1,2}:\\d{2}$|^weekly (sun|mon|tue|wed|thu|fri|sat) \\d{1,2}:\\d{2}$",
           "description": "%cfg.snapshotSchedule.description%"
         },
+        "vscodesync.syncScheduleExtended": {
+          "type": "string",
+          "default": "",
+          "description": "%cfg.syncScheduleExtended.description%"
+        },
         "vscodesync.longAbsenceThresholdDays": {
           "type": "number",
           "default": 3,

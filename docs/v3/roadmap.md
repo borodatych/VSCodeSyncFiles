@@ -89,9 +89,9 @@ add files один за другим.
 Полезно: «sync каждые 4 часа в рабочее время, тише ночью».
 
 **Что:**
-- [ ] Pure planner `src/core/syncSchedulePlanner.ts` — расширение существующего `snapshotSchedule` parser: поддержать cron-like syntax + time windows.
-- [ ] Setting `vscodesync.syncSchedule`: `"daily 09:00,12:00,18:00"` или `"workhours 30m"` (каждые 30 мин в 9–18 будни) или `"hourly"`.
-- [ ] Hook через тот же polling в `scheduledSnapshots.ts`.
+- [x] Pure planner `src/core/syncSchedulePlanner.ts` — `parseSyncSchedule(raw)` поддерживает `hourly` / `daily HH:MM[,HH:MM]*` / `weekly <day> HH:MM` / `workhours Nm`. `isSyncDueAt(schedule, lastRunMs, nowMs)` для polling. 11 unit-тестов.
+- [x] Setting `vscodesync.syncScheduleExtended` (отдельная от существующего `snapshotSchedule`) + en/ru NLS.
+- [ ] Hook через polling в `scheduledSnapshots.ts` (skeleton — engine-side wiring).
 
 ---
 
