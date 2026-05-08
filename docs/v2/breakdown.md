@@ -145,7 +145,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
   - Spawn `tailscale funnel --bg <port>`.
   - Polling `tailscale funnel status` каждые 2 с до URL `https://<machine>.<tailnet>.ts.net/`. Timeout 15 с.
   - Cleanup: `tailscale funnel reset` на dispose.
-- [ ] Pre-flight: проверить что Funnel включён в ACL (`tailscale funnel status` выдаёт ошибку если нет).
+- [~] Pre-flight: проверить что Funnel включён в ACL (`tailscale funnel status` выдаёт ошибку если нет). Pure parser `parseTailscaleFunnelStatus(text)` готов в `src/core/tailscaleFunnelAclParser.ts`. Возвращает `{ ok:true, enabled, listeningUrls? }` или `{ ok:false, reason: 'acl_denied' | 'not_logged_in' | 'daemon_unavailable' | 'unknown', hint }`. Distinct rejection paths (ACL, not-logged-in, daemonless, empty/gibberish), URL dedup, multi-host extraction. 13 unit-тестов. Spawn-обвязка остаётся.
 
 ### v2.4.4. webhookTunnel migration
 
