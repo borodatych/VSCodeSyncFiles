@@ -35,7 +35,7 @@ per-file. Хочется per-file include/exclude по паттернам с и�
 **Что:**
 - [x] Pure helper `src/core/quotaTracker.ts` — `createQuotaTracker({ windowMs?, overrideLimits? })` с `recordCall / snapshot / snapshotAll`. Severity ladder (`ok` / `warning` ≥70% / `critical` ≥90% / `auto_pause` ≥95%). 5 unit-тестов.
 - [ ] Hook в `queuedProvider.ts` — обвязка для инкремента (skeleton; нужно прокинуть tracker через DI).
-- [ ] UI команда `vscodesync.showQuotaDashboard` — webview (skeleton).
+- [~] UI команда `vscodesync.showQuotaDashboard` — pure HTML рендерер `renderQuotaDashboardHtml(snapshots)` готов в `src/core/quotaDashboardHtml.ts` (CSS-grid bars + severity color via VS Code theme tokens). Webview обвязка (registerCommand + setHtml) остаётся.
 - [x] Severity ladder реализован — alerts генерируются вызывающей стороной по `severity`.
 - [x] Per-provider limits в `PROVIDER_DAILY_LIMITS` (gdrive: 1B; остальные null = unknown).
 
