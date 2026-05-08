@@ -79,7 +79,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.2.4. Recovery + fallback
 
 - [x] **5 одноразовых recovery codes** — `src/core/passkeyRecoveryCodes.ts`: `generateRecoveryCodes(count?)` (default 5, max 50) формат `xxxx-xxxx-xxxx-xxxx-xxxx` (28-symbol alphabet без 0/o/1/i/l). `hashRecoveryCode` нормализует case+dashes+whitespace перед SHA-256. `verifyRecoveryCode(code, hashes)` constant-time match, пропускает consumed (`""`). 7 unit-тестов.
-- [ ] **Passphrase fallback** — `passphrase`-source уже есть в `KeyEnvelope`; UI поток остаётся skeleton.
+- [~] **Passphrase fallback** — pure step planner `planPassphraseFlow({ mode, hasEnrolledPassphrase, strengthScore?, recentFailedAttempts?, maxAttempts?, lockoutStartedAtMs?, lockoutDurationMs?, nowMs })` готов в `src/core/passphraseFallbackFlow.ts`. 3 modes (`enroll` / `unlock` / `recover`) × 4 warnings (`no_passphrase_enrolled` / `weak_passphrase_strength` < 0.5 / `lockout_active` / `near_lockout` ≤ 1 attempt). 5-attempt default with 5-min lockout, expired lockout автоматически clears. 13 unit-тестов. UI обвязка остаётся.
 - [ ] **Multi-device** — мульти-credential map (skeleton; recovery codes выше уже частично закрывают cross-device recovery).
 
 ### v2.2.5. Settings UI
