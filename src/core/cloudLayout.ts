@@ -93,6 +93,12 @@ export interface MetaEntry {
    * Off-by-default; readers fall back gracefully when codec is unknown.
    */
   wireZstd?: boolean;
+  /**
+   * v2.3 dual-hash transition: lowercase hex BLAKE3-256 of the canonical
+   * plaintext. Optional; when present, callers under setting `blake3` /
+   * `dual` use this for equality. Forward-compat: old readers ignore.
+   */
+  hashBlake3?: string;
 }
 
 export const EMPTY_META_JSON: MetaJson = { files: {} };

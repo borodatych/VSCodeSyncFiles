@@ -14,7 +14,8 @@ export type ActivityKind =
   | "add"
   | "remove"
   | "resolve_keep_mine"
-  | "resolve_take_theirs";
+  | "resolve_take_theirs"
+  | "hash_migration";
 
 /** Payload recorded by SyncEngine or extension UI (before id/timestamp). */
 export interface ActivityEventInput {

@@ -100,18 +100,18 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.3.1. Setting + hash field
 
-- [ ] **Setting** `vscodesync.canonicalHashAlgo`: `"sha256"` (default) | `"blake3"` | `"dual"`. `dual` — пишет оба хеша, читает оба.
-- [ ] **Расширить `MetaEntry`:** добавить optional `hashBlake3?: string` рядом с `hash` (которое sha256). Forward-compat: старые readers игнорируют unknown field.
+- [x] **Setting** `vscodesync.canonicalHashAlgo`: `"sha256"` (default) | `"blake3"` | `"dual"`. Описание + RU локализация в `package.nls.{json,ru.json}`.
+- [x] **Расширить `MetaEntry`:** добавлено optional `hashBlake3?: string` в `cloudLayout.ts`. Forward-compat — старые readers игнорируют unknown field.
 
 ### v2.3.2. Dual-hash writer
 
-- [ ] **`computeHashDual`** — pure helper в `hash.ts`: возвращает `{ sha256: string; blake3: string }`. Используется когда setting === `"dual"` или `"blake3"`.
-- [ ] **`pushFile` writes both** — при upload пишет оба хеша в meta, чтобы любой reader (старый sha256-only или новый blake3) мог совпасть.
+- [x] **`computeHashDual`** — pure helper в `hashProviders.ts`: возвращает `{ sha256: string; blake3: string }`. При отсутствии BLAKE3 backend'а fallback к sha256 в обоих полях.
+- [~] **`pushFile` writes both** — pure helper готов; обвязка в `syncEngine.pushFile` для записи обоих в meta остаётся следующей итерации (требует чтения текущего setting'а через `runWithEngine` deps).
 
 ### v2.3.3. Reader compatibility
 
-- [ ] **`hashesEqual` extended** — pure helper: если manifest имеет `hashBlake3` и мой alg `blake3` → сравнить blake3. Иначе — sha256 (всегда есть).
-- [ ] **Migration check at startup** — `runHashAlgoMigrationCheck`: read all `_meta.json`, count entries with/without `hashBlake3`. Если все имеют → safe to switch to `blake3`-only. Показывает в `vscodesync.showHashMigrationStatus`.
+- [x] **`compareMetaHash` extended** — pure helper в `hashProviders.ts`: если manifest имеет `hashBlake3` и preferred=`blake3` → сравнивает blake3, иначе fallback на sha256 (всегда есть). 5 unit-тестов.
+- [x] **Migration check at startup** — `runHashAlgoMigrationCheck` в `src/core/hashMigrationCheck.ts`: pure helper над списком workspaces+entries, возвращает per-workspace ratio + global `safeToSwitchToBlake3`. 5 unit-тестов.
 
 ### v2.3.4. Transition window
 
@@ -120,8 +120,8 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.3.5. Performance + telemetry
 
-- [ ] Бенчмарк-тесты: типичный workspace (100 файлов × 50 KB) — sha256 vs blake3 wall-time. Опубликовать в `docs/v2/blake3-benchmark.md`.
-- [ ] Activity log: `kind: "hash_migration"` при upgrade meta entry.
+- [ ] Бенчмарк-тесты: типичный workspace (100 файлов × 50 KB) — sha256 vs blake3 wall-time. Опубликовать в `docs/v2/blake3-benchmark.md` (skeleton — нужно реальное измерение на машине пользователя).
+- [x] Activity log: `kind: "hash_migration"` зарегистрирован в `ActivityKind` union.
 
 ---
 
