@@ -116,8 +116,8 @@ add files один за другим.
 AI-review summary каждого файла перед apply.
 
 **Что:**
-- [ ] Pure helper `src/core/aiBulkReviewPrompt.ts` — для каждого файла builds prompt: `{ relPath, localContent, cloudContent }` → `vscode.lm` summary «cloud version изменяет: A, B, C; локальная версия изменяет: D». Возвращает risk score + human-readable summary.
-- [ ] UI in `bulkPushWizard` (extension): при > 10 файлов → optional AI-review pass.
+- [x] Pure helper `src/core/aiBulkReviewPrompt.ts` — `buildBulkReviewPrompt(input)` и `buildBulkReviewBatchPrompt(inputs)` строят LM-промпт; `parseBulkReviewVerdict(rawResponse, relPath)` строгий парсер JSON-ответа; `summariseBulkReview(verdicts)` сводка с buckets high/medium/low + `needsAttention`. 9 unit-тестов.
+- [ ] UI в `bulkPushWizard` (skeleton — pure builder/parser ready).
 
 ---
 
