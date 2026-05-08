@@ -50,8 +50,8 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.6. Smoke-test environment
 
-- [ ] **`docs/v2/p2p-smoke-guide.md`** — шаги воспроизведения: 2 VS Code window (или 1 + extension host dev), один workspace, инициировать session, послать тестовый файл, проверить что он пришёл с правильным hash.
-- [ ] CI smoke: invoke session in single-process mode (loopback peer connection через `@roamhq/wrtc`).
+- [x] **`docs/v2/p2p-smoke-guide.md`** — manual reproduction guide; перечисление 8 pure модулей, инструкция собрать end-to-end сессию (offer → answer → ICE → DataChannel → file chunks → cleanup), pass criteria.
+- [ ] CI smoke в single-process mode через `@roamhq/wrtc` — blocked: native binding на CI runner ненадёжен, ICE timing для vitest-default 5s timeout слишком тугой.
 
 ---
 
