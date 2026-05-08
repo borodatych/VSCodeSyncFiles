@@ -185,7 +185,7 @@ VSCodeSync: Toggle Telemetry
 
 ## Критерий готовности фазы
 
-- [~] Онбординг при первом запуске (новый глобальный config); повтор — `Start Onboarding Wizard`
+- [~] Онбординг при первом запуске (новый глобальный config); повтор — `Start Onboarding Wizard`. Pure step planner `planOnboardingWizard({ hasActiveProvider, hasAuthenticatedTokens, hasMachineName, hasAttachedWorkspace, preselectedProvider? })` готов в `src/core/onboardingWizardSteps.ts` — 8-step flow со skip-decisions для уже-настроенных аспектов. `isOnboardingAlreadyComplete()` для skipping wizard на subsequent launches. 10 unit-тестов.
 - [x] Боковая панель показывает активные workspace и отслеживаемые файлы (TreeView `vscodesync.workspaces`)
 - [x] Статус-бар всегда актуален (watch `.vscode/vscodesync.json` с перепривязкой при смене корней, multi-root агрегат в строке и tooltip, глобальный config; обновление после push/pull/sync как и раньше)
 - [x] Все команды зарегистрированы и работают
