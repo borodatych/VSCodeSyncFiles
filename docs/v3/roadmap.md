@@ -102,9 +102,9 @@ add files один за другим.
 с per-hunk переключателями.
 
 **Что:**
-- [ ] Webview `src/ui/visualMergerPanel.ts` — 4 панели, кнопки `[← keep mine] [keep theirs →]` per-hunk, AI-merge для каждого hunk опционально.
-- [ ] Pure planner `src/core/visualMergePlan.ts` — diff alignment, hunk extraction, applyHunkChoices.
-- [ ] Команда `vscodesync.openVisualMerger` (при наличии активного conflict).
+- [ ] Webview `src/ui/visualMergerPanel.ts` (skeleton — pure planner ready, UI рендер deferred).
+- [x] Pure planner `src/core/visualMergePlan.ts` — `buildMergePlan(base, local, cloud)` возвращает `{ hunks, conflictCount }` (kinds: clean / conflict / addition_local|cloud / deletion_local|cloud). `applyHunkChoices(hunks, choices, customMerged?)` материализует результат. 8 unit-тестов.
+- [ ] Команда `vscodesync.openVisualMerger` — skeleton (pure planner ready).
 
 **Риск:** дублирует существующий VS Code merge editor (Insiders). Возможно стоит проверить — если `vscode.openMergeEditor` API доступен → использовать его.
 
