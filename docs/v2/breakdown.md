@@ -23,7 +23,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.1.2. Альтернативный air-gapped signaling через QR-обмен
 
 - [x] **`src/core/p2pQrExchange.ts`** — pure helpers `planQrChunks(payload, sessionId, chunkLen?)`, `encodeQrChunkLine(chunk)`, `parseQrChunkLine(line)`, `createQrAssembler()`. Wire-format `VSS1|<sid>|<idx>|<total>|<base64>`. Reassembly при out-of-order сканах. 12 unit-тестов. `qrcode-terminal` ^0.12 в `optionalDependencies` для ASCII-рендера.
-- [ ] UI flow inviter↔invitee multi-step QuickPick + render через `qrcode-terminal` — следующая итерация (pure parts ready).
+- [~] UI flow inviter↔invitee multi-step QuickPick + render через `qrcode-terminal` — pure substep controller `createQrExchangeFlow({ role, localPayload, sessionId, chunkLen? })` готов в `src/core/p2pQrExchangeFlow.ts`. Phases: inviter `render_offer → await_answer_scan → decode_answer → done`, invitee `await_offer_scan → render_answer → await_ack → done`. `currentOutboundLine` / `nextOutboundChunk` (round-robin) / `acceptScannedLine` (с rejection paths bad_format / wrong_protocol / session_mismatch / total_mismatch / wrong_phase). 11 unit-тестов. UI рендер через `qrcode-terminal` остаётся.
 - [x] Maximum payload: `QR_CHUNK_PAYLOAD_BASE64_LIMIT = 1500` keeps a single QR safely under 2 KB; больше → split на N chunks с sequence number.
 
 ### v2.1.3. UI команда «Start P2P session»
