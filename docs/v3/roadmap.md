@@ -19,8 +19,8 @@ per-file. Хочется per-file include/exclude по паттернам с и�
 **Что:**
 - [~] Setting `vscodesync.selectiveSync.mode` — pure helper готов; обвязка к `package.json` и `pushFile`/`pullFile` остаётся.
 - [x] Pure filter `src/core/selectiveSyncFilter.ts`: `evaluateSelectiveSync(relPath, { mode, patterns })` + `parseSelectiveSyncFile(text)`. Поддержка `*` / `**` / `?` / trailing slash для директорий. 5 unit-тестов.
-- [ ] UI команда `vscodesync.selectiveSyncEditList` — открыть `.vscodesync-include` с template (skeleton).
-- [ ] Diff-preview перед удалением (skeleton — нужен engine hook).
+- [~] UI команда `vscodesync.selectiveSyncEditList` — pure template renderer `renderSelectiveSyncIncludeTemplate(mode)` готов в `src/core/selectiveSyncTemplate.ts` (mode-aware header + glob-syntax shorthand + explicit "negation NOT supported" note). Webview/`workspace.fs.writeFile` обвязка остаётся.
+- [~] Diff-preview перед удалением — pure helper `summariseSelectiveSyncImpact({ trackedRelPaths, prevMode, prevPatterns, nextMode, nextPatterns })` возвращает `{ wouldStop[], wouldStart[], unchangedCount }` + `scoreSelectiveSyncImpact(impact)` severity ladder (`noop` / `info` / `warn` / `danger` ≥ 10 stops). 9 unit-тестов. UI modal обвязка остаётся.
 
 **Риск:** добавление exclude может «потерять» файл на других машинах (его удалят как stale). Нужен safeguard: пред-удаление warning + grace period.
 
