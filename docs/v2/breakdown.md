@@ -22,9 +22,9 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.2. Альтернативный air-gapped signaling через QR-обмен
 
-- [ ] **`src/ui/p2pQrExchange.ts`** — генерация QR-кода offer / answer, парсинг сканированного. Используем существующий QR-код код (если есть) или JS-библиотеку `qrcode-terminal` для ASCII.
-- [ ] UI flow: «inviter генерирует offer → показывает QR → invitee сканирует → invitee показывает answer → inviter сканирует».
-- [ ] Maximum payload: 2 KB (limit QR версии 30L). Если offer больше — split на N QR-кодов с sequence number.
+- [x] **`src/core/p2pQrExchange.ts`** — pure helpers `planQrChunks(payload, sessionId, chunkLen?)`, `encodeQrChunkLine(chunk)`, `parseQrChunkLine(line)`, `createQrAssembler()`. Wire-format `VSS1|<sid>|<idx>|<total>|<base64>`. Reassembly при out-of-order сканах. 12 unit-тестов. `qrcode-terminal` ^0.12 в `optionalDependencies` для ASCII-рендера.
+- [ ] UI flow inviter↔invitee multi-step QuickPick + render через `qrcode-terminal` — следующая итерация (pure parts ready).
+- [x] Maximum payload: `QR_CHUNK_PAYLOAD_BASE64_LIMIT = 1500` keeps a single QR safely under 2 KB; больше → split на N chunks с sequence number.
 
 ### v2.1.3. UI команда «Start P2P session»
 
