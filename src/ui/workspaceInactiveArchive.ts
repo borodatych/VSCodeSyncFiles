@@ -4,36 +4,22 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { hasArchivedTag, newestTrackedLastSyncMs } from "../utils/workspaceLastActivity.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
-import { findInactiveWorkspaceCandidates } from "../core/inactiveWorkspaceCandidates.js";
+import {
+  findInactiveWorkspaceCandidates,
+  inactiveSnoozeKey,
+  INACTIVE_SNOOZE_NEVER,
+} from "../core/inactiveWorkspaceCandidates.js";
+import { readSnoozeMap, setSnoozeEntry } from "../utils/snoozeStore.js";
 
 const SNOOZE_STATE_KEY = "vscodesync.inactiveWorkspaceArchiveSnooze";
 const SNOOZE_DAYS = 7;
-const NEVER_REMIND = "__never";
 const DAY_MS = 86_400_000;
 
 /** After startup pull (see sync summary); give cloud + local state time to settle. */
 const INACTIVE_SCAN_DELAY_MS = 16_000;
 
-function snoozeMap(ctx: vscode.ExtensionContext): Record<string, string> {
-  return ctx.globalState.get<Record<string, string>>(SNOOZE_STATE_KEY) ?? {};
-}
 
-async function updateSnooze(
-  ctx: vscode.ExtensionContext,
-  key: string,
-  value: string | undefined,
-): Promise<void> {
-  const prev = snoozeMap(ctx);
-  const next =
-    value === undefined
-      ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key))
-      : { ...prev, [key]: value };
-  await ctx.globalState.update(SNOOZE_STATE_KEY, next);
-}
 
-function snoozeKey(folderRootFsPath: string, workspaceId: string): string {
-  return `${folderRootFsPath}\u0000${workspaceId}`;
-}
 
 export interface WorkspaceInactiveArchiveDeps {
   startupChannel: vscode.OutputChannel;
@@ -87,7 +73,7 @@ async function runInactiveScan(_context: vscode.ExtensionContext, deps: Workspac
     return;
   }
 
-  const snooze = snoozeMap(deps.extensionContext);
+  const snooze = readSnoozeMap(deps.extensionContext, SNOOZE_STATE_KEY);
   const folderInputs = [];
   for (const folder of folders) {
     const root = folder.uri.fsPath;
@@ -119,14 +105,14 @@ async function runInactiveScan(_context: vscode.ExtensionContext, deps: Workspac
       `Через ${String(SNOOZE_DAYS)} дней`,
       "Не напоминать для этого workspace",
     );
-    const sk = snoozeKey(c.folderRootFsPath, c.workspaceId);
+    const sk = inactiveSnoozeKey(c.folderRootFsPath, c.workspaceId);
     if (picked === undefined || picked === `Через ${String(SNOOZE_DAYS)} дней`) {
       const until = new Date(Date.now() + SNOOZE_DAYS * DAY_MS).toISOString();
-      await updateSnooze(deps.extensionContext, sk, until);
+      await setSnoozeEntry(deps.extensionContext, SNOOZE_STATE_KEY, sk, until);
       continue;
     }
     if (picked === "Не напоминать для этого workspace") {
-      await updateSnooze(deps.extensionContext, sk, NEVER_REMIND);
+      await setSnoozeEntry(deps.extensionContext, SNOOZE_STATE_KEY, sk, INACTIVE_SNOOZE_NEVER);
       continue;
     }
     await deps.onArchive({
