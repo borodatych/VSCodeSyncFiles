@@ -119,7 +119,7 @@ AI-review summary каждого файла перед apply.
 
 **Что:**
 - [x] Pure helper `src/core/aiBulkReviewPrompt.ts` — `buildBulkReviewPrompt(input)` и `buildBulkReviewBatchPrompt(inputs)` строят LM-промпт; `parseBulkReviewVerdict(rawResponse, relPath)` строгий парсер JSON-ответа; `summariseBulkReview(verdicts)` сводка с buckets high/medium/low + `needsAttention`. 9 unit-тестов.
-- [ ] UI в `bulkPushWizard` (skeleton — pure builder/parser ready).
+- [~] UI в `bulkPushWizard` — pure step planner `planBulkPushAiReviewFlow({ fileCount, aiReviewEnabled, hasLm, batchSize? })` готов в `src/core/bulkPushAiReviewFlow.ts`. Возвращает `{ steps, batchPlan, reviewDecision }` (4-step `confirm_scope → ai_batch_review → review_summary → confirm_apply` или 2-step skip-path с `reviewDecision: 'skip_no_files' | 'skip_disabled' | 'skip_no_lm'`). `formatVerdictsForQuickPick(verdicts)` рендерит per-file rows (highest-risk-first sort, pre-select files с `riskScore < 0.7`, two-decimal risk format). `decideBulkPushConfirmation(summary, fileCount)` 3-level ladder (`auto_apply` / `confirm` / `explicit_confirm` при `needsAttention`). 14 unit-тестов. UI обвязка остаётся.
 
 ---
 
