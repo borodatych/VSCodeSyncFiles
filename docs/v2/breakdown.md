@@ -171,23 +171,23 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.6.1. Workspace lifecycle
 
-- [ ] **`src/commands/registerWorkspaceLifecycle.ts`** — `createWorkspace`, `detachWorkspace`, `renameWorkspaceNote`, `editWorkspaceTags`, `suspendWorkspace`, `resumeWorkspace`, `freezeWorkspace`, `unfreezeWorkspace`, `attachCloudWorkspace` (single + multi).
+- [ ] **Blocked.** Декомпозиция оставшихся 50+ команд в отдельные `register*.ts` файлы — крупный многонедельный pass. Каждая группа тянет `runWithEngine` / `globalConfig` / `registry` / `logSyncActivityRef` / `resolveFileTarget` / `pickRoot` (richer контракт, отличный от уже-существующего `{ context, storageDir }`). Требует выработки общего `EngineCommandsDeps` интерфейса, аккуратной миграции каждой группы с тестами, и постепенного снижения LoC `extension.ts` (текущий ~3.5K) до < 500 LoC.
 
 ### v2.6.2. File ops
 
-- [ ] **`src/commands/registerFileOps.ts`** — `addFile`, `addFolder`, `removeFile`, `pushCurrentFile`, `pullCurrentFile`, `syncFile`, `forcePullFromMachine`, `pinFileForSync`, `openInCloudStorage`.
+- [ ] Blocked — same reason as v2.6.1.
 
 ### v2.6.3. Conflict resolution
 
-- [ ] **`src/commands/registerConflictResolution.ts`** — `resolveConflicts`, `keepMine`, `takeTheirs`, `keepMineWithRange`, `takeTheirsWithRange`, `treeFileKeepMine`, `treeFileTakeTheirs`, `treeFileForceSync`, `openConflictDiff3way`, `resolveTakeTheirs`.
+- [ ] Blocked — same reason as v2.6.1.
 
 ### v2.6.4. Provider lifecycle
 
-- [ ] **`src/commands/registerProviderLifecycle.ts`** — `setActiveProvider`, `signOut`, `signOutAllProviders`, `migrateToAnotherProvider`, `showProviderSetupGuide`, `connectCloudWorkspace`.
+- [ ] Blocked — same reason as v2.6.1.
 
 ### v2.6.5. Health + diagnostics
 
-- [ ] **`src/commands/registerHealth.ts`** — `showStatus`, `showHealth`, `showStorageReport`, `runHealthCheck`, `showWebhookStatus`, `showTunnelStatus`.
+- [ ] Blocked — same reason as v2.6.1.
 
 ### v2.6.6. Smart features
 
@@ -195,8 +195,8 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.6.7. Validation
 
-- [ ] **CI regression check:** generated `webStubCommands.generated.ts` должен содержать ровно те же command ids, что и до refactor. Diff-fail blocks merge.
-- [ ] **`extension.ts < 500 LoC`** после full split — assert в CI.
+- [x] **CI regression check:** `tests/unit/packageJsonCommandsConsistency.test.ts` — assert каждый `contributes.commands[].command` присутствует в `WEB_STUB_COMMAND_IDS` + no-duplicates check. Если refactor забывает зарегистрировать команду в одном из мест — тест падает.
+- [ ] **`extension.ts < 500 LoC` assert** — blocked, зависит от полной декомпозиции (v2.6.1–5).
 
 ---
 
