@@ -5034,13 +5034,28 @@ export function activate(context: vscode.ExtensionContext): void {
       const provider = await tryAuthenticatedProvider(registry);
       if (!provider) return;
       const gc = await globalConfig.load();
+      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
+      const retentionDays = cfg.get<number>("snapshotRetentionDays", 180);
+      const maxPerWorkspace = cfg.get<number>("maxSnapshotsPerWorkspace", 20);
+      const { createWorkspaceSnapshot, listWorkspaceSnapshots, deleteWorkspaceSnapshot } =
+        await import("./core/snapshotsEngine.js");
+      const { planSnapshotRetention } = await import("./core/snapshotRetentionPlan.js");
       for (const aw of wc.activeWorkspaces) {
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         try {
-          const { createWorkspaceSnapshot } = await import("./core/snapshotsEngine.js");
           await createWorkspaceSnapshot(provider, folderRoot, aw.workspaceId, `auto-${stamp}`, gc.machineName);
         } catch {
           /* non-fatal — surfaces in next manual snapshot */
+          continue;
+        }
+        try {
+          const snapshots = await listWorkspaceSnapshots(provider, aw.workspaceId);
+          const plan = planSnapshotRetention({ snapshots, retentionDays, maxPerWorkspace });
+          for (const s of plan.delete) {
+            await deleteWorkspaceSnapshot(provider, aw.workspaceId, s.name);
+          }
+        } catch {
+          /* retention is best-effort — never fail the snapshot itself */
         }
       }
     },

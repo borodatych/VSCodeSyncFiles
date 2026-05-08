@@ -6,7 +6,7 @@
 
 ## Производительность / автоматизация
 
-- [~] **Scheduled Snapshots (cron-like)** — `src/ui/scheduledSnapshots.ts`. Setting `vscodesync.snapshotSchedule` поддерживает `daily HH:MM` и `weekly DOW HH:MM`. Polling 5 min. Pure retention planner `src/core/snapshotRetentionPlan.ts:planSnapshotRetention(input)` готов: age sweep + count cap, system-tier (`auto-` / `pre-migration-`) исключены из count rule. 13 unit-тестов. Engine wiring (вызов после `createWorkspaceSnapshot` + iterate `delete` через `deleteWorkspaceSnapshot`) остаётся.
+- [x] **Scheduled Snapshots (cron-like)** — `src/ui/scheduledSnapshots.ts`. Setting `vscodesync.snapshotSchedule` поддерживает `daily HH:MM` и `weekly DOW HH:MM`. Polling 5 min. Pure retention planner `src/core/snapshotRetentionPlan.ts:planSnapshotRetention(input)` (age sweep + count cap, system-tier `auto-` / `pre-migration-` исключены из count rule, 13 unit-тестов) подключён в `extension.ts:5031` сразу после `createWorkspaceSnapshot` per-workspace. Best-effort: ошибка retention не валит сам снапшот.
 - [x] **Watch Mode: EWMA-предиктор окна** — `src/ui/watchModePoller.ts`. EWMA (α=0.3) считается по `onDidSaveTextDocument`; в idle scaling множитель 4× вместо 2×, если EWMA > 3× currentMs. На любой save — мгновенный возврат к baseMs.
 - [x] **Self-healing manifest** — `parseManifestSafe()` в `syncEngine.ts`: при JSON / shape error вызывает `onCorruptManifest` callback, UI предлагает Repair State. `null`-возврат заставляет верхний уровень обработать как «manifest gone».
 - [x] **Health Check автореп раз в 7 дней** — `src/ui/healthAutoCheck.ts`. Запускается через 60 с после activate, читает `vscodesync.health.lastCheckMs` из globalState, тихий на зелёном, toast при наличии `⚠`-строк.
