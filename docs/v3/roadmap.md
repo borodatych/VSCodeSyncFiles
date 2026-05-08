@@ -66,7 +66,7 @@ work account для рабочего workspace, personal для личного.
 - [x] Pure planner `src/core/keyRotationPlan.ts` — `planKeyRotation(items, { maxBytesPerBatch?, maxFilesPerBatch? })` с детерминированной сортировкой `(workspaceId, relPath)` и пропуском `done: true`. 3 unit-теста.
 - [ ] UI команда `vscodesync.rotateEncryptionKey` (skeleton — пока зарегистрирована в `package.json`, привязка к engine остаётся).
 - [x] Resumable: `MetaJson.rotationInProgress: { fromKeyId, toKeyId, completed[], startedAt, initiatedByMachineId }` объявлен в `cloudLayout.ts`. Forward-compat — старые readers игнорируют.
-- [ ] Multi-machine key sync через `_keyrotation/{rotationId}.json` (skeleton).
+- [x] Multi-machine key sync transport — `src/core/keyRotationTransport.ts` определяет `KeyRotationTransportEnvelope` shape (v=1, rotationId, fromKeyId, toKeyId, createdAt, encryptedBlobB64+ivB64+authTagB64). `buildKeyRotationTransport()` + `decodeKeyRotationTransport()` strict-decoder с stale-rejection (default 30 days). `cloudPathForKeyRotation(rotationId)` возвращает `_keyrotation/{id}.json`. 9 unit-тестов. Engine wiring (вычитка envelope при старте machine, расшифровка через old KEK, swap SecretStorage) — следующая итерация.
 
 ---
 
