@@ -44,7 +44,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.1.5. Lifecycle и health
 
-- [~] Heartbeat tick API готов (`onHeartbeatReceived` / `onHeartbeatTick`) — фактический wire `sendFrame("ping", ...)` ждёт регистрации `ping` в P2P_FRAME_TYPE и обвязки в `wrapAuthenticated`.
+- [x] Heartbeat tick API готов (`onHeartbeatReceived` / `onHeartbeatTick`). `ping` (5) и `pong` (6) зарегистрированы в `P2P_FRAME_TYPE` (`src/core/p2pCryptoEnvelope.ts`) — `wrapAuthenticated.sendFrame("ping", ...)` теперь работает без обвязки. Pure helpers `buildHeartbeatPing(nowMs)` / `buildHeartbeatPong(receivedPing, nowMs)` / `decodeHeartbeatPing(buf)` / `decodeHeartbeatPong(buf)` / `computeHeartbeatRtt(pong, nowMs)` в `src/core/p2pHeartbeatFrames.ts`. Wire format `{ v: 1, sentAtMs, [peerAtMs] }` round-trips для RTT measurement и относительного clock-drift. Strict-decoder rejection paths: `bad_json` / `missing_field` / `bad_field` / `bad_version`. 14 unit-тестов на сами фреймы + 2 round-trip теста через `encodeP2PFrame`/`decodeP2PFrame`.
 - [x] Reconnect-on-failure: `src/core/p2pSessionStateMachine.ts` — discriminated-union state machine с exponential backoff (1 s / 2 s / 4 s … cap 30 s, max 5 attempts), события `p2p_session_*` для activity log. 11 unit-тестов.
 - [x] Activity log: эмитит события `p2p_session_started / connected / heartbeat_received / heartbeat_lost / reconnect_scheduled / reconnect_giveup / ended` через `events[]`. UI слой подхватит и запишет в `activity.json`.
 

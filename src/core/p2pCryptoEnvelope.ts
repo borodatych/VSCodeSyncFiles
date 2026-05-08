@@ -29,6 +29,8 @@ export const P2P_FRAME_TYPE = {
   manifest: 2,
   ack: 3,
   bye: 4,
+  ping: 5,
+  pong: 6,
 } as const;
 
 export type P2PFrameTypeName = keyof typeof P2P_FRAME_TYPE;
