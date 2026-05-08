@@ -167,7 +167,7 @@ AI-review summary каждого файла перед apply.
 **Что:**
 - [x] Track `gitBranch` в `_meta.json` — уже есть.
 - [x] Pure helper `src/core/gitHeadCompare.ts` — `parseGitHead(content)` (branch / detached / unparseable) + `compareGitBranches(localHead, cloudBranch)` с verdicts (match / diverged / local_detached / cloud_unset / local_unparseable) + `describeBranchVerdict(v)` для toast. 9 unit-тестов.
-- [ ] Опциональный `git fetch` после pull (skeleton — engine hook).
+- [~] Pure decision helper `src/core/branchMismatchPlanner.ts` — `planBranchMismatchAction({ verdict, autoFetchOnMatch, localDirty })` возвращает `{ action: noop | warn_toast | offer_fetch | auto_fetch, message? }`. Уважает `vscodesync.gitBranchAutoSync` setting. 7 unit-тестов. Engine hook (`vscode.window.showWarningMessage` + `child_process.spawn('git', ['fetch'])`) остаётся.
 
 ---
 

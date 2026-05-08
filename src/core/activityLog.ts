@@ -15,7 +15,21 @@ export type ActivityKind =
   | "remove"
   | "resolve_keep_mine"
   | "resolve_take_theirs"
-  | "hash_migration";
+  | "hash_migration"
+  // v3 events emitted by future engine wiring; pre-registered so the
+  // pure planners (v3.B/D/I/K/L) can reference these kinds without a
+  // schema bump later. Forward-compat: old activity-log readers tolerate
+  // unknown kinds (they render as raw strings).
+  | "branch_mismatch_detected"
+  | "key_rotation_started"
+  | "key_rotation_completed"
+  | "key_rotation_resumed"
+  | "backup_verified"
+  | "backup_drift_detected"
+  | "quota_warning"
+  | "quota_critical"
+  | "quota_auto_pause"
+  | "share_link_used";
 
 /** Payload recorded by SyncEngine or extension UI (before id/timestamp). */
 export interface ActivityEventInput {
