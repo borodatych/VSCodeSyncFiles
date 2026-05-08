@@ -4,6 +4,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { hasArchivedTag, newestTrackedLastSyncMs } from "../utils/workspaceLastActivity.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
+import { findInactiveWorkspaceCandidates } from "../core/inactiveWorkspaceCandidates.js";
 
 const SNOOZE_STATE_KEY = "vscodesync.inactiveWorkspaceArchiveSnooze";
 const SNOOZE_DAYS = 7;
@@ -34,18 +35,6 @@ function snoozeKey(folderRootFsPath: string, workspaceId: string): string {
   return `${folderRootFsPath}\u0000${workspaceId}`;
 }
 
-function isSnoozeActive(map: Record<string, string>, key: string): boolean {
-  const v = map[key];
-  if (v === NEVER_REMIND) {
-    return true;
-  }
-  if (!v) {
-    return false;
-  }
-  const t = Date.parse(v);
-  return Number.isFinite(t) && Date.now() < t;
-}
-
 export interface WorkspaceInactiveArchiveDeps {
   startupChannel: vscode.OutputChannel;
   globalConfig: GlobalConfigManager;
@@ -60,13 +49,6 @@ export interface WorkspaceInactiveArchiveDeps {
     workspaceId: string;
     workspaceNote: string;
   }) => Promise<void>;
-}
-
-interface Candidate {
-  folderRootFsPath: string;
-  workspaceId: string;
-  workspaceNote: string;
-  inactiveDays: number;
 }
 
 export function scheduleWorkspaceInactiveArchivePrompt(context: vscode.ExtensionContext, deps: WorkspaceInactiveArchiveDeps): void {
@@ -105,42 +87,29 @@ async function runInactiveScan(_context: vscode.ExtensionContext, deps: Workspac
     return;
   }
 
-  const candidates: Candidate[] = [];
   const snooze = snoozeMap(deps.extensionContext);
-
+  const folderInputs = [];
   for (const folder of folders) {
     const root = folder.uri.fsPath;
     const wc = await deps.loadWorkspaceConfig(root);
-    for (const ent of wc.activeWorkspaces) {
-      if (hasArchivedTag(ent.tags)) {
-        continue;
-      }
-      const st = normalizeWorkspaceSyncState(ent);
-      if (st !== "active") {
-        continue;
-      }
-      const newest = newestTrackedLastSyncMs(wc, ent.workspaceId);
-      if (newest === undefined) {
-        continue;
-      }
-      const inactiveDays = (Date.now() - newest) / DAY_MS;
-      if (inactiveDays <= threshold) {
-        continue;
-      }
-      const sk = snoozeKey(root, ent.workspaceId);
-      if (isSnoozeActive(snooze, sk)) {
-        continue;
-      }
-      candidates.push({
-        folderRootFsPath: root,
+    folderInputs.push({
+      folderRootFsPath: root,
+      workspaces: wc.activeWorkspaces.map((ent) => ({
         workspaceId: ent.workspaceId,
         workspaceNote: ent.workspaceNote,
-        inactiveDays,
-      });
-    }
+        archived: hasArchivedTag(ent.tags),
+        active: normalizeWorkspaceSyncState(ent) === "active",
+        lastSyncMs: newestTrackedLastSyncMs(wc, ent.workspaceId),
+      })),
+    });
   }
-
-  candidates.sort((a, b) => b.inactiveDays - a.inactiveDays);
+  // Original behaviour: candidate when inactiveDays > threshold (strict). The
+  // pure helper uses inclusive `>=`, so we post-filter the boundary day.
+  const candidates = findInactiveWorkspaceCandidates({
+    folders: folderInputs,
+    minInactiveDays: threshold,
+    snoozes: snooze,
+  }).filter((c) => c.inactiveDays > threshold);
 
   for (const c of candidates) {
     const note = c.workspaceNote.trim() || c.workspaceId;
