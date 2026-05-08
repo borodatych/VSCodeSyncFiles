@@ -104,7 +104,7 @@ add files один за другим.
 с per-hunk переключателями.
 
 **Что:**
-- [ ] Webview `src/ui/visualMergerPanel.ts` (skeleton — pure planner ready, UI рендер deferred).
+- [~] Webview `src/ui/visualMergerPanel.ts` — pure HTML рендерер `renderVisualMergerHtml(hunks, { choices?, title? })` готов в `src/core/visualMergerHtml.ts` (3-pane layout с per-conflict radio buttons + theme tokens, escape против XSS, 9 unit-тестов). Webview controller (`registerWebviewPanel` + onDidReceiveMessage) остаётся.
 - [x] Pure planner `src/core/visualMergePlan.ts` — `buildMergePlan(base, local, cloud)` возвращает `{ hunks, conflictCount }` (kinds: clean / conflict / addition_local|cloud / deletion_local|cloud). `applyHunkChoices(hunks, choices, customMerged?)` материализует результат. 8 unit-тестов.
 - [ ] Команда `vscodesync.openVisualMerger` — skeleton (pure planner ready).
 
