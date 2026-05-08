@@ -8,6 +8,23 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-08
+
+Maintenance-релиз: wiring двух уже-готовых pure helper'ов в реальные UI-точки + накопленные за итерации `/roadmap-max` рефакторинги.
+
+### Changed
+- **Workspace lifecycle** — 4 команды (`suspendWorkspace` / `resumeWorkspace` / `freezeWorkspace` / `unfreezeWorkspace`) теперь используют единый `transitionWorkspaceSyncState` (state machine) через helper `validateWorkspaceTransition`. Inline-проверки `normalizeWorkspaceSyncState !== "X" || hasArchivedTag` заменены на централизованную валидацию. Отказы маппятся через `mapTransitionRejection(action, reason)` в ru-сообщения.
+- **Onboarding wizard** — `vscodesync.startOnboarding` теперь использует `planOnboardingWizard` для skip-decisions: уже-настроенные шаги (провайдер / auth-токен / имя машины / подключённый workspace) пропускаются. При повторном запуске для уже-настроенного user'а показывается info-toast «VSCodeSync уже настроен» вместо прогона всех 4 шагов. В финальном toast'е перечисляются пропущенные шаги.
+- **Snapshot retention manual flow** — pure planner `planSnapshotRetention` теперь подключён в manual `vscodesync.createSnapshot` (раньше работал только в scheduled пути). Workspace больше не накапливает снапшоты бесконечно через ручную команду.
+
+### Fixed
+- **Workspace state machine semantic** — `frozen.unfreeze` теперь резолвится напрямую в `active` (было `suspended`). Реальный flow `unfreeze` вызывает `repairLocalStateFromCloud` + `syncWorkspace`, оба заблокированы guard'ом `canSyncFromWorkspace` если destination = `suspended`. State machine была рассинхронизирована с UX.
+
+### Internal
+- 100+ коммитов после `v0.5.0`: `snoozeStore` консолидация в 3 UI-flow (machine approval, smart workspace suggestions, inactive archive); `findInactiveWorkspaceCandidates` дедуп между 2 UI-точками; webhook decoder + renew-tick wiring в OneDrive / Google Drive; `evaluateLongAbsence` + `planLocalBackupRetention` подключены в startup loop / pruneLocalBackups; cross-cutting pure helpers (P2P / passkey / tunnel / queue formatter / suspend state machine).
+- Test count: **1604** unit-тестов (+77 новых test-файлов после `v0.5.0`).
+- LoC дубликатов: -200+ через консолидацию через pure helpers.
+
 ## [0.5.0] — 2026-05-08
 
 Большая функциональная волна за 9 проходов /roadmap-max: закрыты все
