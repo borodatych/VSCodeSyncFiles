@@ -85,7 +85,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.2.6. Tests + telemetry
 
 - [x] Unit-тесты на envelope wrap/unwrap — `src/core/passkeyEnvelopeWrap.ts` с инжекцией `DeriveKekFn(credentialId, salt) → Uint8Array`. AES-256-GCM, authTag append к ciphertext (без расширения `KeyEnvelope` shape). 5 unit-тестов с deterministic mock derive: round-trip, auth_failure при mismatched derive, shape rejection.
-- [ ] Telemetry: track WebAuthn failure reasons — skeleton (нет реальной auth surface).
+- [~] Telemetry: track WebAuthn failure reasons — pure event-shape `PasskeyTelemetryEvent` (discriminated union: enroll_success / enroll_failure / unlock_success / unlock_failure / removal / recovery_code_used / passphrase_fallback_used) + `toUsagePayload(event)` → `{ name, data }` готовы в `src/core/passkeyTelemetryEvents.ts`. Sanitiser: failure-reason taxonomy с fallback `"unknown"` — никогда не сериализуется raw exception text; clamp counters; PII (credential id, raw UA) недоступна по типу. 14 unit-тестов. Wire через существующий `vscode.TelemetryLogger.logUsage` остаётся.
 
 ---
 
