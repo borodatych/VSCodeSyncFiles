@@ -20,10 +20,9 @@ import {
 } from "./webhookChannelCoordinator.js";
 import { createAndStartSmeeRelay, type SmeeRelay } from "./webhookTunnel.js";
 import {
-  isNearOrPastExpiration,
   reconcileSubscription,
-  SUBSCRIPTION_RENEW_SLACK_MS,
 } from "./webhookExpirationMath.js";
+import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "onedrive-graph-subscription.json";
@@ -241,26 +240,23 @@ export function registerOneDriveWebhookLifecycle(
 
     const renewTick = async (): Promise<void> => {
       const s = await readState(globalConfig);
-      if (!s) {
-        return;
-      }
       const cfgInner = vscode.workspace.getConfiguration(CFG);
-      if (!cfgInner.get<boolean>("webhooks.enabled", false)) {
-        return;
-      }
       const gci = await globalConfig.load();
-      if (gci.activeProvider !== "onedrive") {
-        return;
-      }
-      if (!isNearOrPastExpiration(s.expirationDateTime, SUBSCRIPTION_RENEW_SLACK_MS)) {
-        return;
-      }
       const b = await readOneDriveTokenBundle(secrets);
-      if (!b?.accessToken) {
+      const decision = decideWebhookRenewTick({
+        state: s ? { subscriptionId: s.subscriptionId, expirationDateTime: s.expirationDateTime } : null,
+        webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
+        activeProviderMatches: gci.activeProvider === "onedrive",
+        hasToken: Boolean(b?.accessToken),
+      });
+      if (decision.kind !== "renew_now") {
+        return;
+      }
+      if (!s || !b?.accessToken) {
         return;
       }
       try {
-        const newExp = await graphRenewSubscription(b.accessToken, s.subscriptionId);
+        const newExp = await graphRenewSubscription(b.accessToken, decision.subscriptionId);
         await writeState(globalConfig, { ...s, expirationDateTime: newExp });
         log(out, `Subscription renewed until ${newExp}.`);
       } catch (e) {
