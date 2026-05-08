@@ -133,10 +133,10 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.4.2. Cloudflared spawn
 
-- [~] **`tunnelBackendCloudflared.open` real impl:** pure URL-scrape ready (`src/core/tunnelUrlScrape.ts:scrapeTunnelUrl(buf, "cloudflared")` + `isValidTunnelUrl`); spawn-watchdog wiring остаётся (нет binary на dev-машине).
+- [~] **`tunnelBackendCloudflared.open` real impl:** pure URL-scrape ready (`src/core/tunnelUrlScrape.ts:scrapeTunnelUrl(buf, "cloudflared")` + `isValidTunnelUrl`); pure spawn watchdog state machine ready (`src/core/tunnelSpawnWatchdog.ts:createTunnelSpawnWatchdog`); spawn-обвязка остаётся (нет binary на dev-машине).
   - Spawn `cloudflared tunnel --url http://localhost:<port> --no-autoupdate --metrics 127.0.0.1:0`.
   - Scrape stderr на regex `https://[a-z0-9-]+\.trycloudflare\.com`. Timeout 30 с.
-  - Watchdog: процесс умер → respawn до 3 раз с exponential backoff. После — `not_available` + alert.
+  - Watchdog: discriminated-union state machine `idle → spawning → up → respawning → giveup`, exponential backoff (1 s / 2 s / 4 s … cap 30 s, max 3 attempts по-умолчанию), failure reasons `process_exit | url_timeout | spawn_failed`. 15 unit-тестов. Реальная обвязка `child_process.spawn` остаётся.
 - [x] Тесты на pure scrape логику (`tests/unit/tunnelUrlScrape.test.ts`, 9 тестов с real-world stderr/stdout fixtures без spawn). Полный smoke с fake spawn остаётся (нужен mock `child_process.spawn` который завершит через event-loop tick).
 
 ### v2.4.3. Tailscale spawn
