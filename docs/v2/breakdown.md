@@ -84,7 +84,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.2.5. Settings UI
 
-- [ ] **`vscodesync.showPasskeySettings`** — webview со списком enrolled devices (date, device name from user-agent), действия: rename, remove, regenerate recovery codes.
+- [~] **`vscodesync.showPasskeySettings`** — pure formatter `renderPasskeyDevicesHtml(devices, { formatDate?, title?, styleNonce? })` готов в `src/core/passkeyDevicesFormatter.ts`. Renders device list (sorted by enrolledAtMs desc, "never" placeholder для unused devices, action buttons rename/remove с `data-action` / `data-id`). XSS-safe (every interpolation через `escapeHtml`). `parseDeviceUserAgent(uaString)` — heuristic для derive friendly label "Chrome 124 on macOS 14.2" (Edge before Chrome detection, Safari/iOS/Android/Linux/Windows + macOS supported, fallback "Unknown device"). 13 unit-тестов. Webview controller + onDidReceiveMessage обвязка остаётся.
 
 ### v2.2.6. Tests + telemetry
 
