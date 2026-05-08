@@ -143,7 +143,7 @@ AI-review summary каждого файла перед apply.
 **Что:**
 - [x] Конфиг-файл `.vscodesync-strategy` parser в `src/core/perFolderSyncStrategy.ts` — `parseStrategyFile(text)` + `resolveStrategy(relPath, rules)`. Strategies: `never | local-only | p2p-only | cloud`. First-matching-rule-wins, default fallback `cloud`. 8 unit-тестов.
 - [ ] Hook в `pushFile` / `pullFile` (skeleton — нужна обвязка к engine).
-- [ ] UI команда `vscodesync.editStrategy` — skeleton (открыть файл template).
+- [~] UI команда `vscodesync.editStrategy` — pure template renderer `renderStrategyFileTemplate()` готов в `src/core/perFolderStrategyTemplate.ts` (4-strategy cheatsheet + commented-out examples). Pre-save planner `planStrategyImpact(trackedRelPaths, rules, { sampleLimit? })` возвращает 4 buckets (`never` / `local-only` / `p2p-only` / `cloud`) + `noLongerSyncing` count, `scoreStrategyImpact(report)` severity ladder (`noop` / `info` / `warn` / `danger`: 10+ never-files OR ≥ 50% off-cloud). 11 unit-тестов. UI обвязка остаётся.
 
 ---
 
