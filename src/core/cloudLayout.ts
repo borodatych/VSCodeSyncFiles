@@ -70,6 +70,14 @@ export interface MachineEntry {
   machineName: string;
   lastSeen: string;
   status?: "active" | "pending" | "blocked";
+  /**
+   * v2.9.1 Smart Conflict Prediction: which file (if any) this machine has
+   * had focused for the last `sinceMs`. Optional — old readers ignore.
+   * `relPath` may be the literal POSIX-relative path, or, when the user
+   * opted into anonymise, a `sha256(relPath).slice(0, 8)` token (caller
+   * decides; this module only carries the field).
+   */
+  currentEditing?: { workspaceId: string; relPath: string; sinceMs: number } | null;
 }
 
 export interface MetaJson {

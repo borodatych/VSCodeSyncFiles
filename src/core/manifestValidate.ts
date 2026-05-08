@@ -32,6 +32,15 @@ function validateMachine(m: unknown, ix: number): ValidationResult {
   if (!isStr(e.machineId)) return fail(`machines[${String(ix)}].machineId not string`);
   if (!isStr(e.machineName)) return fail(`machines[${String(ix)}].machineName not string`);
   if (!isStr(e.lastSeen)) return fail(`machines[${String(ix)}].lastSeen not string`);
+  // currentEditing is optional. Accept null (idle) or a valid object; reject
+  // anything else (defensive — old machines that wrote garbage shouldn't pass).
+  if (e.currentEditing !== undefined && e.currentEditing !== null) {
+    const ce = e.currentEditing;
+    if (typeof ce !== "object") return fail(`machines[${String(ix)}].currentEditing not object`);
+    if (!isStr(ce.workspaceId)) return fail(`machines[${String(ix)}].currentEditing.workspaceId not string`);
+    if (!isStr(ce.relPath)) return fail(`machines[${String(ix)}].currentEditing.relPath not string`);
+    if (!isNum(ce.sinceMs)) return fail(`machines[${String(ix)}].currentEditing.sinceMs not finite number`);
+  }
   return { ok: true };
 }
 

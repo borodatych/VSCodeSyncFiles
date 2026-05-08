@@ -207,28 +207,26 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.9.1. _machines.json schema extension
 
-- [ ] **Расширить `MachineEntry`:** optional `currentEditing: { workspaceId: string; relPath: string; sinceMs: number } | null`. Forward-compat: старые readers игнорируют поле.
-- [ ] Schema validator в `manifestValidate.ts` принимает оба shape.
+- [x] **Расширил `MachineEntry`:** optional `currentEditing: { workspaceId, relPath, sinceMs } | null` в `cloudLayout.ts`. Forward-compat — старые readers игнорируют поле.
+- [x] Schema validator в `manifestValidate.ts` accepts both shapes — `undefined` / `null` / валидный объект, отвергает мусор.
 
 ### v2.9.2. Heartbeat propagation
 
-- [ ] **`src/ui/presenceHeartbeat.ts` extension:** в каждом tick читать `vscode.window.activeTextEditor` → если файл tracked → resolve workspaceId → write в `currentEditing`. Если activeEditor нет → write `null`.
-- [ ] Throttle: не writes чаще 1× в 30 с независимо от частоты heartbeat.
+- [x] Pure helpers в `src/core/presenceCurrentEditing.ts`: `buildCurrentEditingFrame({ workspaceId, relPath, nowMs, mode })`, `shouldBroadcastCurrentEditing({ last, next, nowMs, throttleMs? })` (throttle 30 s по-умолчанию). Обвязка к `presenceHeartbeat.ts` (read activeTextEditor) — следующая итерация.
 
 ### v2.9.3. Reader
 
-- [ ] **`SmartConflictPredictionService` reader:** дополнительно к существующему `cfg.files[].editingBy`, читать `_machines.json` через provider раз в 60 с (cached). Объединить с soft-lock записями.
-- [ ] Fall-through: если `_machines.json` недоступен (network) → существующий soft-lock fallback.
+- [x] `scorePresenceRisk({ myWorkspaceId, myRelPath, myAnonymised?, peerCurrentEditing })` — pure scorer, returns 0..1. Полная обвязка `SmartConflictPredictionService` к чтению `_machines.json` каждые 60 с — следующая итерация (нужен ICloudProvider injection).
 
 ### v2.9.4. Privacy
 
-- [ ] **Setting** `vscodesync.smartConflictPrediction.broadcastCurrentEditing` (default `true`) — opt-out для пользователей, которые не хотят броадкастить какой файл они открыли.
-- [ ] **Anonymise** option: вместо relPath публиковать `workspaceId + sha256(relPath).slice(0,8)` — другие peers видят «alpha editing some-file», но не путь.
+- [x] **Setting** `vscodesync.smartConflictPrediction.broadcastCurrentEditing` — `"full" | "anonymised" | "off"` (default `"full"`). Описание + RU локализация.
+- [x] **Anonymise** option реализован в `buildCurrentEditingFrame` — режим `"anonymised"` пишет `sha256(relPath).slice(0,8)`. Peer-side `scorePresenceRisk` принимает опциональный `myAnonymised` для сравнения.
 
 ### v2.9.5. UX polish
 
-- [ ] **Auto-dismiss:** когда другой machine закрывает файл (sees `currentEditing = null`) — статус-бар скрывается через 60 с (cache TTL).
-- [ ] **Pre-save warning:** при `onWillSaveTextDocument` → если risk score > 0.6 → modal «alpha сейчас редактирует. Сохранить всё равно?». Cancel → отменить save.
+- [ ] **Auto-dismiss:** TTL для cached presence — следующая итерация (engine-side timer).
+- [ ] **Pre-save warning:** `scorePresenceRisk > 0.6` → modal на `onWillSaveTextDocument`. Pure scorer ready; обвязка остаётся.
 
 ---
 
