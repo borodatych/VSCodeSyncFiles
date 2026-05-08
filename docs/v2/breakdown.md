@@ -29,7 +29,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.1.3. UI команда «Start P2P session»
 
 - [~] **`vscodesync.startP2PSession`** — pure step planner `planP2PSessionWizard({ role, onlinePeerCount, activeSessionCount, forceQrTransport?, cloudSignalingWritable?, estimatedSignalingPayloadBytes?, qrChunkLimitBytes? })` готов в `src/core/p2pSessionWizardSteps.ts`. Возвращает `{ role, transport: 'cloud' | 'qr', steps[], warnings[] }`. Inviter cloud: 6 шагов (pick_role → pick_target_machine → generate_offer → wait_for_answer → ice_exchange → connection_established). Invitee cloud: 5 шагов (pick_role → pick_active_session → generate_answer → ice_exchange → connection_established). QR variants для air-gapped pair (forceQrTransport=true OR cloudSignalingWritable=false). Abort flow при `onlinePeerCount=0` (inviter) / `activeSessionCount=0` (invitee). Warnings: `no_online_peers` / `no_active_invites` / `qr_oversized_payload` / `transport_fallback_to_qr`. 10 unit-тестов.
-- [ ] Status-bar widget: «$(broadcast) P2P: 1 peer (alpha)». Click → quick disconnect.
+- [~] Status-bar widget: «$(broadcast) P2P: 1 peer (alpha)». Click → quick disconnect. Pure formatter `formatP2PStatusBar(snapshot, { commandId?, now? })` готов в `src/core/p2pStatusBarFormatter.ts`. Severity ladder: `ok` ($(broadcast), connected) / `warn` ($(sync~spin), connecting/reconnecting) / `error` ($(error), disconnected) / `off` (idle/undefined). Tooltip — markdown с transport (cloud/QR) / peer label / uptime / последний heartbeat / attempt + next delay. 15 unit-тестов. `vscode.window.createStatusBarItem` обвязка остаётся.
 - [ ] Auto-disconnect на 5 минут idle.
 
 ### v2.1.4. Файловая передача через P2P
