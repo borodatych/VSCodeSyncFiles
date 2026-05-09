@@ -15,6 +15,7 @@
  * surface a "not yet implemented" message so the wiring is honest.
  */
 import * as vscode from "vscode";
+import { randomBytes } from "node:crypto";
 import {
   findCredentialById,
   orderForDisplay,
@@ -33,6 +34,7 @@ import {
 } from "../core/passkeyTelemetryEvents.js";
 import { PasskeyRegistryStorage } from "./passkeyRegistryStorage.js";
 import { logSanitisedUsage } from "../telemetry/extensionTelemetry.js";
+import { runWebAuthnEnroll, runWebAuthnUnlock } from "./webauthnWebview.js";
 
 function logPasskeyTelemetry(event: PasskeyTelemetryEvent): void {
   const payload = toUsagePayload(event);
@@ -42,6 +44,11 @@ function logPasskeyTelemetry(event: PasskeyTelemetryEvent): void {
 const SHOW_COMMAND = "vscodesync.showPasskeySettings";
 const REMOVE_COMMAND = "vscodesync.removePasskey";
 const FALLBACK_COMMAND = "vscodesync.passkeyFallback";
+const ENROLL_COMMAND = "vscodesync.enrollPasskey";
+const UNLOCK_COMMAND = "vscodesync.unlockWithPasskey";
+
+const RP_ID = "vscodesync.local";
+const RP_NAME = "VSCodeSync";
 
 export interface PasskeyCommandsDeps {
   context: vscode.ExtensionContext;
@@ -55,7 +62,113 @@ export function registerPasskeyCommands(deps: PasskeyCommandsDeps): vscode.Dispo
     vscode.commands.registerCommand(SHOW_COMMAND, () => runShowPasskeySettings(context, storage)),
     vscode.commands.registerCommand(REMOVE_COMMAND, () => runRemovePasskey(storage)),
     vscode.commands.registerCommand(FALLBACK_COMMAND, () => runPassphraseFallback()),
+    vscode.commands.registerCommand(ENROLL_COMMAND, () => runEnrollPasskey(storage)),
+    vscode.commands.registerCommand(UNLOCK_COMMAND, () => runUnlockWithPasskey(storage)),
   ];
+}
+
+async function runEnrollPasskey(storage: PasskeyRegistryStorage): Promise<void> {
+  const displayName = await vscode.window.showInputBox({
+    prompt: "Имя для нового passkey (например: «MacBook Touch ID», «YubiKey»)",
+    placeHolder: "VSCodeSync · enroll passkey",
+    validateInput: (v: string) => (v.trim().length === 0 ? "Имя не может быть пустым" : undefined),
+  });
+  if (displayName === undefined) return;
+
+  const userIdB64Url = bytesToB64Url(randomBytes(16));
+  const challengeHex = randomBytes(32).toString("hex");
+  const prfSaltHex = randomBytes(32).toString("hex");
+
+  const result = await runWebAuthnEnroll({
+    rpId: RP_ID,
+    rpName: RP_NAME,
+    userIdB64Url,
+    userName: "vscodesync-user",
+    displayName: displayName.trim(),
+    challengeHex,
+    prfSaltHex,
+  });
+  if (!result.ok) {
+    await vscode.window.showWarningMessage(`VSCodeSync: enroll passkey не выполнен (${result.reason}).`);
+    return;
+  }
+
+  const registry = await storage.load();
+  const updated = upsertCredential(registry, {
+    id: result.credentialIdB64Url,
+    displayName: displayName.trim(),
+    userAgent: process.platform,
+    enrolledAtMs: Date.now(),
+    lastUsedAtMs: null,
+  });
+  await storage.save(updated);
+
+  logPasskeyTelemetry({
+    kind: "enroll_success",
+    credentialCount: updated.entries.length,
+    browser: "Other",
+    os: "Other",
+  });
+
+  const prfNote = result.prfB64Url
+    ? "PRF extension активна — KEK будет производным от PRF при unlock."
+    : "PRF extension недоступна (authenticator не поддерживает) — fallback на credential id.";
+  await vscode.window.showInformationMessage(`VSCodeSync: passkey добавлен. ${prfNote}`);
+}
+
+async function runUnlockWithPasskey(storage: PasskeyRegistryStorage): Promise<void> {
+  const registry = await storage.load();
+  if (registry.entries.length === 0) {
+    await vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkeys. Запустите Enroll passkey.");
+    return;
+  }
+
+  const ordered = orderForDisplay(registry.entries, registry.primaryId);
+  const picked = await vscode.window.showQuickPick(
+    ordered.map((d) => ({
+      label: d.displayName,
+      description: d.id.slice(0, 12) + "…",
+      detail: d.lastUsedAtMs ? `last used ${new Date(d.lastUsedAtMs).toISOString()}` : "never used",
+      id: d.id,
+    })),
+    { placeHolder: "Выберите passkey для unlock" },
+  );
+  if (!picked) return;
+
+  const challengeHex = randomBytes(32).toString("hex");
+  const prfSaltHex = randomBytes(32).toString("hex");
+  const result = await runWebAuthnUnlock({
+    rpId: RP_ID,
+    credentialIdB64Url: picked.id,
+    challengeHex,
+    prfSaltHex,
+  });
+  if (!result.ok) {
+    await vscode.window.showWarningMessage(`VSCodeSync: unlock не выполнен (${result.reason}).`);
+    return;
+  }
+
+  // Touch lastUsedAtMs.
+  const cred = findCredentialById(registry, result.credentialIdB64Url);
+  if (cred) {
+    const updated = upsertCredential(registry, { ...cred, lastUsedAtMs: Date.now() });
+    await storage.save(updated);
+  }
+
+  logPasskeyTelemetry({
+    kind: "unlock_success",
+    credentialCount: registry.entries.length,
+    latencyMs: null,
+  });
+
+  const prfNote = result.prfB64Url
+    ? "PRF получен — KEK derivation готов к привязке к envelope (DEK wrap pending)."
+    : "PRF недоступен — fallback flow до integration с DEK envelope.";
+  await vscode.window.showInformationMessage(`VSCodeSync: passkey ceremony OK. ${prfNote}`);
+}
+
+function bytesToB64Url(b: Buffer): string {
+  return b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 async function runShowPasskeySettings(

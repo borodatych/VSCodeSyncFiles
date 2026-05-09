@@ -137,6 +137,8 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.startP2PSession",
   "vscodesync.disconnectP2PSession",
   "vscodesync.showPasskeySettings",
+  "vscodesync.enrollPasskey",
+  "vscodesync.unlockWithPasskey",
   "vscodesync.removePasskey",
   "vscodesync.passkeyFallback",
   "vscodesync.exportConflictsToSarif",

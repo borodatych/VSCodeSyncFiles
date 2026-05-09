@@ -114,7 +114,30 @@ export class KeyEnvelopeNotImplementedError extends Error {
   }
 }
 
-/** Skeleton: would PRF-derive a KEK from a registered WebAuthn credential. */
-export function deriveWebauthnKek(_credentialId: string): never {
-  throw new KeyEnvelopeNotImplementedError("WebAuthn KEK derivation not implemented");
+/**
+ * v2.2.1 — derive a 32-byte KEK from the PRF extension output returned by
+ * the authenticator. The PRF result is already 32 bytes of pseudo-random
+ * material bound to the credential, so we just ingest it through HKDF with
+ * a salt tied to the envelope to support multi-DEK scenarios.
+ *
+ * `prfOutput` must be the raw 32-byte PRF.eval.first result. `salt` should
+ * be the random-per-envelope salt (re-used between enroll and unlock).
+ *
+ * No vscode import — pure node:crypto path. Browser builds get the same
+ * surface via subtle.deriveKey wiring (out of scope for this module).
+ */
+export function deriveWebauthnKek(
+  prfOutput: Uint8Array,
+  salt: Uint8Array,
+  info: Uint8Array = new TextEncoder().encode("vscodesync-webauthn-kek-v1"),
+): Uint8Array {
+  if (prfOutput.length < 32) {
+    throw new Error(`webauthn PRF output too short (${String(prfOutput.length)} < 32 bytes)`);
+  }
+  // HKDF: extract → expand. Single-block expand suffices for 32-byte output.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const crypto = require("node:crypto") as typeof import("node:crypto");
+  const prk = crypto.createHmac("sha256", Buffer.from(salt)).update(Buffer.from(prfOutput)).digest();
+  const t1 = crypto.createHmac("sha256", prk).update(Buffer.concat([Buffer.from(info), Buffer.from([0x01])])).digest();
+  return new Uint8Array(t1);
 }

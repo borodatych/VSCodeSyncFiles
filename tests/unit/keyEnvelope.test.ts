@@ -121,8 +121,37 @@ describe("constantTimeEqual", () => {
   });
 });
 
-describe("deriveWebauthnKek (skeleton)", () => {
-  it("throws KeyEnvelopeNotImplementedError", () => {
-    expect(() => deriveWebauthnKek("cred-id")).toThrow(KeyEnvelopeNotImplementedError);
+describe("deriveWebauthnKek (real impl)", () => {
+  const prf = new Uint8Array(32).fill(0x42);
+  const salt = new Uint8Array(16).fill(0x01);
+
+  it("derives a deterministic 32-byte KEK", () => {
+    const a = deriveWebauthnKek(prf, salt);
+    const b = deriveWebauthnKek(prf, salt);
+    expect(a.length).toBe(32);
+    expect(Buffer.from(a).toString("hex")).toBe(Buffer.from(b).toString("hex"));
+  });
+
+  it("different salts produce different KEKs", () => {
+    const a = deriveWebauthnKek(prf, salt);
+    const b = deriveWebauthnKek(prf, new Uint8Array(16).fill(0x02));
+    expect(Buffer.from(a).toString("hex")).not.toBe(Buffer.from(b).toString("hex"));
+  });
+
+  it("different PRF inputs produce different KEKs", () => {
+    const a = deriveWebauthnKek(prf, salt);
+    const b = deriveWebauthnKek(new Uint8Array(32).fill(0x99), salt);
+    expect(Buffer.from(a).toString("hex")).not.toBe(Buffer.from(b).toString("hex"));
+  });
+
+  it("rejects too-short PRF output", () => {
+    expect(() => deriveWebauthnKek(new Uint8Array(16), salt)).toThrow(/too short/);
+  });
+});
+
+describe("KeyEnvelopeNotImplementedError sentinel still exported", () => {
+  it("is constructible (kept for callers gated behind future paths)", () => {
+    const e = new KeyEnvelopeNotImplementedError("test reason");
+    expect(e.name).toBe("KeyEnvelopeNotImplementedError");
   });
 });

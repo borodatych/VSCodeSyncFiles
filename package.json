@@ -1200,6 +1200,14 @@
         "title": "VSCodeSync: Show Passkey Settings"
       },
       {
+        "command": "vscodesync.enrollPasskey",
+        "title": "VSCodeSync: Enroll Passkey"
+      },
+      {
+        "command": "vscodesync.unlockWithPasskey",
+        "title": "VSCodeSync: Unlock with Passkey"
+      },
+      {
         "command": "vscodesync.removePasskey",
         "title": "VSCodeSync: Remove Passkey"
       },
