@@ -36,7 +36,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 - [x] **`src/core/p2pFileTransfer.ts`** — pure planner `planP2PFileChunks` (16 KB default, last chunk = remainder, empty file = 1 zero-length chunk), `encodeManifestPayload`/`decodeManifestPayload` (strict shape + 16 KB cap), `encodeFileChunkPayload`/`decodeFileChunkPayload` (8-byte BE header: u32 chunkIndex + u32 length). 19 unit-тестов.
 - [x] Receiver: `createChunkAssembler(manifest)` — out-of-order delivery, idempotent на duplicates, finalize() возвращает `{ content, hashOk }` (recompute SHA-256 + compare с manifest). Пишет в файл — обвязка наверху (UI layer).
-- [~] Hook в `syncEngine.pushFile` — pure planner готов, обвязка к live engine ждёт `vscodesync.startP2PSession` UI команды (v2.1.3, остаётся skeleton).
+- [x] Hook в `syncEngine.pushFile` — `SyncEngineDeps.onPushFile?: (workspaceId, posixRel, plaintext, meta)` callback вызывается после успешного `pushMetaJson`. Errors swallowed (best-effort mirror). P2P UI runtime (v2.12.4) может подписаться без рефакторинга engine API.
 
 ### v2.1.5. Lifecycle и health
 

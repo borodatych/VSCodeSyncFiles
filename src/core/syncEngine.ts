@@ -254,6 +254,20 @@ export interface SyncEngineDeps {
    * `"sha256"` keeps legacy behaviour (no BLAKE3 column).
    */
   canonicalHashAlgo?: () => "sha256" | "blake3" | "dual";
+  /**
+   * v2.1.4 — opt-in P2P file-transfer hook. Called after a successful
+   * `pushFile` upload completes (cloud authoritative). The P2P UI runtime
+   * can mirror the same plaintext buffer to peers via WebRTC DataChannel
+   * — no canonicalisation needed (cloud upload already used the canonical
+   * form). Errors thrown by the hook are swallowed by the engine; the
+   * push itself has already succeeded.
+   */
+  onPushFile?: (
+    workspaceId: string,
+    posixRel: string,
+    plaintext: Buffer,
+    meta: { hash: string; hashBlake3?: string; version: number },
+  ) => void;
 }
 
 export class SyncEngine {
@@ -3028,6 +3042,17 @@ export class SyncEngine {
           },
         };
         await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag);
+        if (this.deps.onPushFile) {
+          try {
+            this.deps.onPushFile(workspaceId, posixRel, plaintextBufLocked, {
+              hash: row.hash,
+              hashBlake3: row.hashBlake3,
+              version: row.version,
+            });
+          } catch {
+            /* P2P mirror is best-effort; cloud upload already succeeded */
+          }
+        }
         if (uploadCloudPath !== oldBlobPathForHistory) {
           await this.deleteRemoteBlobBestEffort(oldBlobPathForHistory);
         }
