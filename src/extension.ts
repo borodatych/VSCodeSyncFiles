@@ -68,8 +68,7 @@ import type { QuietFullSyncAllFoldersDeps } from "./ui/quietFullSyncAllFolders.j
 import { registerWatchModePoller } from "./ui/watchModePoller.js";
 import { registerOneDriveWebhookLifecycle } from "./ui/oneDriveWebhookLifecycle.js";
 import { registerGoogleDriveWebhookLifecycle } from "./ui/googleDriveWebhookLifecycle.js";
-import { registerGitBranchWorkspaceActivation, applyBranchPolicyForRoot } from "./ui/gitBranchWorkspaceActivation.js";
-import { listGitBranches } from "./utils/gitBranches.js";
+import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
 import { syncSessionPause } from "./core/syncSessionPause.js";
 import type { LineEndingMode } from "./utils/normalize.js";
 import {
@@ -115,13 +114,14 @@ import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
+import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
   WORKSPACES_SHOW_ARCHIVED_KEY,
   applyWorkspacesTreeFilterChrome,
 } from "./ui/workspacesTreeFilterState.js";
-import { pickRoot, pickWorkspaceId } from "./commands/_shared.js";
+import { pickRoot } from "./commands/_shared.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 
 const CFG_SECTION = "vscodesync";
@@ -2026,59 +2026,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     ...registerSyncOpsCommands({ runWithEngine }),
 
-    vscode.commands.registerCommand("vscodesync.setGitBranchWorkspace", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        const fields = await engine.getWorkspaceManifestFields(ws);
-        const current = fields === undefined ? "" : (fields.gitBranch ?? "");
-        const branches = await listGitBranches(root);
-        type BranchPick = vscode.QuickPickItem & { mode: "clear" | "branch" | "manual" };
-        const items: BranchPick[] = [
-          { label: "— Очистить привязку —", description: "Workspace всегда активен", mode: "clear" },
-          ...branches.map((b) => ({ label: b, mode: "branch" as const })),
-          { label: "Другая ветка…", description: "Ввод вручную", mode: "manual" },
-        ];
-        const picked = await vscode.window.showQuickPick(items, {
-          placeHolder: `Текущая привязка: ${current || "нет"}`,
-          title: "VSCodeSync: git branch для workspace",
-        });
-        if (!picked) {
-          return;
-        }
-        let branch = "";
-        if (picked.mode === "clear") {
-          branch = "";
-        } else if (picked.mode === "manual") {
-          const manual =
-            (await vscode.window.showInputBox({
-              title: "VSCodeSync: имя ветки",
-              prompt: "Как в git (например main или feature/auth)",
-              value: current,
-            })) ?? undefined;
-          if (manual === undefined) {
-            return;
-          }
-          branch = manual.trim();
-        } else {
-          branch = picked.label.trim();
-        }
-        await engine.setWorkspaceGitBranch(ws, branch);
-        void applyBranchPolicyForRoot(root, gitBranchActivationDeps);
-        await vscode.window.showInformationMessage(
-          branch === ""
-            ? "VSCodeSync: привязка git branch снята; workspace всегда активен."
-            : "VSCodeSync: gitBranch записан в облачный манифест и кэш локально.",
-        );
-      });
-    }),
-
     vscode.commands.registerCommand("vscodesync.healthCheck", async () => {
       const folders = vscode.workspace.workspaceFolders ?? [];
       if (folders.length === 0) {
@@ -2155,140 +2102,6 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    vscode.commands.registerCommand("vscodesync.repairState", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(root);
-      if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace для repair.");
-        return;
-      }
-
-      // Let the user choose repair mode
-      const mode = await vscode.window.showQuickPick(
-        [
-          {
-            label: "$(sync) Обычный ремонт",
-            description: "Обновить ETag, имя, провайдер из манифеста (быстро)",
-            value: "normal" as const,
-          },
-          {
-            label: "$(search) Полный ремонт (сканирование облака)",
-            description: "Восстановить _meta.json из структуры папок на облаке — для повреждённых/пустых манифестов",
-            value: "scan" as const,
-          },
-        ],
-        { placeHolder: "Режим ремонта" },
-      );
-      if (!mode) return;
-
-      if (mode.value === "normal") {
-        await runWithEngine(async (engine) => {
-          await engine.repairLocalStateFromCloud();
-          await vscode.window.showInformationMessage(
-            "VSCodeSync Repair: ETag манифеста и _meta, имя workspace подтянуты с облака.",
-          );
-        });
-        return;
-      }
-
-      // Scan mode: pick workspace to scan (manifest may be missing/corrupted)
-      type WsPick = vscode.QuickPickItem & { workspaceId: string };
-      const items: WsPick[] = wc.activeWorkspaces.map((w) => ({
-        label: w.workspaceNote || w.workspaceId,
-        description: w.workspaceId,
-        workspaceId: w.workspaceId,
-      }));
-      const pick = await vscode.window.showQuickPick<WsPick>(items, {
-        placeHolder: "Выберите workspace для сканирования облака",
-      });
-      if (!pick) return;
-
-      await runWithEngine(async (engine) => {
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `VSCodeSync: сканирование облака для «${pick.label}»…`,
-            cancellable: false,
-          },
-          async () => {
-            const found = await engine.repairByCloudScan(pick.workspaceId);
-            if (found.length === 0) {
-              await vscode.window.showInformationMessage(
-                `VSCodeSync Repair Scan: в облаке нет файлов для workspace «${pick.label}».`,
-              );
-              return;
-            }
-            const doPull = await vscode.window.showInformationMessage(
-              `VSCodeSync Repair Scan: найдено ${String(found.length)} файлов в облаке. _meta.json восстановлен. Выполнить Pull для загрузки файлов?`,
-              "Pull сейчас",
-              "Позже",
-            );
-            if (doPull === "Pull сейчас") {
-              await engine.pullAll(pick.workspaceId);
-              await vscode.window.showInformationMessage("VSCodeSync Repair: Pull завершён.");
-            }
-          },
-        );
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.previewSync", async () => {
-      const root = pickRoot();
-      if (!root) {
-        await vscode.window.showErrorMessage("VSCodeSync: откройте папку.");
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(root);
-      if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace.");
-        return;
-      }
-      let scope: string | undefined;
-      if (wc.activeWorkspaces.length === 1) {
-        scope = wc.activeWorkspaces[0]?.workspaceId;
-      } else {
-        type WsPick = vscode.QuickPickItem & { wsId?: string };
-        const picked = await vscode.window.showQuickPick<WsPick>(
-          [
-            {
-              label: "$(sync) Все активные workspace",
-              description: "Сводка по каждому",
-              wsId: undefined,
-            },
-            ...wc.activeWorkspaces.map((w) => ({
-              label: w.workspaceNote,
-              description: w.workspaceId,
-              wsId: w.workspaceId,
-            })),
-          ],
-          { placeHolder: "Preview Sync — для какого workspace" },
-        );
-        if (!picked) {
-          return;
-        }
-        scope = picked.wsId;
-      }
-      await runWithEngine(
-        async (engine) => {
-          const plan = await engine.previewSyncPlan(scope);
-          writeSyncPreviewOutput(syncPreviewChannel, plan);
-          syncPreviewChannel.show(true);
-          const nPush = plan.reduce((acc, w) => acc + w.files.filter((f) => f.action === "push").length, 0);
-          const nPull = plan.reduce((acc, w) => acc + w.files.filter((f) => f.action === "pull").length, 0);
-          const nConf = plan.reduce(
-            (acc, w) => acc + w.files.filter((f) => f.action === "conflict" || f.action === "conflict_pending").length,
-            0,
-          );
-          await vscode.window.showInformationMessage(
-            `Preview Sync: push ${String(nPush)} · pull ${String(nPull)} · конфликты ${String(nConf)}. Подробности — панель Output «VSCodeSync · Preview».`,
-          );
-        },
-        undefined,
-      );
-    }),
 
     ...registerProviderSignInCommands({
       context,
@@ -2307,10 +2120,14 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
 
-    vscode.commands.registerCommand("vscodesync.startOnboarding", async () => {
-      await runOnboardingWizard(globalConfig, onboardingCloudDeps);
-      await statusBar.refresh();
-      workspacesTree.refresh();
+    ...registerHeavyMiscCommands({
+      globalConfig,
+      workspacesTree,
+      statusBar,
+      syncPreviewChannel,
+      runWithEngine,
+      onboardingCloudDeps,
+      gitBranchActivationDeps,
     }),
   );
 
