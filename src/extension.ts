@@ -51,6 +51,7 @@ import { registerOAuthDeviceCodeCommand } from "./commands/registerOAuthDeviceCo
 import { registerPrefetchCommand } from "./commands/registerPrefetchCommand.js";
 import { registerProviders } from "./startup/registerProviders.js";
 import { registerConfigChangeListeners } from "./startup/registerConfigChangeListeners.js";
+import { restoreWorkspacesTreeFilters } from "./startup/restoreWorkspacesTreeFilters.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -87,11 +88,6 @@ import { registerPasskeyCommands } from "./ui/passkeyCommands.js";
 import { registerSarifExportCommand } from "./commands/registerSarifExport.js";
 import { registerReadmeAutoRender } from "./commands/registerReadmeAutoRender.js";
 import { registerEncryptedBundleExport } from "./commands/registerEncryptedBundleExport.js";
-import {
-  WORKSPACES_NOTE_FILTER_KEY,
-  WORKSPACES_TAG_FILTERS_KEY,
-  WORKSPACES_SHOW_ARCHIVED_KEY,
-} from "./ui/workspacesTreeFilterState.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 
 const CFG_SECTION = "vscodesync";
@@ -260,15 +256,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const workspacesTree = new WorkspacesTreeProvider();
   context.subscriptions.push(workspacesTree);
 
-  const savedNoteFilter = context.globalState.get<string>(WORKSPACES_NOTE_FILTER_KEY) ?? "";
-  workspacesTree.setNoteFilter(savedNoteFilter);
-  const savedTagFilters = context.globalState.get<unknown>(WORKSPACES_TAG_FILTERS_KEY);
-  const tagList: string[] =
-    Array.isArray(savedTagFilters) && savedTagFilters.every((x): x is string => typeof x === "string")
-      ? savedTagFilters
-      : [];
-  workspacesTree.setTagFilters(tagList);
-  workspacesTree.setShowArchived(context.globalState.get(WORKSPACES_SHOW_ARCHIVED_KEY) === true);
+  restoreWorkspacesTreeFilters(context, workspacesTree);
   void globalConfig.load().then((gc) => {
     workspacesTree.setLocalMachineIdentity(gc.machineId, gc.machineName);
     workspacesTree.setActiveCloudProvider(gc.activeProvider);
