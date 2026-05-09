@@ -39,7 +39,7 @@
 - [x] Мастер: `showInputBox` / `showQuickPick` (без Webview)
 - [x] Шаг 1: `machineName`, валидация (не пусто, без `/` `\`); дефолт: hostname / эвристика remote
 - [x] Уникальность в `_machines.json`, постфикс при коллизии (после шага провайдера при доступе к облаку; `machineRegistry.ts` + фоновое обновление `lastSeen` при старте)
-- [~] Шаг 2: выбор провайдера; OneDrive → опционально `Sign in` если задан clientId
+- [x] Шаг 2: выбор провайдера (OneDrive / Google Drive / Yandex / Dropbox) → опциональный `Sign in` (browser / Device Code / Позже) если задан clientId / app key
 - [x] Шаг 3: создать workspace (команда), **подключиться к существующему** (`Connect to Cloud Workspace`) или пропуск
 - [x] Шаг 4: телеметрия → `vscodesync.telemetry` в настройках
 - [x] По завершении: `onboardingCompleted: true` (первая синхронизация не запускается автоматически)

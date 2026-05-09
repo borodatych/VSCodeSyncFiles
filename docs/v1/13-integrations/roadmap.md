@@ -2,7 +2,7 @@
 
 > Закрытие интеграционных хвостов из Phase 11/12 (wiring pure helpers в реальные UI-точки) + исправления reliability из аудита #3 (race в фоновых tick'ах) + продуктивные фичи 3-й волны (storage reporter, restore from cloud, garbage tracked detector).
 
-## Статус: `[~]` (в работе)
+## Статус: `[x]` (закрыто)
 
 ## Reliability fixes (audit #3)
 
@@ -38,4 +38,4 @@
 - [x] CodeLens поверх F-3.8 hot-зон — `src/ui/conflictHotZoneLensPlanner.ts` (pure: `planHotZoneLenses` со clamping на `lineCount-1` + сортировка top-to-bottom + `formatHotZoneLensTitle`, 9 unit-тестов) + `src/ui/conflictHotZoneCodeLens.ts` (`ConflictHotZoneCodeLensProvider` + `makeToRelPath`; 30-сек TTL-кэш, чтобы не читать `conflicts.json` на каждый refresh). Зарегистрирован в `extension.ts:1083+` рядом с `InlineConflictCodeLensProvider`. Setting `vscodesync.conflictHotZoneCodeLens.enabled` (default true). Real line ranges подключены через `vscodesync.{keepMine,takeTheirs}WithRange` internal commands из inline-CodeLens (см. ниже).
 - [x] Real line ranges → conflict heatmap — internal-команды `vscodesync.keepMineWithRange` / `takeTheirsWithRange` принимают `{ startLine, endLine }` и вызывают `recordConflictResolution` с реальными границами блока перед делегированием в существующие `vscodesync.keepMine` / `takeTheirs`. `inlineConflictCodeLens.ts` теперь биндится на `*WithRange`-варианты и передаёт `block.startLine + 1` / `block.endLine + 1` (1-based). Старый global-hook, писавший `1..1` на каждое `resolve_*` activity event, удалён — heatmap теперь содержит только real ranges; tree- и palette-level resolve намеренно не пишутся, потому что не знают конкретного блока.
 - [x] Auto-prompt F-3.5 на attachCloudWorkspace для новой машины — `maybePromptPathMapperAfterAttach(context, workspaceId)` в `src/ui/aiPathMapperCommand.ts`. Дёргается из обоих attach-flows в `src/extension.ts` (single workspace из tree + multi-pick из QuickPick). Idempotent через `globalState['vscodesync.aiPathMapper.promptedFor:<workspaceId>']` — показывается ровно один раз на машину × workspace. Soft-skip при отсутствии `vscode.lm`.
-- [~] Snapshot Diff Viewer / Time Travel scrubber / Hover Diff Preview / Workspace Templates — skeleton-bucket. Pure shapes + `*NotImplementedError` sentinels: см. фазу 12.
+- [x] Snapshot Diff Viewer / Time Travel scrubber / Hover Diff Preview / Workspace Templates — закрыты в Phase 12 «Quality pass»: все 4 sentinels удалены, фичи доведены до полной реализации. См. [`12-quality-pass/roadmap.md`](../12-quality-pass/roadmap.md).

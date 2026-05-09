@@ -93,7 +93,7 @@
 - [x] Реализовать `TreeDragAndDropController` (`WorkspacesTreeDnD`, mime `application/vnd.code.tree.vscodesync.workspaces`)
 - [x] Перетаскивать `FileNode` на другой `WorkspaceNode` *(внутри одной корневой папки VS Code; multi-root между корнями — блокируется)*
 - [x] Диалог подтверждения перед перемещением *(один файл — «из … в …», несколько — счётчик + имя целевого workspace)*
-- [~] Multi-drag (Ctrl+выбор + drag) — поддерживается, если редактор передаёт несколько узлов в `handleDrag` *(то же подтверждение и пакетный `remove`/`add`)*
+- [x] Multi-drag (Ctrl+выбор + drag) — `handleDrag` принимает несколько узлов; то же подтверждение и пакетный `remove`/`add`
 
 ---
 

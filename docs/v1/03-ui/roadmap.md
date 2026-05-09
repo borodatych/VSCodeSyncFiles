@@ -11,15 +11,15 @@
 
 | Модуль | Файл | Статус |
 |--------|------|--------|
-| Боковая панель | [side-panel.md](side-panel.md) | `[~]` TreeView + DnD + секция **неподключённых workspace на облаке** |
-| Онбординг мастер | [onboarding.md](onboarding.md) | `[~]` MVP первый запуск + Start Onboarding Wizard; шаг 3 — connect к облаку |
+| Боковая панель | [side-panel.md](side-panel.md) | `[x]` TreeView + DnD + секция неподключённых workspace на облаке |
+| Онбординг мастер | [onboarding.md](onboarding.md) | `[x]` MVP первый запуск + Start Onboarding Wizard со skip-decisions через `planOnboardingWizard` |
 
 ---
 
 ## 3.1 Статус-бар
 
 - [x] Постоянный индикатор в нижней панели (`SyncStatusBarController`, формат: провайдер · ws/files · last sync)
-- [~] Состояния: Idle ✓ · Syncing ✓ · `⚠ N conflicts` ✓ · **Pause** ✓ (session `syncSessionPause`, не `config.json`; счётчик pending в статус-баре) · остальное (`Offline`, авто‑пауза по сети/батарее, Rate limited, Read-only…) — фаза Reliability / позже
+- [x] Состояния: Idle ✓ · Syncing ✓ · `⚠ N conflicts` ✓ · **Pause** ✓ (session `syncSessionPause`, не `config.json`; счётчик pending) · `$(globe) Offline · N queued` ✓ · `$(plug) авто-пауза · metered` ✓ · `$(zap) авто-пауза · battery` ✓ · Rate-limited ✓ (см. `statusBar.ts:249-368`)
 - [x] При конфликтах: счётчик в строке + разбивка по workspace в tooltip (`SyncStatusBarController.buildTooltip`)
 - [x] Клик по статус-бару → открыть панель Workspaces (`focusWorkspacesView`); текстовая сводка — команда `Show Sync Dashboard`
 - [x] ПКМ статус-бара → `Set Notification Level` (настройка `vscodesync.notificationLevel`)
@@ -40,7 +40,7 @@
 - [x] **Take Theirs** *(только `⚠ Conflict`)* — `resolveTakeTheirs` / `treeFileTakeTheirs`
 - [x] **Open in Cloud Storage** — OneDrive: `webUrl` из Graph; mock/прочие — сообщение «не поддерживается»
 - [x] **Diff with Cloud** — `vscode.diff` локально ↔ временный файл из облака
-- [~] Команды скрыты если файл не в трекинге (`when` context) — **редактор:** `vscodeSync.activeFileTracked` / `activeFileConflict`; **Explorer:** без per-resource контекста, команды валидируют сами
+- [x] Команды скрыты если файл не в трекинге — **редактор:** через `when`-контексты `vscodeSync.activeFileTracked` / `activeFileConflict`; **Explorer:** runtime-валидация в команде (per-resource `when` отсутствует в API)
 
 ---
 
@@ -143,7 +143,7 @@ VSCodeSync: Toggle Telemetry
 
 ## 3.6 Settings UI
 
-- [~] Зарегистрировать все настройки в `contributes.configuration`: ключи объявлены в `package.json`; проводка в движок/UI — по мере фаз Reliability / Power Features
+- [x] Зарегистрировать все настройки в `contributes.configuration` — все ключи объявлены и проведены в движок/UI
   - [x] `vscodesync.maxFileSizeMB` (number, 5) — лимит в `SyncEngine` + `0` = без лимита
   - [x] `vscodesync.warnOnBinaryFiles` (boolean, true) — диалог перед add/push single
   - [x] `vscodesync.showPreview` (boolean, true) — подтверждение перед **Add Current File** и перед Pull/Push/Sync workspace из дерева Workspaces (план → Output + модальное окно)
@@ -185,7 +185,7 @@ VSCodeSync: Toggle Telemetry
 
 ## Критерий готовности фазы
 
-- [~] Онбординг при первом запуске (новый глобальный config); повтор — `Start Onboarding Wizard`. Pure step planner `planOnboardingWizard({ hasActiveProvider, hasAuthenticatedTokens, hasMachineName, hasAttachedWorkspace, preselectedProvider? })` готов в `src/core/onboardingWizardSteps.ts` — 8-step flow со skip-decisions для уже-настроенных аспектов. `isOnboardingAlreadyComplete()` для skipping wizard на subsequent launches. 10 unit-тестов.
+- [x] Онбординг при первом запуске (новый глобальный config); повтор — `Start Onboarding Wizard`. Pure step planner `planOnboardingWizard({ hasActiveProvider, hasAuthenticatedTokens, hasMachineName, hasAttachedWorkspace, preselectedProvider? })` в `src/core/onboardingWizardSteps.ts` (10 unit-тестов) подключён в `runOnboardingWizard` — wizard пропускает уже-настроенные шаги, `isOnboardingAlreadyComplete` short-circuit'ит на повторном запуске с info-toast'ом «VSCodeSync уже настроен». Финальный toast перечисляет skipped-decisions.
 - [x] Боковая панель показывает активные workspace и отслеживаемые файлы (TreeView `vscodesync.workspaces`)
 - [x] Статус-бар всегда актуален (watch `.vscode/vscodesync.json` с перепривязкой при смене корней, multi-root агрегат в строке и tooltip, глобальный config; обновление после push/pull/sync как и раньше)
 - [x] Все команды зарегистрированы и работают

@@ -72,7 +72,7 @@
   - [x] `runWithEngine` перехватывает `ProviderError.UNAUTHORIZED` → `showErrorMessage` с кнопкой «Войти снова» → `setActiveProvider`
   - [x] OneDrive startup check: если `expiresAtMs < Date.now()` → `showWarningMessage` + «Войти снова»
   - [x] Синхронизация блокируется, изменения в оффлайн-очередь — автоматически (`syncTriggerManager.withEngine` перехватывает `UNAUTHORIZED` → `enqueueFullSync`)
-- [~] За 7 дней до `expiresAt` — pure-helper готов: `src/core/tokenExpiryHints.ts` (`classifyExpiry` + `formatExpiryHint`, 11 unit-тестов: ok / expiring_soon / expired, custom warn window, non-finite timestamps). Wiring в startup-loop отложен — нужно решение, какой именно timestamp хранить per-provider (refresh-token TTL vs access-token).
+- [x] За 7 дней до `expiresAt` — `src/core/tokenExpiryHints.ts` (`classifyExpiry` + `formatExpiryHint`, 11 unit-тестов: ok / expiring_soon / expired, custom warn window, non-finite timestamps) подключён в OneDrive startup-loop ([extension.ts:4754](src/extension.ts#L4754)): хранится `bundle.expiresAtMs` (access-token TTL); `formatExpiryHint("OneDrive", hint)` показывает warning-toast при `expiring_soon` / `expired`.
 
 ---
 
