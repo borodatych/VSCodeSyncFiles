@@ -34,10 +34,7 @@ import { runQuietFullSyncAllFolders } from "./ui/quietFullSyncAllFolders.js";
 import { registerWatchModePoller } from "./ui/watchModePoller.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
 import { syncSessionPause } from "./core/syncSessionPause.js";
-import {
-  disposeWorkspaceInstanceLock,
-  scheduleWorkspaceInstanceLockRefresh,
-} from "./core/workspaceInstanceLock.js";
+import { disposeWorkspaceInstanceLock } from "./core/workspaceInstanceLock.js";
 import { registerVsCodeSyncTelemetry } from "./telemetry/extensionTelemetry.js";
 import { registerProviderSetupGuide } from "./ui/providerSetupGuide.js";
 import { registerCommandCenter } from "./ui/commandCenter.js";
@@ -52,6 +49,7 @@ import { registerPrefetchCommand } from "./commands/registerPrefetchCommand.js";
 import { registerProviders } from "./startup/registerProviders.js";
 import { registerConfigChangeListeners } from "./startup/registerConfigChangeListeners.js";
 import { restoreWorkspacesTreeFilters } from "./startup/restoreWorkspacesTreeFilters.js";
+import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceInstanceLockRefresher.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -230,26 +228,9 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(statusBar);
 
-  const refreshWorkspaceInstanceLock = (): void => {
-    scheduleWorkspaceInstanceLockRefresh(
-      globalConfig.getStorageDir(),
-      roots().map((f) => f.uri.fsPath),
-      () => {
-        void statusBar.refresh();
-      },
-    );
-  };
-  refreshWorkspaceInstanceLock();
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      refreshWorkspaceInstanceLock();
-    }),
-    vscode.window.onDidChangeWindowState((s) => {
-      if (s.focused) {
-        refreshWorkspaceInstanceLock();
-      }
-    }),
-  );
+  const lockRefresher = createWorkspaceInstanceLockRefresher({ globalConfig, statusBar, roots });
+  const refreshWorkspaceInstanceLock = lockRefresher.refresh;
+  context.subscriptions.push(...lockRefresher.subscriptions);
 
   registerActiveEditorSyncContext(context);
 

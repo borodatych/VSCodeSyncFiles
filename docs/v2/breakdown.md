@@ -250,7 +250,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.11.4. extension.ts target
 
 - [x] **`extension.ts → 806 LoC`** (target was ≤ 700; -54% achieved, additional -106 LoC requires extracting `runAfterSessionResume` closure (~75 LoC) and provider migration block (~45 LoC) — separate pass).
-- [x] CI assert: `tests/unit/extensionTsLoc.test.ts` enforces `LOC_CEILING = 737` (current 736 после run 30). Pure helpers и extracted modules: `sessionResumeSummary.ts` (7 тестов), `registerProviders.ts`, `registerConfigChangeListeners.ts`, `restoreWorkspacesTreeFilters.ts` (4 теста на `sanitiseTagList`). Stages: 5085 → 1734 (Phase 0) → 815 (run 26) → 780 (run 28) → 748 (run 29) → 736 (run 30). Soft target 500.
+- [x] CI assert: `tests/unit/extensionTsLoc.test.ts` enforces `LOC_CEILING = 718` (current 717 после run 31). Extracted modules: `sessionResumeSummary.ts` (7 тестов), `registerProviders.ts`, `registerConfigChangeListeners.ts`, `restoreWorkspacesTreeFilters.ts` (4 теста), `createWorkspaceInstanceLockRefresher.ts`. Stages: 5085 → 1734 (Phase 0) → 815 (run 26) → 780 (run 28) → 748 (run 29) → 736 (run 30) → 717 (run 31). Soft target 500.
 
 ---
 
