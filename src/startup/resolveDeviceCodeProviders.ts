@@ -4,6 +4,7 @@
  */
 import * as vscode from "vscode";
 import { storeOneDriveTokens } from "../providers/onedrive/onedriveProvider.js";
+import { storeGdriveTokens } from "../providers/gdrive/gdriveTokens.js";
 
 export interface DeviceCodeProviderEntry {
   readonly id: "onedrive" | "gdrive";
@@ -35,6 +36,28 @@ export function resolveDeviceCodeProviders(
           refreshToken: t.refreshToken,
           expiresAtMs: Date.now() + 3600_000,
           clientId: odCid,
+        });
+        return true;
+      },
+    });
+  }
+  const gdCid = cfg.get<string>("googleDriveClientId", "").trim();
+  if (gdCid.length > 0) {
+    out.push({
+      id: "gdrive",
+      label: "Google Drive",
+      clientId: gdCid,
+      // RFC 8628 endpoints for installed-app client type. Google's web-app
+      // client type doesn't expose device-code; the user must register an
+      // OAuth client of type "TVs and Limited Input devices" for this to work.
+      deviceAuthEndpoint: "https://oauth2.googleapis.com/device/code",
+      tokenEndpoint: "https://oauth2.googleapis.com/token",
+      scope: "https://www.googleapis.com/auth/drive.file",
+      storeTokens: async (t) => {
+        await storeGdriveTokens(context.secrets, {
+          accessToken: t.accessToken,
+          refreshToken: t.refreshToken,
+          expiresAtMs: Date.now() + 3600_000,
         });
         return true;
       },
