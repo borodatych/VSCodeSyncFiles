@@ -21,6 +21,7 @@
  * removes it. Future iterations will hook the actual DataChannel close.
  */
 import * as vscode from "vscode";
+import { randomBytes } from "node:crypto";
 import {
   planP2PSessionWizard,
   type P2PSessionRole,
@@ -28,12 +29,20 @@ import {
   type P2PSessionWarning,
 } from "../core/p2pSessionWizardSteps.js";
 import type { P2PSessionRegistry } from "../core/p2pSessionRegistry.js";
+import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
+import type { GlobalConfigManager } from "../core/globalConfigManager.js";
+import { createSignalingTransport } from "../ui/p2pSignalingTransport.js";
+import { openP2PSession } from "../ui/p2pSessionRuntime.js";
 
 const CFG = "vscodesync";
 
 export interface P2PSessionCommandsDeps {
   context: vscode.ExtensionContext;
   registry: P2PSessionRegistry;
+  /** Optional engine factory — when present, the start command attempts a
+   * real signaling round-trip + DataChannel open via `openP2PSession`. */
+  tryAuthenticatedProvider?: () => Promise<ICloudProvider | null>;
+  globalConfig?: GlobalConfigManager;
 }
 
 export function registerP2PSessionCommands(deps: P2PSessionCommandsDeps): vscode.Disposable[] {
@@ -41,52 +50,101 @@ export function registerP2PSessionCommands(deps: P2PSessionCommandsDeps): vscode
   void context;
 
   return [
-    vscode.commands.registerCommand("vscodesync.startP2PSession", () => runStartP2PSession(registry)),
+    vscode.commands.registerCommand("vscodesync.startP2PSession", () => runStartP2PSession(deps)),
     vscode.commands.registerCommand("vscodesync.disconnectP2PSession", () => runDisconnectP2PSession(registry)),
   ];
 }
 
-async function runStartP2PSession(_registry: P2PSessionRegistry): Promise<void> {
-  void _registry;
-
+async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
   const role = await pickRole();
   if (role === undefined) return;
 
   const cfg = vscode.workspace.getConfiguration(CFG);
   const experimentalEnabled = cfg.get<boolean>("p2p.experimental", false);
-
-  // First call: pessimistic estimate so the user always sees the wizard plan
-  // even before signaling discovery. Real numbers are filled when the
-  // experimental path is enabled.
   const plan = planP2PSessionWizard({
     role,
     onlinePeerCount: experimentalEnabled ? 1 : 0,
     activeSessionCount: experimentalEnabled ? 1 : 0,
     cloudSignalingWritable: true,
   });
-
   await showPlanQuickPick(plan.steps, plan.warnings, plan.transport);
 
   if (!experimentalEnabled) {
     const choice = await vscode.window.showInformationMessage(
       "VSCodeSync: P2P session — экспериментальная фича. Включите её в настройках " +
-      "(`vscodesync.p2p.experimental`) и повторите попытку. Полный DataChannel + " +
-      "file-transfer поверх @roamhq/wrtc + qrcode-terminal — следующая итерация.",
-      "Открыть настройки",
-      "Отмена",
+      "(`vscodesync.p2p.experimental`) и повторите попытку.",
+      "Открыть настройки", "Отмена",
     );
     if (choice === "Открыть настройки") {
-      await vscode.commands.executeCommand(
-        "workbench.action.openSettings",
-        "vscodesync.p2p.experimental",
-      );
+      await vscode.commands.executeCommand("workbench.action.openSettings", "vscodesync.p2p.experimental");
     }
     return;
   }
 
-  await vscode.window.showWarningMessage(
-    "VSCodeSync: experimental P2P session wiring пока возвращает план без открытия DataChannel. " +
-    "Реальный signaling round-trip + WebRTC peer connection — отдельная итерация (см. v2.12.4 в roadmap).",
+  if (!deps.tryAuthenticatedProvider || !deps.globalConfig) {
+    await vscode.window.showWarningMessage("VSCodeSync: P2P engine deps не подключены в этом сборке.");
+    return;
+  }
+
+  const sessionId = await vscode.window.showInputBox({
+    prompt: role === "inviter"
+      ? "Sessions ID — поделитесь с invitee (любая строка, обе стороны должны ввести одинаково)"
+      : "Sessions ID — введите тот, что прислал inviter",
+    placeHolder: "e.g. dev-stand-2026-05-09",
+    ignoreFocusOut: true,
+  });
+  if (!sessionId || sessionId.trim().length === 0) return;
+  const peerMachineId = await vscode.window.showInputBox({
+    prompt: "Peer machine id (target). Найдите в _machines.json другой машины.",
+    placeHolder: "machineId",
+    ignoreFocusOut: true,
+  });
+  if (!peerMachineId) return;
+
+  const provider = await deps.tryAuthenticatedProvider();
+  if (!provider) {
+    await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+    return;
+  }
+  const gc = await deps.globalConfig.load();
+  const signaling = createSignalingTransport({ provider, workspaceWritable: true });
+  // Caller injects a per-session encryption key. For this wiring the key is
+  // ephemeral random — both sides must share it via the passkey/passphrase
+  // channel. Future iteration: derive from a shared workspace secret.
+  const key = randomBytes(32);
+
+  await vscode.window.showInformationMessage(
+    `VSCodeSync: P2P key (передайте другой машине — base64): ${key.toString("base64")}`,
+    "OK",
+  );
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `VSCodeSync · P2P session (${role})…`, cancellable: true },
+    async (_p, token) => {
+      const ac = new AbortController();
+      token.onCancellationRequested(() => { ac.abort(); });
+      const result = await openP2PSession({
+        role,
+        sessionId: sessionId.trim(),
+        myMachineId: gc.machineId,
+        peerMachineId: peerMachineId.trim(),
+        encryptionKey: key,
+        signaling,
+        registry: deps.registry,
+        abortSignal: ac.signal,
+      });
+      if (!result.ok) {
+        await vscode.window.showWarningMessage(`VSCodeSync: P2P session failed — ${result.reason}${result.detail ? `: ${result.detail}` : ""}`);
+        return;
+      }
+      deps.registry.upsert({
+        id: sessionId.trim(),
+        snapshot: { state: result.machine.state, transport: "cloud", peerCount: 1, peerLabel: peerMachineId.trim() },
+      });
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: P2P session ${sessionId.trim()} открыта с ${peerMachineId.trim()}.`,
+      );
+    },
   );
 }
 

@@ -132,7 +132,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const p2pSessionRegistry = createP2PSessionRegistry();
   createP2PStatusBarItem(context, p2pSessionRegistry);
   context.subscriptions.push(
-    ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry }),
     ...registerPasskeyCommands({ context }),
     ...registerSarifExportCommand({ storageDir: globalConfig.getStorageDir() }),
     ...registerReadmeAutoRender({ context }),
@@ -618,7 +617,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const tap = () => tryAuthenticatedProvider(registry);
   const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName); };
-  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }));
+  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig }));
 
   registerPlannedPaletteCommands(context, {
     globalConfig,
