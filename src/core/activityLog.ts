@@ -29,7 +29,8 @@ export type ActivityKind =
   | "quota_warning"
   | "quota_critical"
   | "quota_auto_pause"
-  | "share_link_used";
+  | "share_link_used"
+  | "p2p_session";
 
 /** Payload recorded by SyncEngine or extension UI (before id/timestamp). */
 export interface ActivityEventInput {

@@ -34,6 +34,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { createSignalingTransport } from "../ui/p2pSignalingTransport.js";
 import { openP2PSession } from "../ui/p2pSessionRuntime.js";
 import type { MirrorRegistryHandle } from "../ui/p2pFileTransferMirror.js";
+import type { ActivityEventInput } from "../core/activityLog.js";
 
 const CFG = "vscodesync";
 
@@ -47,6 +48,9 @@ export interface P2PSessionCommandsDeps {
   /** v2.12.4 — when present, successful sessions register their authenticated
    * channel so engine-side `onPushFile` mirrors land on every connected peer. */
   mirrorRegistry?: MirrorRegistryHandle;
+  /** v2.12.5 — sink for `p2p_session` events emitted by the runtime state
+   * machine. Wire to the activity log so users see a recent-history view. */
+  logSyncActivity?: (ev: ActivityEventInput) => void;
 }
 
 export function registerP2PSessionCommands(deps: P2PSessionCommandsDeps): vscode.Disposable[] {
@@ -136,6 +140,20 @@ async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
         signaling,
         registry: deps.registry,
         abortSignal: ac.signal,
+        onSessionEvent: deps.logSyncActivity
+          ? (event) => {
+              deps.logSyncActivity?.({
+                kind: "p2p_session",
+                workspaceId: sessionId.trim(),
+                workspaceNote: `P2P · ${peerMachineId.trim()}`,
+                relPath: "",
+                machineName: gc.machineName,
+                provider: "onedrive",
+                detail: event.kind,
+                meta: { eventTsMs: event.tsMs },
+              });
+            }
+          : undefined,
       });
       if (!result.ok) {
         await vscode.window.showWarningMessage(`VSCodeSync: P2P session failed — ${result.reason}${result.detail ? `: ${result.detail}` : ""}`);

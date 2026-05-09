@@ -277,7 +277,7 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 ### v2.12.3. Idle tick runner
 
-- [ ] **`src/ui/p2pIdleTickRunner.ts`** — gated until full DataChannel wiring; pure `createP2PIdleTracker` готов в `p2pIdleDisconnect.ts`.
+- [x] Idle tick runner inline в `p2pSessionRuntime.openP2PSession`: после установки channel создаётся `createP2PIdleTracker` + `setInterval` на 30 s; `noteFrame` triggered на каждом authenticated frame через `authChannel.onFrame` subscription. На `disconnect` decision: `machine.end("idle_timeout")` + `authChannel.close()`. Cleared в `close()`.
 
 ### v2.12.4. Session runtime + file-transfer hook
 
@@ -285,11 +285,11 @@ Pure-helpers полностью готовы; команда + status bar + regi
 - [x] **`src/ui/p2pSessionRuntime.ts`** — `openP2PSession` glues state machine / signaling transport / wrapAuthenticated channel (run 23, commit `1991d81`).
 - [x] **`syncEngine.pushFile`** хук: `SyncEngineDeps.onPushFile?: (workspaceId, posixRel, plaintext, meta)` callback (run 22, commit `ffebda1`).
 - [x] **File-transfer mirror** — `src/ui/p2pFileTransferMirror.ts:mirrorPushedFile` + `createMirrorRegistry`. `_engineFactory.ts` вызывает mirror через `refs.mirrorPushedFile`. `runStartP2PSession` биндит authenticated channel в registry; disconnect — `unbind`. На каждый `pushFile`: `planP2PFileChunks` → `manifest` frame → N × `file_chunk` frames через `wrapAuthenticated.sendFrame`. Best-effort, errors swallowed. _Receiver путь (chunk assembly + write to disk) остаётся следующей итерацией._
-- [ ] Heartbeat tick — gated (см. v2.12.3).
+- [x] Heartbeat tick — covered by idle tick runner (v2.12.3); `noteFrame` triggered by `authChannel.onFrame` subscription so any inbound frame counts as liveness signal.
 
 ### v2.12.5. Activity log integration
 
-- [ ] Все события из `state machine.events[]` пишутся в `activity.json` — gated behind full DataChannel wiring.
+- [x] `OpenP2PSessionOptions.onSessionEvent?` callback fan-out'ит каждый `state.machine.events[]` к caller'у (cursor-based drain + 30 s tick). `registerP2PSession.runStartP2PSession` форвардит в `logSyncActivity` как `kind: "p2p_session"` (новый ActivityKind, forward-compat).
 
 ---
 

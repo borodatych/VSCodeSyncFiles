@@ -27,11 +27,13 @@
 import { wrapAuthenticated, wrapChannel, type AuthenticatedP2PChannel, type P2PChannel } from "../core/p2pDataChannel.js";
 import type { SignalingTransport } from "./p2pSignalingTransport.js";
 import type { P2PSessionRegistry } from "../core/p2pSessionRegistry.js";
-import { createP2PSessionMachine, type SessionMachineHandle } from "../core/p2pSessionStateMachine.js";
+import { createP2PSessionMachine, type P2PSessionEvent, type SessionMachineHandle } from "../core/p2pSessionStateMachine.js";
+import { createP2PIdleTracker, type IdleTrackerHandle } from "../core/p2pIdleDisconnect.js";
 
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const POLL_TIMEOUT_MS = 30_000;
 const ICE_DRAIN_INTERVAL_MS = 1_000;
+const IDLE_TICK_INTERVAL_MS = 30_000;
 
 export type P2PRuntimeRole = "inviter" | "invitee";
 
@@ -48,10 +50,12 @@ export interface OpenP2PSessionOptions {
   wrtcOverride?: WrtcModule | null;
   /** AbortSignal — caller cancels long polls / pending negotiation. */
   abortSignal?: AbortSignal;
+  /** v2.12.5 — caller forwards every state-machine event to activity log. */
+  onSessionEvent?: (event: P2PSessionEvent) => void;
 }
 
 export type OpenP2PSessionResult =
-  | { ok: true; channel: AuthenticatedP2PChannel; machine: SessionMachineHandle; close: () => void }
+  | { ok: true; channel: AuthenticatedP2PChannel; machine: SessionMachineHandle; idle: IdleTrackerHandle; close: () => void }
   | { ok: false; reason: "wrtc_unavailable" | "signaling_failed" | "no_offer" | "no_answer" | "channel_open_timeout" | "aborted"; detail?: string };
 
 interface RTCSessionDescriptionInitLike {
@@ -218,12 +222,51 @@ export async function openP2PSession(opts: OpenP2PSessionOptions): Promise<OpenP
 
   const authChannel = wrapAuthenticated(raw, opts.encryptionKey);
 
+  // v2.12.3 — wrap channel with an idle tracker. `noteFrame` is called on
+  // every authenticated frame (manifest / chunk / heartbeat). A periodic
+  // 30s tick promotes warn → disconnect when threshold passes.
+  const idle = createP2PIdleTracker({ startAtMs: Date.now() });
+  const idleTickHandle = setInterval(() => {
+    const decision = idle.evaluate(Date.now());
+    if (decision === "disconnect") {
+      machine.end(Date.now(), "idle_timeout");
+      try { authChannel.close(); } catch { /* ignore */ }
+      clearInterval(idleTickHandle);
+    }
+  }, IDLE_TICK_INTERVAL_MS);
+
+  // Subscribe to authenticated frames just to feed the idle tracker. Caller
+  // installs its own onFrame handler later for actual payload routing.
+  authChannel.onFrame(
+    () => { idle.noteFrame(Date.now()); },
+    () => { /* reject paths handled elsewhere */ },
+  );
+
+  // v2.12.5 — fan out every state machine event to the caller (typically the
+  // activity log). Drain the queue we already have, then keep checking on
+  // the idle tick (cheap — events array shouldn't accumulate fast).
+  let eventCursor = 0;
+  const flushEvents = (): void => {
+    const sink = opts.onSessionEvent;
+    if (!sink) return;
+    const events = machine.events;
+    while (eventCursor < events.length) {
+      sink(events[eventCursor]);
+      eventCursor += 1;
+    }
+  };
+  flushEvents();
+  const eventTickHandle = setInterval(flushEvents, IDLE_TICK_INTERVAL_MS);
+
   const close = (): void => {
+    clearInterval(idleTickHandle);
+    clearInterval(eventTickHandle);
     cleanup("user_closed");
     try { authChannel.close(); } catch { /* ignore */ }
+    flushEvents();
   };
 
-  return { ok: true, channel: authChannel, machine, close };
+  return { ok: true, channel: authChannel, machine, idle, close };
 }
 
 async function waitForOpenChannel(
