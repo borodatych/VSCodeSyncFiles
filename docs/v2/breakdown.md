@@ -252,6 +252,185 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ---
 
+---
+
+## v2.11. Foundation wiring — extension.ts decomposition (Phase 0)
+
+**Текущее состояние:** [extension.ts](../../src/extension.ts) — 1734 LoC, 6 module-level dedup Set'ов, 5 ref-callbacks, `makeEngine` (~218 LoC) + `runWithEngine` (~50 LoC) + startup-orchestration. Дальнейшее сокращение требует решения по shared state ownership; этот раздел фиксирует план.
+
+### v2.11.1. Engine factory extraction
+
+- [ ] **`src/startup/_engineFactory.ts`** — `createEngineFactory(deps): { makeEngine, setRefs, dedupSets }`. Переносит:
+  - `makeEngine` целиком (200–413).
+  - 6 dedup Set'ов: `warnedEncodingIssueKeys` / `warnedPreserveLfConflictKeys` / `warnedPurgeLostKeys` / `warnedSchemaVersionKeys` / `warnedCorruptManifestKeys` / `warnedRemoteDeletedKeys` (как `dedupSets`-объект, exposed для тестов).
+  - 5 ref-callbacks: `logSyncActivityRef` / `logSyncStatsTransferRef` / `logSyncCompressionRef` / `treeRefreshRef` / `repushDeletedWorkspaceRef` (через `setRefs(refs)`).
+  - `notifiedConflictKeys` Set (использует registerConflicts.ts через deps).
+  - `makeOnFilePulledCallback` helper.
+  - `syncWarnDedupeKey` helper.
+- [ ] Контракт `EngineFactoryDeps`: `{ getCfg: () => vscode.WorkspaceConfiguration }`. Engine state — module-private к `_engineFactory.ts`.
+- [ ] Тесты: `tests/unit/engineFactory.test.ts` — dedup Set'ы изолированы между instance'ами (важно для multi-window).
+
+### v2.11.2. runWithEngine extraction
+
+- [ ] **`src/startup/_runWithEngine.ts`** — `createRunWithEngine(deps): RunWithEngineFn`. Принимает:
+  - `registry`, `globalConfig`, `getEncKey`, `statusBar`, `workspacesTree`, `fileDecorations`.
+  - `makeEngine` (из `_engineFactory.ts`).
+- [ ] `RunWithEngineFn` signature перенести в общий `src/commands/_shared.ts` (уже есть, обновить).
+
+### v2.11.3. Startup helpers split
+
+- [ ] **`src/startup/registerWebhookLifecycles.ts`** — wraps `registerOneDriveWebhookLifecycle` + `registerGoogleDriveWebhookLifecycle`. Принимает `{ context, globalConfig, registry, makeEngine, runWithEngine }`. Подготавливает точку для wiring v2.10.1/v2.10.2.
+- [ ] **`src/startup/registerCodeLensProviders.ts`** — `last-sync` + `inline-conflict` + `hot-zone` CodeLens. Принимает `{ context, makeToRelPathDeps }`. Возвращает `{ refresh(): void }`.
+- [ ] **`src/startup/registerScheduledHelpers.ts`** — `scheduleStartupSyncSummary` / `scheduleWorkspaceInactiveArchivePrompt` / `scheduleSmartWorkspaceSuggestions` / `scheduleMachineApprovalNotifier` / `scheduleAchievementsWarmup`. Принимает `{ context, globalConfig, runWithEngine, statusBar, workspacesTree }`.
+
+### v2.11.4. extension.ts target
+
+- [ ] **`extension.ts ≤ 700 LoC`** (текущий 1734, target -60%). После Phase 0 в `extension.ts` остаётся только `activate()` orchestration: provider registration, фактические `register*Commands` calls, soft-lock lifecycle, deactivate hook.
+- [ ] CI assert: `tests/unit/extensionTsLoc.test.ts` падает если LoC > 700 (regression guard).
+
+---
+
+## v2.12. P2P UI wiring — visible Phase 1.A
+
+**Текущее состояние:** все pure-helpers готовы (signaling envelope, transport, wizard planner, status-bar formatter, idle tracker, file-transfer planner, heartbeat frames, state machine).
+
+### v2.12.1. Session command
+
+- [ ] **`src/commands/registerP2PSession.ts`** — `vscodesync.startP2PSession` + `vscodesync.disconnectP2PSession`. Контракт `{ context, registry, globalConfig, runWithEngine, statusBar, workspacesTree }`.
+- [ ] Multi-step QuickPick из `planP2PSessionWizard({ role, onlinePeerCount, activeSessionCount, ... })`. Шаги — pick_role → pick_target_machine → generate_offer → wait_for_answer → ice_exchange → connection_established (cloud) или QR analogues.
+- [ ] Cloud transport — `createSignalingTransport({ provider, workspaceWritable, now })` + `wrapAuthenticated(channel, key)` + `createP2PIdleTracker`.
+- [ ] QR transport — `qrcode-terminal` рендер в OutputChannel `VSCodeSync · P2P QR`. Reading scanned answer — InputBox с paste-режимом (multi-line).
+- [ ] Aborts при `no_online_peers` / `no_active_invites` warnings — modal с suggestion переключиться на QR transport.
+
+### v2.12.2. Status bar
+
+- [ ] **`src/ui/p2pStatusBar.ts`** — `createP2PStatusBarItem(context, sessionRuntime)`. Использует `formatP2PStatusBar(snapshot)`. Click → `vscodesync.disconnectP2PSession`.
+- [ ] `setInterval(5s)` — re-render snapshot. Snapshot собирается из live state machine + idle tracker.
+
+### v2.12.3. Idle tick runner
+
+- [ ] **`src/ui/p2pIdleTickRunner.ts`** — `setInterval(15s)` tick. На каждый tick вызывает `idleTracker.evaluate(now)`:
+  - `continue` — no-op.
+  - `warn` — статус-бар severity `warn` (4 мин до disconnect).
+  - `disconnect` — tear-down через `sessionRuntime.dispose()`, activity event `p2p_session_idle_disconnect`, статус-бар → `off`.
+- [ ] Сбрасывается на `noteFrame(now)` при каждом полученном frame'е (heartbeat / file chunk / control).
+
+### v2.12.4. Session runtime + file-transfer hook
+
+- [ ] **`src/ui/p2pSessionRuntime.ts`** — клей: `state machine` (`createP2PSessionStateMachine`) + `signaling transport` + `wrapAuthenticated channel` + `idle tracker`. Exposes `dispose()`, `currentSnapshot()`, `addEventListener(type, fn)`.
+- [ ] **`syncEngine.pushFile`** хук: добавить optional `onPushFile?: (workspaceId, relPath, content) => void` в SyncEngineConfig. Хук читает `p2pSessionRegistry.getActiveSession(workspaceId)` — если есть активная P2P-сессия, отправляет файл через `planP2PFileChunks` + `sendFrame("file_chunk", ...)`. Облако всё ещё пишется (manifest-first sохраняется).
+- [ ] **`src/core/p2pSessionRegistry.ts`** — pure registry (Map<workspaceId, sessionHandle>) + idempotent register/unregister.
+- [ ] Heartbeat — `setInterval(30s)` ping. Lost-heartbeat (3× missed) → state machine event → reconnect.
+
+### v2.12.5. Activity log integration
+
+- [ ] Все события из `state machine.events[]` пишутся в `activity.json` через существующий `appendActivityEvent`. `kind: "p2p_session_*"` уже зарегистрированы в `ActivityKind`.
+
+---
+
+## v2.13. Tunnel wiring — visible Phase 1.B
+
+**Текущее состояние:** оба backend'а — skeleton'ы. URL-scrape, watchdog, ACL parser — pure helpers готовы и протестированы. Real spawn + lifecycle migration — pending.
+
+### v2.13.1. Cloudflared spawn
+
+- [ ] **`src/ui/tunnelBackendCloudflaredSpawn.ts`** — `child_process.spawn("cloudflared", ["tunnel", "--url", ...])` поверх `createTunnelSpawnWatchdog` + `scrapeTunnelUrl(stderr, "cloudflared")`. Lazy probe — если `cloudflared --version` exit-code != 0, возвращаем `{ ok: false, reason: "not_available" }`.
+- [ ] Existing skeleton `tunnelBackendCloudflared.ts` сохраняется как probe-only path; новый module — реализация с running process.
+- [ ] Process lifecycle: spawn → 30 s URL-scrape timeout → дождаться regex `https://[a-z0-9-]+\.trycloudflare\.com` → return TunnelHandle с `dispose() { process.kill('SIGTERM'); waitMs(2s); process.kill('SIGKILL') }`.
+- [ ] Reconnect через watchdog: process exit → exponential backoff (1s/2s/4s/cap 30s, max 3 attempts) → `state: 'giveup'` → fallback на smee.
+- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)` — emit stderr lines, verify URL extraction. 6 unit-тестов.
+
+### v2.13.2. Tailscale spawn
+
+- [ ] **`src/ui/tunnelBackendTailscaleSpawn.ts`** — аналогично:
+  - Pre-flight: `tailscale funnel status` через `parseTailscaleFunnelStatus`. Если `acl_denied` / `not_logged_in` / `daemon_unavailable` — возврат `{ ok: false, reason, hint }`.
+  - Spawn `tailscale funnel --bg <port>`.
+  - Polling `tailscale funnel status` каждые 2 s до URL `https://*.ts.net/`. Timeout 15 s.
+  - Cleanup: `tailscale funnel reset` на dispose.
+- [ ] Тесты с mock spawn — 6 unit-тестов.
+
+### v2.13.3. Status bar
+
+- [ ] **`src/ui/tunnelStatusBar.ts`** — `createTunnelStatusBarItem(context)`. Использует `formatTunnelStatusBar(getTunnelStatus())`. Click → `vscodesync.showTunnelStatus` (уже существует).
+- [ ] Re-render на каждый event из `tunnelStatusRegistry` (subscribe через `onStatusChange`).
+
+### v2.13.4. Config watcher wiring
+
+- [ ] **`src/ui/tunnelConfigWatcherWiring.ts`** — `vscode.workspace.onDidChangeConfiguration(e)`. Если `e.affectsConfiguration("vscodesync.webhooks.tunnelProvider")` или `"vscodesync.webhooks.enabled"` — вызывает `compareTunnelConfig(prevSnapshot, currentSnapshot)`:
+  - `start` — start tunnel.
+  - `stop` — dispose existing.
+  - `restart` — dispose then start.
+  - `no_change` — no-op.
+- [ ] OutputChannel logging — каждое action + reason.
+
+### v2.13.5. Lifecycle migration (v2.4.4 final close)
+
+- [ ] **`src/ui/oneDriveWebhookLifecycle.ts`** — replace `createAndStartSmeeRelay(notificationUrl)` → `createAndStartTunnelRelay({ provider: getTunnelProvider(), port, handler })`.
+- [ ] **`src/ui/googleDriveWebhookLifecycle.ts`** — то же.
+- [ ] Update integration tests — mock `openTunnel` registry instead of mock smee. Existing 412 / EPERM / smee-reconnect test fixtures — портировать на `createAndStartTunnelRelay` mock.
+
+---
+
+## v2.14. Smart Features wiring — Phase 1.C
+
+**Текущее состояние:** `registerSmartFeatures.ts` существует с минимальным контрактом `{ context, storageDir }` (achievements + workspace template installation).
+
+### v2.14.1. Engine bundle
+
+- [ ] **`src/commands/registerSmartFeaturesEngine.ts`** — bundle с richer-контрактом `{ context, runWithEngine, globalConfig, registry, treeView, statusBar, syncPreviewChannel }`.
+- [ ] **6 команд:**
+  - `vscodesync.aiSessionSummary` — generate session summary (push/pull diff highlights) через `vscode.lm`.
+  - `vscodesync.aiSuggestWorkspaceTags` — suggest tags based on file extensions + commit messages.
+  - `vscodesync.aiPathMapper` — propose path remappings between workspaces (cross-workspace move suggestion).
+  - `vscodesync.showInsightsWeeklyDigest` — webview summary за неделю (pushes / pulls / conflicts / top-changed files).
+  - `vscodesync.diffSnapshots` — diff между двумя snapshot'ами через `compareSnapshots` core helper.
+  - `vscodesync.openTimeTravelScrubber` — webview slider для history navigation.
+
+### v2.14.2. AI cancellation + privacy
+
+- [ ] Все AI-команды используют `vscode.CancellationTokenSource` — cancellable из палитры команд.
+- [ ] Per-command privacy gate: setting `vscodesync.ai.<command>.enabled`. Default — `false` для commands, отправляющих контент в LM. User opt-in только через Settings.
+
+---
+
+## v2.20. Fresh ideas (brainstorm — записаны, не запланированы)
+
+> Brainstorm-список из 16 идей, добавленных по запросу пользователя. Каждый пункт — потенциальный
+> отдельный roadmap-item; реализация только после явного pick'а конкретной идеи.
+
+### v2.20.1. Архитектурные / DX (1–3)
+
+- [ ] **MCP server endpoint** — VSCodeSync как MCP-сервер для Claude Code / Cursor / Continue / любых MCP-aware агентов. Tools: `vscodesync.list_workspaces`, `push_file(workspace, path)`, `query_history(workspace, since)`, `list_conflicts`, `resolve_conflict(strategy)`. Пакет `@modelcontextprotocol/sdk` (MIT). **Зачем:** AI-агенты получают доступ к sync state без прямого чтения файлов; индустриальный стандарт (Anthropic, OpenAI, JetBrains).
+- [ ] **CLI `vscodesync`** — npx-runnable bin для headless push/pull/status. Use cases: SSH boxes, Docker dev containers, CI smoke. Базируется на extracted `src/core/` (после Phase 0 это выполнимо). Подкоманды: `vscodesync status`, `vscodesync push [workspace]`, `vscodesync pull [workspace]`, `vscodesync sign-in --device-code`. **Зачем:** часто просят, low-effort после foundation.
+- [ ] **Settings Sync integration** — `vscode.authentication.getSession("vscode-settings-sync")` (если доступен в Cursor / VS Code 1.95+) → синхронизация machineName, providerType через native VS Code Settings Sync. **Зачем:** новая машина → меньше шагов setup'а.
+
+### v2.20.2. Performance / scale (4–6)
+
+- [ ] **WebRTC SCTP multiplexing** — после v2.12 (P2P UI): мультиплексировать N parallel transfers (один DataChannel на crit-path manifest, второй–N на bulk files). Использует SCTP stream identifiers нативно. **Зачем:** initial sync ускоряется в N раз для маленьких файлов.
+- [ ] **DuckDB-WASM для analytics** — встроить в settings webview для SQL-query'ев против `activity.json` + `stats.json`. SQL вместо custom UI с фильтрами. Пакет `@duckdb/duckdb-wasm` (MIT, ~10 MB но lazy-load only when settings webview open). **Зачем:** power-users получают флексибельность без растущего UI кода.
+- [ ] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` API (если доступен в Cursor / VS Code 1.95+) — для облачных workspace заранее загружаем файлы в local cache. **Зачем:** open-folder latency = 0 после первого pull.
+
+### v2.20.3. Security / privacy (7–9)
+
+- [ ] **Encrypted bundle export** — `vscodesync.exportEncryptedBundle` команда: `.tar.zst.aes256` файл со всем workspace + manifest + history. Use case: air-gapped передача через USB / S3 cold storage. **Зачем:** альтернатива cloud + P2P для compliance-environments.
+- [ ] **OAuth Device Code flow** — `vscodesync.signInDeviceCode` команда для headless SSH контекстов. Display code + URL → user opens browser elsewhere → VSCode poll'ит token endpoint. **Зачем:** PKCE через UriHandler не работает на удалённой машине без локального браузера.
+- [ ] **Local LLM для AI merge** — setting `vscodesync.aiMerge.endpoint = "ollama" | "lm-studio" | "<custom-url>"`. Replace `vscode.lm` для on-prem environments. Default остаётся `vscode.lm`. **Зачем:** corp-юзеры не отправляют код в публичные LLM API.
+
+### v2.20.4. Modern protocols (10–12)
+
+- [ ] **Webhook → SSE upgrade для GDrive / OneDrive** — заменить smee polling на native Server-Sent Events где провайдер поддерживает (GDrive Drive Activity API streaming endpoint). **Зачем:** lower latency, less API quota.
+- [ ] **OAuth 2.1 PAR (Pushed Authorization Requests)** — модернизировать наш PKCE-flow для FAPI 2 compliance. Optional path, не урон existing коду. **Зачем:** corp-юзеры с FAPI requirement (банки, госорганы).
+- [ ] **WebAuthn → Passkeys (FIDO2 with sync)** — в дополнение к envelope-shape (v2.2): поддержка iCloud Keychain / Google Password Manager passkey sync, чтобы один passkey работал на всех устройствах юзера. Вписывается в v2.2.4 как `multi-device` extension. **Зачем:** UX без re-enroll на каждой машине.
+
+### v2.20.5. UX / fit-and-finish (13–16)
+
+- [ ] **`.vscodesync-readme.md` auto-render** — при первом открытии workspace на новой машине показать webview с rendered markdown из `.vscodesync-readme.md` (если присутствует в workspace). Создатель workspace описывает: что это, как пользоваться, кого пинговать. **Зачем:** custom welcome от автора workspace.
+- [ ] **Conflict heatmap → SARIF export** — команда `vscodesync.exportConflictsToSarif` пишет `.sarif` (Static Analysis Results Interchange Format) для GitHub Code Scanning / SonarQube ingestion. Каждый конфликт → SARIF result с `level: warning`, location: file+range, ruleId: "vscodesync/conflict". **Зачем:** integration с corp tooling pipelines.
+- [ ] **Workspace templates marketplace** — публиковать `.vscodesync-template.json` (manifest, default-files-glob, ignore-rules, recommended extensions) в реестр (Open VSX-style, git-hosted в `vscodesync/templates` repo). Команда `vscodesync.installWorkspaceTemplate` ищет в реестре + локально. **Зачем:** быстрый bootstrap workspace для типичных стеков.
+- [ ] **Onboarding video walkthroughs** — short MP4 в `media/walkthroughs/` (3 video по 30 s: «add first file», «resolve conflict», «time-travel»). Walkthrough JSON ссылается на video через `data-href`. **Зачем:** видео конвертит лучше чем текст.
+
+---
+
 ## Состояние
 
 Когда **все** чекбоксы выше закроются — v2 будет fully shipped. Текущее: 0/100+ закрыто
