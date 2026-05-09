@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { GlobalConfigManager } from "./core/globalConfigManager.js";
 import { initLog } from "./utils/logVscode.js";
 import { ProviderRegistry } from "./providers/registry.js";
+import type { ICloudProvider } from "./providers/cloudProviderTypes.js";
 import { OneDriveProvider } from "./providers/onedrive/onedriveProvider.js";
 import { GdriveProvider } from "./providers/gdrive/gdriveProvider.js";
 import { DropboxProvider } from "./providers/dropbox/dropboxProvider.js";
@@ -616,7 +617,8 @@ export function activate(context: vscode.ExtensionContext): void {
   registerFileLifecycleEvents({ context, runWithEngine });
 
   const tap = () => tryAuthenticatedProvider(registry);
-  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap }));
+  const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName); };
+  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }));
 
   registerPlannedPaletteCommands(context, {
     globalConfig,

@@ -1184,6 +1184,10 @@
         "title": "%cmd.checkBlake3Migration.title%"
       },
       {
+        "command": "vscodesync.completeBlake3Migration",
+        "title": "%cmd.completeBlake3Migration.title%"
+      },
+      {
         "command": "vscodesync.startP2PSession",
         "title": "VSCodeSync: Start P2P Session"
       },

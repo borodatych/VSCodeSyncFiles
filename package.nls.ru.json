@@ -146,6 +146,7 @@
   "cmd.purgeEncryptedWorkspace.title": "VSCodeSync: Очистить зашифрованный воркспейс...",
   "cmd.mergeWorkspaces.title": "VSCodeSync: Объединить воркспейсы",
   "cmd.checkBlake3Migration.title": "VSCodeSync: Проверить статус миграции на BLAKE3",
+  "cmd.completeBlake3Migration.title": "VSCodeSync: Дозаполнить BLAKE3 в манифесте (завершить миграцию)",
   "cfg.onedriveClientId.description": "Azure AD public client ID для входа OneDrive (device code)",
   "cfg.googleDriveClientId.description": "OAuth 2.0 Client ID (Desktop) для Google Drive (Google Cloud Console → APIs & Services → Credentials)",
   "cfg.dropboxAppKey.description": "App key Dropbox (OAuth). Оставьте пустым для использования встроенного. В консоли приложения добавьте redirect URI: http://127.0.0.1:8734/oauth-callback",

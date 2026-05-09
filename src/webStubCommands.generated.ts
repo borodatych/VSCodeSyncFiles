@@ -133,6 +133,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.healthCheck",
   "vscodesync.mergeWorkspaces",
   "vscodesync.checkBlake3Migration",
+  "vscodesync.completeBlake3Migration",
   "vscodesync.startP2PSession",
   "vscodesync.disconnectP2PSession",
   "vscodesync.showPasskeySettings",

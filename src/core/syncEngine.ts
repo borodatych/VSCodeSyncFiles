@@ -2286,6 +2286,66 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * v2.3.4 — backfill `hashBlake3` columns for files that already exist in
+   * `_meta.json` but were uploaded before the workspace started running on
+   * `canonicalHashAlgo: "dual"` / `"blake3"`. Reads each tracked file from
+   * disk, recomputes the canonical BLAKE3, and writes a single `pushMetaJson`
+   * with all updates.
+   *
+   * Returns a per-task report: how many tasks were applied vs. skipped
+   * (missing locally / already had hashBlake3 / hash drift detected).
+   */
+  async applyHashBlake3Backfill(
+    workspaceId: string,
+    tasks: { relPath: string; existingSha256: string }[],
+  ): Promise<{ applied: number; skippedMissing: number; skippedDrift: number; skippedAlreadyDone: number }> {
+    const cfg = await WorkspaceConfigManager.load(this.deps.workspaceRoot);
+    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!ent) {
+      throw new Error(`workspace ${workspaceId} not active`);
+    }
+    const meta = await this.pullMeta(workspaceId, ent.metaEtag);
+    const updated: MetaJson = { ...meta, files: { ...meta.files } };
+    let applied = 0;
+    let skippedMissing = 0;
+    let skippedDrift = 0;
+    let skippedAlreadyDone = 0;
+    for (const task of tasks) {
+      const row = updated.files[task.relPath];
+      if (!row) {
+        skippedMissing += 1;
+        continue;
+      }
+      if (typeof row.hashBlake3 === "string" && /^[0-9a-f]{64}$/.test(row.hashBlake3)) {
+        skippedAlreadyDone += 1;
+        continue;
+      }
+      const abs = this.localAbs(cfg, task.relPath);
+      let buf: Buffer;
+      try {
+        buf = await fs.readFile(abs);
+      } catch {
+        skippedMissing += 1;
+        continue;
+      }
+      const dual = hashCanonicalBufferDual(buf, task.relPath, this.hashCfg(task.relPath));
+      // Drift guard — if the local file's sha256 differs from the meta's
+      // current sha256, refuse to backfill: the local copy is out of sync
+      // with the cloud meta and a regular pushFile is the right path.
+      if (dual.sha256 !== row.hash) {
+        skippedDrift += 1;
+        continue;
+      }
+      updated.files[task.relPath] = { ...row, hashBlake3: dual.blake3 };
+      applied += 1;
+    }
+    if (applied > 0) {
+      await this.pushMetaJson(workspaceId, updated, ent.metaEtag);
+    }
+    return { applied, skippedMissing, skippedDrift, skippedAlreadyDone };
+  }
+
   private async pullMeta(workspaceId: string, ifNoneMatch: string | undefined): Promise<MetaJson> {
     try {
       const dl = await this.deps.provider.downloadFile(metaCloudPath(workspaceId), { ifNoneMatch });

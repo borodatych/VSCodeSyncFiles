@@ -18,6 +18,7 @@ import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { metaCloudPath } from "../core/cloudLayout.js";
 import {
+  planBlake3MigrationTasks,
   runHashAlgoMigrationCheck,
   type HashMigrationMetaEntry,
 } from "../core/hashMigrationCheck.js";
@@ -25,6 +26,7 @@ import {
   planBlake3MigrationAction,
   type CanonicalHashAlgo,
 } from "../core/blake3MigrationDecision.js";
+import type { SyncEngine } from "../core/syncEngine.js";
 import { warnLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
@@ -33,6 +35,13 @@ const DUAL_STARTED_KEY = "vscodesync.canonicalHashAlgo.dualWorkflowStartedMs";
 export interface HashMigrationCommandsDeps {
   context: vscode.ExtensionContext;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
+  /** v2.3.4 — engine factory for the backfill command. The command picks the
+   * first workspace folder + provider, builds an engine via this callback,
+   * then iterates `applyHashBlake3Backfill` per active workspace. */
+  makeEngineForRoot?: (
+    workspaceRoot: string,
+    provider: ICloudProvider,
+  ) => Promise<SyncEngine | null>;
 }
 
 interface MetaShape {
@@ -169,6 +178,98 @@ export function registerHashMigrationCommands(
           break;
       }
       channel.show(true);
+    }),
+
+    vscode.commands.registerCommand("vscodesync.completeBlake3Migration", async () => {
+      if (!deps.makeEngineForRoot) {
+        await vscode.window.showWarningMessage("VSCodeSync: backfill engine not wired in this build.");
+        return;
+      }
+      const setting = readSetting();
+      if (setting === "sha256") {
+        await vscode.window.showWarningMessage(
+          "VSCodeSync: переключите `vscodesync.canonicalHashAlgo` на `dual` или `blake3` перед миграцией.",
+        );
+        return;
+      }
+      const provider = await deps.tryAuthenticatedProvider();
+      if (!provider) {
+        await vscode.window.showWarningMessage("VSCodeSync: провайдер не подключён.");
+        return;
+      }
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) {
+        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
+        return;
+      }
+      const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+      if (wc.activeWorkspaces.length === 0) {
+        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace.");
+        return;
+      }
+
+      const reports: { workspaceId: string; entries: HashMigrationMetaEntry[] }[] = [];
+      for (const ws of wc.activeWorkspaces) {
+        const entries = await readMetaForMigration(provider, ws.workspaceId);
+        reports.push({ workspaceId: ws.workspaceId, entries });
+      }
+      const plan = planBlake3MigrationTasks(reports);
+      if (plan.totalTasks === 0) {
+        await vscode.window.showInformationMessage("VSCodeSync: BLAKE3 уже заполнен для всех файлов.");
+        return;
+      }
+
+      const engine = await deps.makeEngineForRoot(folder.uri.fsPath, provider);
+      if (!engine) {
+        await vscode.window.showWarningMessage("VSCodeSync: не удалось инициализировать engine.");
+        return;
+      }
+
+      const channel = vscode.window.createOutputChannel("VSCodeSync · BLAKE3 migration");
+      channel.clear();
+      channel.appendLine(`Backfill plan: ${String(plan.totalTasks)} tasks across ${String(plan.affectedWorkspaceIds.length)} workspaces.`);
+
+      const tasksByWs = new Map<string, { relPath: string; existingSha256: string }[]>();
+      for (const t of plan.tasks) {
+        const list = tasksByWs.get(t.workspaceId) ?? [];
+        list.push({ relPath: t.relPath, existingSha256: t.existingSha256 });
+        tasksByWs.set(t.workspaceId, list);
+      }
+
+      let totalApplied = 0;
+      let totalMissing = 0;
+      let totalDrift = 0;
+      let totalAlreadyDone = 0;
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: BLAKE3 backfill…", cancellable: true },
+        async (progress, token) => {
+          for (const [wsId, taskList] of tasksByWs) {
+            if (token.isCancellationRequested) break;
+            progress.report({ message: `${wsId.slice(0, 8)} (${String(taskList.length)} files)` });
+            try {
+              const r = await engine.applyHashBlake3Backfill(wsId, taskList);
+              channel.appendLine(`  ${wsId.slice(0, 8)}: applied=${String(r.applied)} drift=${String(r.skippedDrift)} missing=${String(r.skippedMissing)} already=${String(r.skippedAlreadyDone)}`);
+              totalApplied += r.applied;
+              totalMissing += r.skippedMissing;
+              totalDrift += r.skippedDrift;
+              totalAlreadyDone += r.skippedAlreadyDone;
+            } catch (e) {
+              channel.appendLine(`  ${wsId.slice(0, 8)}: error — ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        },
+      );
+
+      channel.appendLine("");
+      channel.appendLine(`Total: applied=${String(totalApplied)} drift=${String(totalDrift)} missing=${String(totalMissing)} already=${String(totalAlreadyDone)}`);
+      if (totalDrift > 0) {
+        channel.appendLine("Drift means the local file's SHA-256 differs from the meta — run a regular Push first.");
+      }
+      channel.show(true);
+
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: BLAKE3 backfill завершён — ${String(totalApplied)} обновлено${totalDrift > 0 ? `, ${String(totalDrift)} drift` : ""}.`,
+      );
     }),
   ];
 }
