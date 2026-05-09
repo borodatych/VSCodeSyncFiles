@@ -58,18 +58,18 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 
 ### v2.2.1. Web platform (browser, vscode.dev)
 
-- [ ] **`deriveWebauthnKek` real impl (web)** — `navigator.credentials.create({ publicKey: { ... } })` для enrollment, `.get(...)` для unlock. Берём credential id, hash через PBKDF2 или HKDF.
-- [ ] **Storage:** credential id хранится в `globalState['vscodesync.webauthn.credentialId']`. KEK (derived) — никогда не персистится; при каждом unlock запрашивается биометрия.
+- [x] **`deriveWebauthnKek` real impl (web)** — `src/ui/webauthnWebview.ts:runWebAuthnEnroll` / `runWebAuthnUnlock` запускают one-shot webview с `navigator.credentials.create/.get({publicKey, extensions: { prf } })`. PRF.eval.first вернёт 32 байта pseudo-random material → `deriveWebauthnKek` (HKDF-SHA256) в `src/core/keyEnvelope.ts` чейнит в KEK. Webview работает и в vscode.dev, и в desktop Chromium.
+- [x] **Storage:** credential id хранится в `PasskeyRegistryStorage` поверх SecretStorage (`src/ui/passkeyRegistryStorage.ts`); `prfSaltHex` записывается в `meta.prfSaltHex` envelope'а в SecretStorage. KEK не персистится — выводится из PRF при каждом unlock'е.
 
 ### v2.2.2. Desktop platform (electron / vscode native)
 
-- [ ] **Native FIDO2:** через webview API → `navigator.credentials` (vscode webviews используют Chromium inside, поддерживают WebAuthn).
+- [x] **Native FIDO2 через webview API** — `runWebAuthnEnroll/Unlock` в `webauthnWebview.ts` создаёт Chromium-backed webview, который Electron forward'ит в OS FIDO2 stack (Windows Hello / Touch ID / hardware keys) автоматически. CSP nonce + sandboxed script.
 - [~] Альтернатива: native binding `node-webauthn` — typed `WebAuthnAdapter` + `makeSkeletonWebAuthnAdapter` sentinel in `src/core/webauthnPlatformAdapter.ts` (commit `c45337d`). Real native binding remains.
 
 ### v2.2.3. UI flow
 
-- [ ] **Команда `vscodesync.enrollPasskey`** — модалка «Add hardware key / biometric»: generate credential → store id → wrap existing DEK с derived KEK → write encrypted envelope в SecretStorage.
-- [ ] **Команда `vscodesync.unlockWithPasskey`** — при попытке использовать DEK после lock: prompt biometric → derive KEK → unwrap DEK.
+- [x] **Команда `vscodesync.enrollPasskey`** — `src/ui/passkeyCommands.ts:runEnrollPasskey` (commit `0733329` + DEK rewrap из run 24): `runWebAuthnEnroll` → `wrapDekForWebauthn` → `storeWebauthnEnvelope` поверх существующего DEK; запись в `PasskeyRegistryStorage`.
+- [x] **Команда `vscodesync.unlockWithPasskey`** — `src/ui/passkeyCommands.ts:runUnlockWithPasskey`: replays `meta.prfSaltHex` envelope'а → `runWebAuthnUnlock` → `unwrapDekFromWebauthn` → `storeEncryptionKey` обратно в SecretStorage. Touch'ит `lastUsedAtMs` на credential.
 - [x] **Команда `vscodesync.removePasskey`** — palette QuickPick + confirm modal + telemetry; storage в `passkeyRegistryStorage.ts` (commit `0733329`).
 
 ### v2.2.4. Recovery + fallback
