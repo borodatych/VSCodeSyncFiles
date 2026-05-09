@@ -9,6 +9,14 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 ## [Unreleased]
 
 ### Added
+- **BLAKE3 migration check command** (v2.3.4) — `vscodesync.checkBlake3Migration` walks every active workspace's `_meta.json` and surfaces per-workspace BLAKE3 coverage + recommended action (`stay_sha256` / `stay_dual` / `recommend_switch` / `safe_to_switch_now`) via existing pure helpers. Dual-workflow start timestamp persisted in `globalState`. Backfill command (`completeBlake3Migration`) left as follow-up.
+- **Smart Conflict Prediction — live presence reader** (v2.9.3) — `SmartConflictPredictionService` polls `_machines.json` every 60 s when an authenticated provider is available; peers' `currentEditing` frames cached for 60 s and augment the existing soft-lock score via `findHighRiskPeer`. Status-bar tooltip differentiates risk source (soft-lock / live presence / both).
+- **P2P file-transfer engine hook** (v2.1.4) — `SyncEngineDeps.onPushFile?` callback fires after successful `pushMetaJson`. P2P UI runtime can mirror plaintext to peers via WebRTC DataChannel without re-canonicalising. Errors swallowed (best-effort).
+
+### Changed
+- **Smart features split** (v2.6.6 / v2.14.1) — extracted 5 engine-rich commands (`aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `showInsightsWeeklyDigest`, `diffSnapshots`) from `plannedPaletteCommands.ts` into a focused `src/commands/registerSmartFeaturesEngine.ts` bundle with `{ context, globalConfig, tryAuthenticatedProvider }` contract.
+
+### Added
 - **Smart Conflict Prediction — currentEditing presence wire** (v2.9.2) — `presenceHeartbeat` теперь публикует поле `currentEditing` в `_machines.json` для self-entry: каждый tick резолвит `vscode.window.activeTextEditor` через `WorkspaceConfigManager` и пишет `{ workspaceId, relPath, sinceMs }` (или `null` при idle) с throttle 30 s через `shouldBroadcastCurrentEditing`. Mode (`full`/`anonymised`/`off`) читается из существующего setting `vscodesync.smartConflictPrediction.broadcastCurrentEditing`. `parseMachinesRegistry` / `upsertMachineAndPrune` / `syncMachinesRegistrySelf` расширены опциональным параметром (forward-compat).
 - **AI privacy gate** (v2.14.2) — 3 новых setting'а `vscodesync.ai.{sessionSummary,suggestWorkspaceTags,pathMapper}.enabled` (default `false`). Команды `aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper` показывают opt-in toast с кнопкой `Open Settings` перед первой отправкой данных в LM. Описания указывают что покидает машину (paths only, never contents). `aiMerge` уже имел свой setting `vscodesync.aiMerge: boolean`.
 - **AI cancellation** (v2.14.2) — все 3 AI-команды используют `withProgress({ cancellable: true })`; token прокинут в `summariseActivity` / `suggestWorkspaceTags` / `runAiPathMapper` для прерывания LM-запроса.
