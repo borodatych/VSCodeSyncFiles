@@ -19,3 +19,6 @@ CLAUDE.md
 
 # Documentation: keep roadmap and continuity in git, hide local drafts.
 docs/idea.md
+
+# Walkthrough recordings — kept local until real captures land (v2.20.5).
+media/walkthroughs/*.mp4

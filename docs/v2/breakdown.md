@@ -232,7 +232,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.11.1. Engine factory extraction
 
 - [x] **`src/startup/_engineFactory.ts`** — `createEngineFactory(): EngineFactory` (`makeEngine`, `setRefs`, `notifiedConflictKeys`). Переносит весь `makeEngine` (213 LoC), 6 dedup Set'ов и 5 ref-callbacks.
-- [ ] Тесты: `tests/unit/engineFactory.test.ts` (отложено — pure helpers тестируются через integration в существующих engine tests).
+- [x] Тесты: `tests/unit/engineFactory.test.ts` — contract surface + isolation (6 тестов: notifiedConflictKeys is mutable Set, isolation between instances, setRefs accepts partials, idempotent re-assign).
 
 ### v2.11.2. runWithEngine extraction
 
@@ -335,13 +335,13 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 - [x] **MCP server endpoint** — `@modelcontextprotocol/sdk` installed; `src/ui/mcpServerHost.ts:startMcpServer(provider)` lazy-loads SDK, регистрирует `vscodesync.list_workspaces` tool с реальным data source. Other tools throw `McpNotImplementedError` (engine adapter — follow-up). Stdio bridge через npm bin — отдельная итерация.
 - [x] **CLI `vscodesync`** — `cli/` subpackage уже имеет `bin/vscodesync` (`./dist/cli.cjs`), entry `cli/src/main.ts` с дispatch-table (`status` / `pull` / `pull-all` / `auth --device-code`). Sub-package builds via esbuild → standalone CommonJS. Pure `parseCliArgs(argv)` в `src/core/cliArgsParser.ts` остаётся как тестируемая часть.
-- [ ] **Settings Sync integration** — `vscode.authentication.getSession("vscode-settings-sync")` (если доступен в Cursor / VS Code 1.95+) → синхронизация machineName, providerType через native VS Code Settings Sync. **Зачем:** новая машина → меньше шагов setup'а.
+- [~] **Settings Sync integration** — pure split planner `src/core/settingsSyncIntegration.ts` (`SETTINGS_SYNC_RULES` + `splitSettingsForSync` + `SettingsSyncNotImplementedError`); 7 unit-тестов. Decides per-key whether VSCodeSync setting is `preference` (sync) / `secret` (never) / `machine_local`. Live `vscode.authentication.getSession("vscode-settings-sync")` wiring blocked on stable provider id.
 
 ### v2.20.2. Performance / scale (4–6)
 
-- [ ] **WebRTC SCTP multiplexing** — после v2.12 (P2P UI): мультиплексировать N parallel transfers (один DataChannel на crit-path manifest, второй–N на bulk files). Использует SCTP stream identifiers нативно. **Зачем:** initial sync ускоряется в N раз для маленьких файлов.
+- [~] **WebRTC SCTP multiplexing** — pure planner `src/core/p2pSctpMultiplex.ts` (`planSctpLane` / `createSctpPlanner`); 6 unit-тестов. Lane 0 reserved for manifest/control/heartbeat; bulk file chunks round-robin'ят на `[1, lanes-1]` по hash(stableKey) — same file → same lane (chunk-ordering invariant). RTCPeerConnection / multiple-DataChannel wiring остаётся в `p2pSessionRuntime`.
 - [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle, `runReadOnlyQuery` валидирует через `validateReadOnlySql` и возвращает explicit `tables_not_mounted` sentinel. Virtual-table mount (activity.json + stats.json) — webview-side follow-up (DuckDB-WASM работает лучше из Worker).
-- [ ] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` API (если доступен в Cursor / VS Code 1.95+) — для облачных workspace заранее загружаем файлы в local cache. **Зачем:** open-folder latency = 0 после первого pull.
+- [~] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (`planPrefetchHints` + `PrefetchApiNotAvailableError`); 7 unit-тестов. Recency-weighted (lastOpened > lastModified), maxCount cap, sizeBytes cap, cold-and-unused dropping. Live `vscode.workspace.fs.prefetch` wiring blocked on proposed-API stabilisation.
 
 ### v2.20.3. Security / privacy (7–9)
 
@@ -351,16 +351,16 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ### v2.20.4. Modern protocols (10–12)
 
-- [ ] **Webhook → SSE upgrade для GDrive / OneDrive** — заменить smee polling на native Server-Sent Events где провайдер поддерживает (GDrive Drive Activity API streaming endpoint). **Зачем:** lower latency, less API quota.
-- [ ] **OAuth 2.1 PAR (Pushed Authorization Requests)** — модернизировать наш PKCE-flow для FAPI 2 compliance. Optional path, не урон existing коду. **Зачем:** corp-юзеры с FAPI requirement (банки, госорганы).
-- [ ] **WebAuthn → Passkeys (FIDO2 with sync)** — в дополнение к envelope-shape (v2.2): поддержка iCloud Keychain / Google Password Manager passkey sync, чтобы один passkey работал на всех устройствах юзера. Вписывается в v2.2.4 как `multi-device` extension. **Зачем:** UX без re-enroll на каждой машине.
+- [~] **Webhook → SSE upgrade для GDrive / OneDrive** — pure SSE декодер `src/core/webhookSseDecoder.ts` (`createSseDecoder` + `SseTransportNotImplementedError`). 10 unit-тестов на event boundary parsing, multi-line data, retry/id capture, \r\n line endings. Per-provider connection wiring (Drive Activity API streaming) остаётся.
+- [~] **OAuth 2.1 PAR (Pushed Authorization Requests)** — pure planner `src/core/oauthPushedAuthRequest.ts` (`buildParRequestBody` / `parseParResponse` / `buildAuthorizeUrlWithRequestUri` + `ParEndpointNotConfiguredError`). 10 unit-тестов. Wiring через провайдер-specific endpoint (когда провайдер объявит PAR endpoint metadata) — следующая итерация.
+- [~] **WebAuthn → Passkeys (FIDO2 with sync)** — pure reconciler `src/core/passkeyMultiDeviceReconciler.ts:reconcilePasskeyRegistries` мержит локальный + remote registry без потери `displayName` / `primaryId`; 6 unit-тестов. Transport (P2P или cloud-mirror) для импорта peer-registry — следующая итерация.
 
 ### v2.20.5. UX / fit-and-finish (13–16)
 
 - [x] **`.vscodesync-readme.md` auto-render** — `vscodesync.showWorkspaceReadme` + first-open auto-render in `src/commands/registerReadmeAutoRender.ts`; pure markdown renderer in `src/core/workspaceReadmeMd.ts` (XSS-safe; subset: headings / lists / inline bold-italic-code / safe http(s) links). 6 unit tests. Commit `c3332db`.
 - [x] **Conflict heatmap → SARIF export** — `vscodesync.exportConflictsToSarif` shipped (commit `c3332db`). SARIF v2.1.0 builder in `src/core/conflictHeatmapSarif.ts` with %SRCROOT% uriBaseId, dedup, line-range clamping. 7 unit tests.
 - [~] **Workspace templates marketplace** — typed `WorkspaceTemplateManifest` + strict `parseWorkspaceTemplate` + sentinel `TemplateMarketplaceNotImplementedError` shipped in `src/core/workspaceTemplate.ts` (commit `c45337d`). Registry fetch (git-hosted index) + install command remain.
-- [ ] **Onboarding video walkthroughs** — short MP4 в `media/walkthroughs/` (3 video по 30 s: «add first file», «resolve conflict», «time-travel»). Walkthrough JSON ссылается на video через `data-href`. **Зачем:** видео конвертит лучше чем текст.
+- [~] **Onboarding video walkthroughs** — pure spec `src/core/walkthroughVideoSpec.ts` (`ONBOARDING_VIDEO_SPECS`, `buildWalkthroughVideoStep`, `renderVideoMarkdownBody`); 6 unit-тестов. `package.json contributes.walkthroughs` расширен 3 шагами с `media.markdown` ссылками; `media/walkthroughs/*.md` checked-in, `*.mp4` в `.gitignore` до реальной записи. **Blocked:** реальные MP4 captures (нужен человек с экраном).
 
 ---
 

@@ -596,6 +596,39 @@
             "completionEvents": [
               "onCommand:vscodesync.quickSwitchWorkspace"
             ]
+          },
+          {
+            "id": "videoAddFirstFile",
+            "title": "Видео: добавьте первый файл",
+            "description": "30-секундный клип: ПКМ на файле → VSCodeSync → Add file.",
+            "media": {
+              "markdown": "media/walkthroughs/add-first-file.md"
+            },
+            "completionEvents": [
+              "onCommand:vscodesync.addCurrentFile"
+            ]
+          },
+          {
+            "id": "videoResolveConflict",
+            "title": "Видео: разрешение конфликта",
+            "description": "30-секундный клип: 3-way diff, keep mine / take theirs.",
+            "media": {
+              "markdown": "media/walkthroughs/resolve-conflict.md"
+            },
+            "completionEvents": [
+              "onCommand:vscodesync.resolveConflicts"
+            ]
+          },
+          {
+            "id": "videoTimeTravel",
+            "title": "Видео: time-travel scrubber",
+            "description": "30-секундный клип: scrubber по версиям файла + restore.",
+            "media": {
+              "markdown": "media/walkthroughs/time-travel.md"
+            },
+            "completionEvents": [
+              "onCommand:vscodesync.openTimeTravelScrubber"
+            ]
           }
         ]
       }
