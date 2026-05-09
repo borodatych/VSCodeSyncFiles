@@ -154,7 +154,8 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.6.6. Smart features
 
-- [~] **`src/commands/registerSmartFeatures.ts`** — bundle с контрактом `{ context, storageDir }`: `showAchievements` + `installWorkspaceTemplate` (закрыто). `bulkPush` теперь в `registerSyncOps.ts` (commit `e7a5787`). Остальные (`aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `showInsightsWeeklyDigest`, `diffSnapshots`, `openTimeTravelScrubber`) требуют `runWithEngine` / `globalConfig` / `registry` — отдельный файл `registerSmartFeaturesEngine.ts` со своим richer-контрактом, следующая итерация.
+- [x] **`src/commands/registerSmartFeatures.ts`** — bundle с контрактом `{ context, storageDir }`: `showAchievements` + `installWorkspaceTemplate`. `bulkPush` теперь в `registerSyncOps.ts` (commit `e7a5787`).
+- [x] **`src/commands/registerSmartFeaturesEngine.ts`** — engine-rich bundle с контрактом `{ context, globalConfig, tryAuthenticatedProvider }`: `aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `showInsightsWeeklyDigest`, `diffSnapshots`. Helper `ensureAiCommandEnabled` co-located. `openTimeTravelScrubber` остаётся в `registerFileOperations.ts` (file-ops группа).
 
 ### v2.6.7. Validation
 
@@ -309,13 +310,13 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ### v2.14.1. Engine bundle (refactor, no behaviour change)
 
-- [x] `vscodesync.aiSessionSummary` — registered in `plannedPaletteCommands.ts:305`.
-- [x] `vscodesync.aiSuggestWorkspaceTags` — registered in `plannedPaletteCommands.ts:344`.
-- [x] `vscodesync.aiPathMapper` — registered in `plannedPaletteCommands.ts:781` (delegates to `aiPathMapperCommand.ts`).
-- [x] `vscodesync.showInsightsWeeklyDigest` — registered in `plannedPaletteCommands.ts:933`.
-- [x] `vscodesync.diffSnapshots` — registered in `plannedPaletteCommands.ts:945`.
-- [x] `vscodesync.openTimeTravelScrubber` — registered in `registerFileOperations.ts:471`.
-- [ ] _Refactor only:_ move the 5 commands из `plannedPaletteCommands.ts` в фокусный `src/commands/registerSmartFeaturesEngine.ts` (separate engine-rich bundle).
+- [x] `vscodesync.aiSessionSummary` — moved to `registerSmartFeaturesEngine.ts`.
+- [x] `vscodesync.aiSuggestWorkspaceTags` — moved to `registerSmartFeaturesEngine.ts`.
+- [x] `vscodesync.aiPathMapper` — moved to `registerSmartFeaturesEngine.ts` (delegates to `aiPathMapperCommand.ts`).
+- [x] `vscodesync.showInsightsWeeklyDigest` — moved to `registerSmartFeaturesEngine.ts`.
+- [x] `vscodesync.diffSnapshots` — moved to `registerSmartFeaturesEngine.ts`.
+- [x] `vscodesync.openTimeTravelScrubber` — registered in `registerFileOperations.ts:471` (file-ops группа).
+- [x] _Refactor:_ 5 commands вынесены из `plannedPaletteCommands.ts` в `src/commands/registerSmartFeaturesEngine.ts` с фокусным `{ context, globalConfig, tryAuthenticatedProvider }` контрактом.
 
 ### v2.14.2. AI cancellation + privacy
 
