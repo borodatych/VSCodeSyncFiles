@@ -18,7 +18,7 @@ import {
   deactivateWebhookPushIfProvider,
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
-import { createAndStartSmeeRelay, type SmeeRelay } from "./webhookTunnel.js";
+import { createAndStartTunnelRelay, type TunnelRelayHandle } from "./tunnelRelayDispatcher.js";
 import {
   reconcileSubscription,
 } from "./webhookExpirationMath.js";
@@ -36,7 +36,7 @@ interface PersistedState {
 
 let serverHandle: GraphWebhookLocalServer | undefined;
 let renewLoop: ReturnType<typeof setInterval> | undefined;
-let smeeRelay: SmeeRelay | undefined;
+let tunnelRelay: TunnelRelayHandle | undefined;
 
 function statePath(globalConfig: GlobalConfigManager): string {
   return path.join(globalConfig.getStorageDir(), STATE_NAME);
@@ -81,10 +81,13 @@ export function registerOneDriveWebhookLifecycle(
   syncDeps: QuietFullSyncAllFoldersDeps,
   out: vscode.OutputChannel,
 ): OneDriveWebhookLifecycleHandle {
-  const stopSmee = (): void => {
-    if (smeeRelay) {
-      smeeRelay.dispose();
-      smeeRelay = undefined;
+  const stopRelay = (): void => {
+    if (tunnelRelay) {
+      const handle = tunnelRelay;
+      tunnelRelay = undefined;
+      void handle.dispose().catch((e: unknown) => {
+        log(out, `tunnel relay dispose: ${e instanceof Error ? e.message : String(e)}`);
+      });
     }
   };
 
@@ -93,7 +96,7 @@ export function registerOneDriveWebhookLifecycle(
       serverHandle.close();
       serverHandle = undefined;
     }
-    stopSmee();
+    stopRelay();
   };
 
   const stopRenew = (): void => {
@@ -135,23 +138,30 @@ export function registerOneDriveWebhookLifecycle(
       return;
     }
 
-    // Start smee.io tunnel if enabled and no static URL provided
+    // Start tunnel relay (smee / cloudflared / tailscale-funnel) if enabled
+    // and no static URL provided.
     if (enabled && !notificationUrl && tunnelEnabled) {
       try {
-        const relay = await createAndStartSmeeRelay((payload) => {
-          void payload; // payload dispatched; local server handles actual processing
-          recordWebhookPushNotification();
-          void runQuietFullSyncAllFolders({ ...syncDeps, bypassSchedule: true });
+        const rawProvider = cfg.get<string>("webhooks.tunnelProvider");
+        const relay = await createAndStartTunnelRelay({
+          rawProviderSetting: rawProvider,
+          handler: (payload) => {
+            void payload; // payload dispatched; local server handles actual processing
+            recordWebhookPushNotification();
+            void runQuietFullSyncAllFolders({ ...syncDeps, bypassSchedule: true });
+          },
         });
-        smeeRelay = relay;
-        notificationUrl = relay.channelUrl;
-        log(out, `smee.io tunnel active: ${notificationUrl}`);
-        await vscode.window.showInformationMessage(
-          `VSCodeSync: webhook tunnel активен — ${notificationUrl}`,
-          "OK",
-        );
+        if (relay) {
+          tunnelRelay = relay;
+          notificationUrl = relay.publicUrl;
+          log(out, `${relay.provider} tunnel active: ${notificationUrl}`);
+          await vscode.window.showInformationMessage(
+            `VSCodeSync: webhook tunnel активен (${relay.provider}) — ${notificationUrl}`,
+            "OK",
+          );
+        }
       } catch (e) {
-        log(out, `smee.io tunnel failed: ${e instanceof Error ? e.message : String(e)}`);
+        log(out, `tunnel relay failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -291,7 +301,8 @@ export function registerOneDriveWebhookLifecycle(
         e.affectsConfiguration(`${CFG}.webhooks.url`) ||
         e.affectsConfiguration(`${CFG}.webhooks.localPort`) ||
         e.affectsConfiguration(`${CFG}.webhooks.fallbackAfterMinutes`) ||
-        e.affectsConfiguration(`${CFG}.webhooks.tunnelEnabled`)
+        e.affectsConfiguration(`${CFG}.webhooks.tunnelEnabled`) ||
+        e.affectsConfiguration(`${CFG}.webhooks.tunnelProvider`)
       ) {
         void refresh();
       }
