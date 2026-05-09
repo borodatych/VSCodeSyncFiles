@@ -396,6 +396,11 @@
           "default": "llama3.2",
           "description": "Model name passed to the local AI merge endpoint. Ignored when endpoint is 'vscode-lm'."
         },
+        "vscodesync.templates.registryUrl": {
+          "type": "string",
+          "default": "",
+          "description": "URL of the workspace template registry index (JSON: { templates: [{ manifestUrl }] }). Empty = use the default public index."
+        },
         "vscodesync.gitBranchAutoSync": {
           "type": "boolean",
           "default": true,
@@ -1190,6 +1195,14 @@
       {
         "command": "vscodesync.completeBlake3Migration",
         "title": "%cmd.completeBlake3Migration.title%"
+      },
+      {
+        "command": "vscodesync.installWorkspaceTemplateFromMarketplace",
+        "title": "VSCodeSync: Install Workspace Template (Marketplace)"
+      },
+      {
+        "command": "vscodesync.signInDeviceCode",
+        "title": "VSCodeSync: Sign In via OAuth Device Code"
       },
       {
         "command": "vscodesync.startP2PSession",
