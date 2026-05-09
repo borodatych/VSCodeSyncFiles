@@ -381,6 +381,12 @@
           "default": false,
           "description": "Enable experimental WebRTC P2P session (cloud-bypass mode). When off, the Start P2P Session command shows the planned wizard but does not open a DataChannel. Requires the optional @roamhq/wrtc binding to be loadable."
         },
+        "vscodesync.aiMerge.endpoint": {
+          "type": "string",
+          "default": "vscode-lm",
+          "enum": ["vscode-lm", "ollama", "lm-studio"],
+          "description": "AI merge backend. 'vscode-lm' uses the built-in VS Code Language Model API; 'ollama' targets a local Ollama server (http://localhost:11434); 'lm-studio' targets LM Studio's OpenAI-compatible local endpoint (http://localhost:1234). Use a custom http(s):// URL for any other OpenAI-compatible service — non-localhost custom URLs warn before sending content."
+        },
         "vscodesync.gitBranchAutoSync": {
           "type": "boolean",
           "default": true,
@@ -1191,6 +1197,18 @@
       {
         "command": "vscodesync.passkeyFallback",
         "title": "VSCodeSync: Passphrase Fallback"
+      },
+      {
+        "command": "vscodesync.exportConflictsToSarif",
+        "title": "VSCodeSync: Export Conflicts to SARIF"
+      },
+      {
+        "command": "vscodesync.showWorkspaceReadme",
+        "title": "VSCodeSync: Show Workspace README"
+      },
+      {
+        "command": "vscodesync.exportEncryptedBundle",
+        "title": "VSCodeSync: Export Encrypted Bundle"
       }
     ],
     "menus": {
