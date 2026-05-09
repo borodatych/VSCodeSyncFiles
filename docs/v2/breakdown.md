@@ -64,7 +64,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.2.2. Desktop platform (electron / vscode native)
 
 - [x] **Native FIDO2 через webview API** — `runWebAuthnEnroll/Unlock` в `webauthnWebview.ts` создаёт Chromium-backed webview, который Electron forward'ит в OS FIDO2 stack (Windows Hello / Touch ID / hardware keys) автоматически. CSP nonce + sandboxed script.
-- [~] Альтернатива: native binding `node-webauthn` — typed `WebAuthnAdapter` + `makeSkeletonWebAuthnAdapter` sentinel in `src/core/webauthnPlatformAdapter.ts` (commit `c45337d`). Real native binding remains.
+- [~] Альтернатива: native binding — typed `WebAuthnAdapter` + `makeSkeletonWebAuthnAdapter` sentinel in `src/core/webauthnPlatformAdapter.ts` (commit `c45337d`). Lazy loader `src/core/nativeFido2Probe.ts:probeNativeFido2` пытается load opt-in candidates (default — пустой список); 5 unit-тестов на module_not_installed / module_load_failed / success-with-mock-loader / candidate priority. Реальный wire-up `node-webauthn` / `fido2-lib` остаётся (нужен FIDO2 toolchain в OS — постинсталл может падать).
 
 ### v2.2.3. UI flow
 
