@@ -32,7 +32,6 @@ import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./core/pathMapping.js";
 import type { ActiveWorkspaceEntry, TrackedFile, ProviderType } from "./core/types.js";
-import { normalizeWorkspaceSyncState } from "./core/types.js";
 import { SyncStatusBarController } from "./ui/statusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { WorkspacesTreeDnD } from "./ui/workspacesTreeDnD.js";
@@ -115,6 +114,7 @@ import { registerFileTreeContextCommands } from "./commands/registerFileTreeCont
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
+import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -1754,65 +1754,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     ...registerWorkspaceTreeContextCommands({ context, treeView, workspacesTree, syncPreviewChannel, runWithEngine }),
 
-    vscode.commands.registerCommand("vscodesync.quickSwitchWorkspace", async () => {
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      if (folders.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
-        return;
-      }
-      type Item = vscode.QuickPickItem & {
-        folder: vscode.WorkspaceFolder;
-        workspaceId: string;
-        suspended: boolean;
-        lastSync: string;
-      };
-      const items: Item[] = [];
-      for (const folder of folders) {
-        const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-        for (const aw of wc.activeWorkspaces) {
-          const filesForWs = wc.files.filter((f) => f.workspaceId === aw.workspaceId);
-          let last = "";
-          for (const f of filesForWs) {
-            if (f.lastSync && f.lastSync > last) last = f.lastSync;
-          }
-          const note = aw.workspaceNote || aw.workspaceId;
-          const suspended = normalizeWorkspaceSyncState(aw) === "suspended";
-          const icon = suspended ? "$(debug-pause)" : "$(cloud)";
-          items.push({
-            folder,
-            workspaceId: aw.workspaceId,
-            suspended,
-            lastSync: last,
-            label: `${icon} ${note}`,
-            description: suspended ? "suspended" : "active",
-            detail: `${folder.name} · ${String(filesForWs.length)} files${last ? ` · last sync ${last}` : ""}`,
-          });
-        }
-      }
-      if (items.length === 0) {
-        await vscode.window.showInformationMessage(
-          "VSCodeSync: в открытых папках нет подключённых workspace.",
-        );
-        return;
-      }
-      // Recent first
-      items.sort((a, b) => (a.lastSync < b.lastSync ? 1 : a.lastSync > b.lastSync ? -1 : 0));
-      const picked = await vscode.window.showQuickPick(items, {
-        title: "VSCodeSync · быстрое переключение workspace",
-        placeHolder: "Выберите workspace для просмотра / Resume / Suspend",
-        matchOnDescription: true,
-        matchOnDetail: true,
-      });
-      if (!picked) return;
-      // Focus the Workspaces view so the user lands in context. Resume of a
-      // suspended workspace is one click away from there; we don't try to
-      // synthesise a SyncTreeElement here because the view will rebuild it.
-      await vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
-      if (picked.suspended) {
-        await vscode.window.showInformationMessage(
-          `«${picked.label.replace(/^\$\([^)]+\)\s*/, "")}» в режиме Suspend — нажмите Resume в дереве.`,
-        );
-      }
+    ...registerWorkspaceMgmtCommands({
+      globalConfig,
+      workspacesTree,
+      statusBar,
+      runWithEngine,
     }),
 
     ...registerWorkspaceLifecycleCommands({
@@ -2080,64 +2026,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     ...registerSyncOpsCommands({ runWithEngine }),
 
-    vscode.commands.registerCommand("vscodesync.detachWorkspace", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(root);
-      if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showWarningMessage("Нет активных workspace.");
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      const aw = wc.activeWorkspaces.find((w) => w.workspaceId === ws);
-      const confirm = await vscode.window.showWarningMessage(
-        `Отключить «${aw?.workspaceNote ?? ws}» только в этом проекте? Данные в облаке не удаляются.`,
-        { modal: true },
-        "Отключить",
-      );
-      if (confirm !== "Отключить") {
-        return;
-      }
-      await runWithEngine(
-        async (engine) => {
-          await engine.detachWorkspaceLocal(ws);
-          await vscode.window.showInformationMessage("Workspace отключён локально.");
-        },
-        undefined,
-      );
-    }),
-
-    vscode.commands.registerCommand("vscodesync.renameWorkspaceNote", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(root);
-      const aw = wc.activeWorkspaces.find((w) => w.workspaceId === ws);
-      const note =
-        (await vscode.window.showInputBox({
-          title: "VSCodeSync: имя workspace",
-          value: aw?.workspaceNote ?? ws,
-          validateInput: (v) => (v.trim() ? undefined : "Укажите непустое имя"),
-        })) ?? "";
-      if (!note.trim()) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.renameWorkspaceNote(ws, note.trim());
-        await vscode.window.showInformationMessage("Название обновлено в облаке и локально.");
-      });
-    }),
-
     vscode.commands.registerCommand("vscodesync.setGitBranchWorkspace", async () => {
       const root = pickRoot();
       if (!root) {
@@ -2188,33 +2076,6 @@ export function activate(context: vscode.ExtensionContext): void {
             ? "VSCodeSync: привязка git branch снята; workspace всегда активен."
             : "VSCodeSync: gitBranch записан в облачный манифест и кэш локально.",
         );
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.editWorkspaceTags", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        const fields = await engine.getWorkspaceManifestFields(ws);
-        const currentTags =
-          fields === undefined ? "" : fields.tags.length > 0 ? fields.tags.join(", ") : "";
-        const raw = await vscode.window.showInputBox({
-          title: "VSCodeSync: теги workspace",
-          prompt: "Через запятую; пробелы обрезаются. Пусто — очистить теги",
-          value: currentTags,
-        });
-        if (raw === undefined) {
-          return;
-        }
-        const tags = raw.split(",").map((s) => s.trim());
-        await engine.setWorkspaceTags(ws, tags);
-        await vscode.window.showInformationMessage("Теги в облачном манифесте обновлены.");
       });
     }),
 
@@ -3015,32 +2876,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Command: copy a share-link for the current workspace to clipboard.
-  context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.shareWorkspaceLink", async () => {
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      if (folders.length === 0) return;
-      const wc = await WorkspaceConfigManager.load(folders[0].uri.fsPath);
-      if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync: нет активных workspace для расшаривания.");
-        return;
-      }
-      const pick = wc.activeWorkspaces.length === 1
-        ? wc.activeWorkspaces[0]
-        : await vscode.window.showQuickPick(
-            wc.activeWorkspaces.map((w) => ({ label: w.workspaceNote, description: w.workspaceId, w })),
-            { placeHolder: "Workspace для расшаривания" },
-          ).then((p) => p?.w);
-      if (!pick) return;
-      const gc = await globalConfig.load();
-      const provider = gc.activeProvider ?? "onedrive";
-      const link = `vscode://borodatych.vscodesyncfiles/connect?provider=${encodeURIComponent(provider)}&workspaceId=${encodeURIComponent(pick.workspaceId)}`;
-      await vscode.env.clipboard.writeText(link);
-      await vscode.window.showInformationMessage(
-        `VSCodeSync: link скопирован в буфер обмена. Откройте его на другой машине, чтобы подключить workspace «${pick.workspaceNote}».`,
-      );
-    }),
-  );
+  // shareWorkspaceLink — moved into registerWorkspaceMgmtCommands.
 
   // Activity-feed saved searches and panel webviews — registered via per-area
   // command modules (см. v2.6 декомпозицию `extension.ts`).
