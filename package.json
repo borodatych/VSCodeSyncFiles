@@ -1016,6 +1016,10 @@
         "title": "%cmd.stopSyncRecording.title%"
       },
       {
+        "command": "vscodesync.openSyncReplayViewer",
+        "title": "%cmd.openSyncReplayViewer.title%"
+      },
+      {
         "command": "vscodesync.importWorkspaceStructure",
         "title": "%cmd.importWorkspaceStructure.title%"
       },

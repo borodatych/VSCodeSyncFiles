@@ -119,6 +119,7 @@
   "cmd.detectGarbageTracked.title": "VSCodeSync: Найти мусорные tracked файлы (предложить .vscodesync.ignore)",
   "cmd.startSyncRecording.title": "VSCodeSync: Начать запись sync-сессии (replay)",
   "cmd.stopSyncRecording.title": "VSCodeSync: Остановить запись и сохранить replay JSON",
+  "cmd.openSyncReplayViewer.title": "VSCodeSync: Открыть sync replay viewer",
   "cmd.importWorkspaceStructure.title": "VSCodeSync: Импортировать структуру воркспейса",
   "cmd.suspendWorkspace.title": "VSCodeSync: Приостановить воркспейс...",
   "cmd.resumeWorkspace.title": "VSCodeSync: Возобновить Workspace...",

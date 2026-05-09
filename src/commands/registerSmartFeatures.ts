@@ -27,5 +27,9 @@ export function registerSmartFeaturesCommands(deps: SmartFeaturesCommandsDeps): 
       const { runInstallWorkspaceTemplate } = await import("../ui/workspaceTemplatesCommand.js");
       await runInstallWorkspaceTemplate();
     }),
+    vscode.commands.registerCommand("vscodesync.openSyncReplayViewer", async () => {
+      const { runOpenSyncReplayViewer } = await import("../ui/syncReplayViewerPanel.js");
+      await runOpenSyncReplayViewer(deps.context, deps.storageDir);
+    }),
   ];
 }

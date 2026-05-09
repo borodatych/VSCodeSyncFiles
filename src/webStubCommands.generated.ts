@@ -95,6 +95,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.detectGarbageTracked",
   "vscodesync.startSyncRecording",
   "vscodesync.stopSyncRecording",
+  "vscodesync.openSyncReplayViewer",
   "vscodesync.importWorkspaceStructure",
   "vscodesync.openStats",
   "vscodesync.createSnapshot",

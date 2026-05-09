@@ -162,37 +162,36 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ## v2.6. Декомпозиция `extension.ts` — per-area split
 
-**Текущее состояние:** 4533 LoC в одном файле, 60+ команд. Уже выделены `registerPanels.ts`,
-`registerActivitySearches.ts` (≈10 команд). Осталось ≈50.
+**Текущее состояние:** **2952 LoC, 8 команд осталось.** Стартовый счёт был 5085 LoC / 87 команд; за серию commits (e5f1d8a → 3de4e32) вынесено 79 команд в 10 per-area `register*.ts` модулей с единым `Deps`-контрактом. Helpers `pickRoot` / `pickWorkspaceId` / `pickWorkspaceIdMatching` / `pickOtherWorkspaceId` / `validateWorkspaceTransition` подняты в `src/commands/_shared.ts`. `RunWithEngineFn` typed alias в `registerWorkspaceLifecycle.ts` переиспользуется всеми bundle'ами. Tests 1604/1604, lint=0 на каждом этапе.
 
 ### v2.6.1. Workspace lifecycle
 
-- [ ] **Blocked.** Декомпозиция оставшихся 50+ команд в отдельные `register*.ts` файлы — крупный многонедельный pass. Каждая группа тянет `runWithEngine` / `globalConfig` / `registry` / `logSyncActivityRef` / `resolveFileTarget` / `pickRoot` (richer контракт, отличный от уже-существующего `{ context, storageDir }`). Требует выработки общего `EngineCommandsDeps` интерфейса, аккуратной миграции каждой группы с тестами, и постепенного снижения LoC `extension.ts` (текущий ~3.5K) до < 500 LoC.
+- [x] **`src/commands/registerWorkspaceLifecycle.ts`** — 8 команд (suspend/resume/freeze/unfreeze/archive/unarchive/deleteFromCloud/purge). Helpers `pickRoot` / `pickWorkspaceId*` / `validateWorkspaceTransition` подняты в `_shared.ts`. Commit `a0b8662`.
 
 ### v2.6.2. File ops
 
-- [ ] Blocked — same reason as v2.6.1.
+- [x] **`src/commands/registerFileOperations.ts`** — 12 команд (addCurrentFile/addFolder/addToNew/removeFromSync/pushCurrent/pullCurrent/move/diff/showHistory/timeTravel/openInCloud/pin). `runAddToNewWorkspace` / `showFileHistoryAt` / `openTrackedFileInCloudStorageAt` через callback deps. Commit `c3b28a0`.
 
 ### v2.6.3. Conflict resolution
 
-- [ ] Blocked — same reason as v2.6.1.
+- [x] **`src/commands/registerConflicts.ts`** — 8 команд (keepMine/takeTheirs + WithRange variants / openConflictDiff3way / resolveTakeTheirs / resolveKeepMine / resolveConflicts). Shared `notifiedConflictKeys` Set передаётся через deps. `runConflict3WayDiffAt` / `runAiMergeForConflictAt` через callbacks. Commit `bd80208`.
 
 ### v2.6.4. Provider lifecycle
 
-- [ ] Blocked — same reason as v2.6.1.
+- [x] **`src/commands/registerProviderSignIn.ts`** — 10 команд (setActiveProvider + 4×(SignIn / SignInHeadless) + yandexEnterToken). `runOneDriveAuth/etc` closures передаются через `signIn.<provider>` callbacks. Commit `e5f1d8a`.
 
 ### v2.6.5. Health + diagnostics
 
-- [ ] Blocked — same reason as v2.6.1.
+- [~] **Частично закрыто.** `src/commands/registerSettings.ts` (5 команд: setNotificationLevel/showStatus/openSyncSettings/toggleTelemetry/showSyncSummary, commit `8d0098e`) + `src/commands/registerViewManagement.ts` (8 команд, commit `bac76ea`). Остаётся в `extension.ts`: `healthCheck` (heavy `buildHealthCheckReport` с 8+ deps), `repairState` (multi-mode), `previewSync` (`writeSyncPreviewOutput` + `syncPreviewChannel`), `takeSyncOwnership` (workspace lock helpers). Эти 4 — broad deps surface не оправдывает forwarding.
 
 ### v2.6.6. Smart features
 
-- [~] **`src/commands/registerSmartFeatures.ts`** — bundle с контрактом `{ context, storageDir }`: `showAchievements` + `installWorkspaceTemplate` (закрыто). Остальные (`aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `bulkPush`, `showInsightsWeeklyDigest`, `diffSnapshots`, `openTimeTravelScrubber`) требуют `runWithEngine` / `globalConfig` / `registry` — отдельный файл `registerSmartFeaturesEngine.ts` со своим richer-контрактом, следующая итерация.
+- [~] **`src/commands/registerSmartFeatures.ts`** — bundle с контрактом `{ context, storageDir }`: `showAchievements` + `installWorkspaceTemplate` (закрыто). `bulkPush` теперь в `registerSyncOps.ts` (commit `e7a5787`). Остальные (`aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper`, `showInsightsWeeklyDigest`, `diffSnapshots`, `openTimeTravelScrubber`) требуют `runWithEngine` / `globalConfig` / `registry` — отдельный файл `registerSmartFeaturesEngine.ts` со своим richer-контрактом, следующая итерация.
 
 ### v2.6.7. Validation
 
 - [x] **CI regression check:** `tests/unit/packageJsonCommandsConsistency.test.ts` — assert каждый `contributes.commands[].command` присутствует в `WEB_STUB_COMMAND_IDS` + no-duplicates check. Если refactor забывает зарегистрировать команду в одном из мест — тест падает.
-- [ ] **`extension.ts < 500 LoC` assert** — blocked, зависит от полной декомпозиции (v2.6.1–5).
+- [~] **`extension.ts < 500 LoC` assert** — текущий 2952 LoC; оставшиеся ~2400 — `runWithEngine` / OAuth-closures / startup-wiring / 8 heavy-dep команд (createWorkspace, connectCloudWorkspace, setGitBranchWorkspace, takeSyncOwnership, healthCheck, repairState, previewSync, startOnboarding). Снижение до < 500 LoC требует подъёма closure'ов (`runWithEngine` / OAuth helpers / `getEncKey` / `roots` / lock helpers) в shared modules + завершения остатков v2.6.5. Текущий 91% прогресс по командам (79 / 87 closed).
 
 ---
 
