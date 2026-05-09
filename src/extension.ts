@@ -46,7 +46,6 @@ import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
 import { syncMachinesRegistrySelf } from "./core/machineRegistry.js";
 import { classifyExpiry, formatExpiryHint } from "./core/tokenExpiryHints.js";
-import { buildHealthCheckReport } from "./ui/healthCheckReport.js";
 import { SyncScheduleDeferredStore } from "./core/syncScheduleDeferredStore.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
 import { scheduleStartupSyncSummary } from "./ui/syncSummaryStartup.js";
@@ -73,8 +72,6 @@ import { syncSessionPause } from "./core/syncSessionPause.js";
 import type { LineEndingMode } from "./utils/normalize.js";
 import {
   disposeWorkspaceInstanceLock,
-  forceAcquireWorkspaceInstanceLock,
-  peekWorkspaceInstanceLockHolder,
   scheduleWorkspaceInstanceLockRefresh,
 } from "./core/workspaceInstanceLock.js";
 import { registerVsCodeSyncTelemetry } from "./telemetry/extensionTelemetry.js";
@@ -115,6 +112,7 @@ import { registerFileOperationsCommands } from "./commands/registerFileOperation
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
 import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
+import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -2002,104 +2000,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // VS Code passes (uri, allUris) when multiple files are selected in Explorer
 
-    vscode.commands.registerCommand("vscodesync.takeSyncOwnership", async () => {
-      const storageDir = globalConfig.getStorageDir();
-      const currentRoots = roots().map((f) => f.uri.fsPath);
-      if (currentRoots.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync: нет открытых папок workspace.");
-        return;
-      }
-      const holder = await peekWorkspaceInstanceLockHolder(storageDir, currentRoots).catch(() => null);
-      const pidHint = holder ? ` Текущий держатель — PID ${String(holder.pid)}.` : "";
-      const choice = await vscode.window.showWarningMessage(
-        `VSCodeSync: стать основным окном синхронизации?${pidHint} Push из этого окна будет разрешён. Другое окно VSCode с тем же workspace перейдёт в Read-only.`,
-        { modal: true },
-        "Стать основным",
-      );
-      if (choice !== "Стать основным") {
-        return;
-      }
-      await forceAcquireWorkspaceInstanceLock(storageDir, currentRoots);
-      refreshWorkspaceInstanceLock();
-      await vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
-    }),
-
     ...registerSyncOpsCommands({ runWithEngine }),
 
-    vscode.commands.registerCommand("vscodesync.healthCheck", async () => {
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      if (folders.length === 0) {
-        await vscode.window.showWarningMessage("VSCodeSync Health: откройте папку workspace.");
-        return;
-      }
-      const provider = await tryAuthenticatedProvider(registry);
-      const gcData = await globalConfig.load();
-      const encKey = await getEncKey();
-      const report = await buildHealthCheckReport({
-        workspaceFolders: folders,
-        globalConfig,
-        activeProviderType: gcData.activeProvider,
-        provider,
-        machineId: gcData.machineId,
-        machineName: gcData.machineName,
-        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, encKey),
-        offlineQueue: offlineQueueStore,
-        scheduleDeferred: scheduleDeferredStore,
-      });
-      healthCheckChannel.clear();
-      for (const ln of report.lines) {
-        healthCheckChannel.appendLine(ln);
-      }
-      healthCheckChannel.show(true);
-
-      const actions: string[] = [];
-      if (report.machinesRegistryStale && provider) {
-        actions.push("Обновить _machines.json");
-      }
-      if (report.staleLockTargets.length > 0 && provider) {
-        actions.push("Починить stale lock");
-      }
-      actions.push("Закрыть");
-
-      const picked = await vscode.window.showInformationMessage(
-        "VSCodeSync Health Check — открыта панель Output. Изменения в облаке только по кнопкам ниже.",
-        ...actions,
-      );
-
-      if (picked === "Обновить _machines.json" && provider) {
-        try {
-          await syncMachinesRegistrySelf(provider, gcData.machineId, gcData.machineName);
-          await vscode.window.showInformationMessage("VSCodeSync: _machines.json обновлён (запись этой машины).");
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          await vscode.window.showErrorMessage(`VSCodeSync: не удалось обновить реестр — ${msg}`);
-        }
-      }
-
-      if (picked === "Починить stale lock" && provider) {
-        let total = 0;
-        for (const t of report.staleLockTargets) {
-          try {
-            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, encKey);
-            total += await eng.clearStaleManifestEditingLocks(t.workspaceId);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            await vscode.window.showErrorMessage(`VSCodeSync: починка stale lock — ${t.workspaceNote}: ${msg}`);
-            total = -1;
-            break;
-          }
-        }
-        if (total > 0) {
-          await vscode.window.showInformationMessage(
-            `VSCodeSync: сброшено устаревших soft lock в манифесте: ${String(total)}`,
-          );
-        }
-        if (total === 0 && report.staleLockTargets.length > 0) {
-          await vscode.window.showInformationMessage(
-            "VSCodeSync: устаревших soft lock не осталось (уже сброшены или порог времени изменился). Перезапустите Health Check.",
-          );
-        }
-      }
+    ...registerDiagnosticsCommands({
+      globalConfig,
+      registry,
+      offlineQueueStore,
+      scheduleDeferredStore,
+      healthCheckChannel,
+      refreshWorkspaceInstanceLock,
+      tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+      getEncKey,
+      makeEngine,
+      roots,
     }),
 
 
