@@ -20,6 +20,8 @@ import { guardPathsBeforePush } from "../ui/syncGuards.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
+import type { ProviderRegistry } from "../providers/registry.js";
+import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 export interface FileTreeContextCommandsDeps {
@@ -27,11 +29,10 @@ export interface FileTreeContextCommandsDeps {
   workspacesTree: WorkspacesTreeProvider;
   statusBar: SyncStatusBarController;
   fileDecorations: SyncFileDecorationController;
+  registry: ProviderRegistry;
   refreshActiveEditor: () => void;
   runWithEngine: RunWithEngineFn;
   logSyncActivity: (ev: ActivityEventInput) => void;
-  showFileHistoryAt: (target: { root: string; fsPath: string }) => Promise<void>;
-  openTrackedFileInCloudStorageAt: (target: { root: string; fsPath: string }) => Promise<void>;
 }
 
 export function registerFileTreeContextCommands(
@@ -42,12 +43,15 @@ export function registerFileTreeContextCommands(
     workspacesTree,
     statusBar,
     fileDecorations,
+    registry,
     refreshActiveEditor,
     runWithEngine,
     logSyncActivity,
-    showFileHistoryAt,
-    openTrackedFileInCloudStorageAt,
   } = deps;
+  const showFileHistoryAt = (target: { root: string; fsPath: string }): Promise<void> =>
+    runShowFileHistory(runWithEngine, globalConfig, target);
+  const openTrackedFileInCloudStorageAt = (target: { root: string; fsPath: string }): Promise<void> =>
+    openTrackedFileInCloudStorage(registry, globalConfig, target);
 
   return [
     vscode.commands.registerCommand(

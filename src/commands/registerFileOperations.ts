@@ -16,25 +16,161 @@ import * as os from "node:os";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
+import type { ProviderRegistry } from "../providers/registry.js";
 import { collectFilesToAddUnderRoots } from "../utils/syncAddCollect.js";
 import { guardPathsBeforeAdd, guardPathsBeforePush } from "../ui/syncGuards.js";
 import { pickWorkspaceId, pickOtherWorkspaceId } from "./_shared.js";
+import { resolveFileTarget, resolveFileTargetLoose as resolveFileTargetLooseRaw } from "./_fileTargetHelpers.js";
+import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+
+async function runAddToNewWorkspaceImpl(
+  globalConfig: GlobalConfigManager,
+  runWithEngine: RunWithEngineFn,
+  uri: vscode.Uri | undefined,
+  allUris: vscode.Uri[] | undefined,
+): Promise<void> {
+  const selectedUris =
+    Array.isArray(allUris) && allUris.length > 1
+      ? allUris
+      : uri
+        ? [uri]
+        : undefined;
+
+  const target = await resolveFileTarget(selectedUris?.[0] ?? uri);
+  if (!target) {
+    return;
+  }
+
+  const underRoot = (p: string): boolean => {
+    const rel = path.relative(target.root, p);
+    return rel !== ".." && !rel.startsWith(`..${path.sep}`);
+  };
+
+  const rawPaths: string[] = selectedUris
+    ? selectedUris.map((u) => u.fsPath).filter((p) => underRoot(p))
+    : [target.fsPath];
+
+  const note =
+    (await vscode.window.showInputBox({
+      title: "VSCodeSync: новый workspace",
+      prompt: "Будет создан воркспейс и в него добавлены выбранные файлы или содержимое папки",
+      placeHolder: "Название / описание воркспейса",
+    }))?.trim() ?? "";
+  if (!note) {
+    return;
+  }
+
+  await runWithEngine(async (engine, root, gc) => {
+    const cfgProv = await gc.load();
+    const t = cfgProv.activeProvider ?? "onedrive";
+    try {
+      const existing = await engine.listRemoteWorkspaceSummaries();
+      const duplicate = existing.find(
+        (w) => w.workspaceNote.trim().toLowerCase() === note.trim().toLowerCase(),
+      );
+      if (duplicate) {
+        const proceed = await vscode.window.showWarningMessage(
+          `VSCodeSync: workspace с названием «${duplicate.workspaceNote}» уже существует в облаке (${duplicate.workspaceId}). Создать ещё один?`,
+          { modal: true },
+          "Создать",
+        );
+        if (proceed !== "Создать") {
+          return;
+        }
+      }
+    } catch {
+      /* non-fatal: listing may fail */
+    }
+
+    const wid = await engine.createWorkspace(note, t);
+    const wc = await WorkspaceConfigManager.load(root);
+    const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wid);
+    if (!ent) {
+      throw new Error("VSCodeSync: запись workspace не найдена после создания");
+    }
+    const gconf = await gc.load();
+
+    let selectionHadDirectory = false;
+    for (const p of rawPaths) {
+      try {
+        const st = await fs.stat(p);
+        if (st.isDirectory()) {
+          selectionHadDirectory = true;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const expanded = await collectFilesToAddUnderRoots(target.root, rawPaths, {
+      entry: ent,
+      cfg: wc,
+      machineName: gconf.machineName,
+    });
+    if (expanded.length === 0) {
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: воркспейс «${note}» создан. Нечего добавить (пусто или всё в правилах исключения).`,
+      );
+      return;
+    }
+    if (expanded.length > 500) {
+      const big = await vscode.window.showWarningMessage(
+        `VSCodeSync: будет добавлено ${String(expanded.length)} файлов. Продолжить?`,
+        { modal: true },
+        "Продолжить",
+      );
+      if (big !== "Продолжить") {
+        await vscode.window.showInformationMessage(
+          `VSCodeSync: воркспейс «${note}» создан без файлов (операция отменена).`,
+        );
+        return;
+      }
+    }
+    const useBulkAddConfirm = expanded.length > 1 || selectionHadDirectory;
+    if (useBulkAddConfirm) {
+      const ok = await vscode.window.showInformationMessage(
+        `Новый воркспейс «${note}»: добавить ${String(expanded.length)} файл(ов) и синхронизировать?`,
+        { modal: true },
+        "Добавить",
+      );
+      if (ok !== "Добавить") {
+        await vscode.window.showInformationMessage(
+          `VSCodeSync: воркспейс «${note}» создан; файлы не добавлены.`,
+        );
+        return;
+      }
+    }
+    const withPreview = !useBulkAddConfirm;
+    if (
+      !(await guardPathsBeforeAdd(expanded, withPreview, target.root, {
+        entry: ent,
+        cfg: wc,
+        machineName: gconf.machineName,
+      }))
+    ) {
+      await vscode.window.showInformationMessage(
+        `VSCodeSync: воркспейс «${note}» создан; добавление файлов отменено.`,
+      );
+      return;
+    }
+    await engine.addFiles(wid, expanded);
+    if (expanded.length === 1) {
+      await vscode.window.showInformationMessage(`Воркспейс «${note}» создан; файл синхронизирован.`);
+    } else {
+      await vscode.window.showInformationMessage(
+        `Воркспейс «${note}» создан; ${String(expanded.length)} файлов синхронизировано.`,
+      );
+    }
+  }, target.root);
+}
 
 export interface FileOperationsCommandsDeps {
   context: vscode.ExtensionContext;
   globalConfig: GlobalConfigManager;
   offlineQueueStore: SyncOfflineQueueStore;
+  registry: ProviderRegistry;
   runWithEngine: RunWithEngineFn;
-  resolveFileTarget: (
-    uri: vscode.Uri | undefined,
-  ) => Promise<{ root: string; fsPath: string } | undefined>;
-  resolveFileTargetLoose: (
-    arg: unknown,
-  ) => Promise<{ root: string; fsPath: string } | undefined>;
-  runAddToNewWorkspace: (uri?: vscode.Uri, allUris?: vscode.Uri[]) => Promise<void>;
-  showFileHistoryAt: (target: { root: string; fsPath: string }) => Promise<void>;
-  openTrackedFileInCloudStorageAt: (target: { root: string; fsPath: string }) => Promise<void>;
 }
 
 export function registerFileOperationsCommands(
@@ -44,13 +180,17 @@ export function registerFileOperationsCommands(
     context,
     globalConfig,
     offlineQueueStore,
+    registry,
     runWithEngine,
-    resolveFileTarget,
-    resolveFileTargetLoose,
-    runAddToNewWorkspace,
-    showFileHistoryAt,
-    openTrackedFileInCloudStorageAt,
   } = deps;
+  const resolveFileTargetLoose = (arg: unknown): Promise<{ root: string; fsPath: string } | undefined> =>
+    resolveFileTargetLooseRaw(globalConfig, arg);
+  const showFileHistoryAt = (target: { root: string; fsPath: string }): Promise<void> =>
+    runShowFileHistory(runWithEngine, globalConfig, target);
+  const openTrackedFileInCloudStorageAt = (target: { root: string; fsPath: string }): Promise<void> =>
+    openTrackedFileInCloudStorage(registry, globalConfig, target);
+  const runAddToNewWorkspace = (uri?: vscode.Uri, allUris?: vscode.Uri[]): Promise<void> =>
+    runAddToNewWorkspaceImpl(globalConfig, runWithEngine, uri, allUris);
 
   return [
     vscode.commands.registerCommand("vscodesync.addCurrentFile", async (uri?: vscode.Uri, allUris?: vscode.Uri[]) => {

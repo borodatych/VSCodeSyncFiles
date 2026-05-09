@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 import { GlobalConfigManager } from "./core/globalConfigManager.js";
 import { initLog } from "./utils/logVscode.js";
 import { verboseLog } from "./utils/log.js";
@@ -29,7 +28,6 @@ import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTre
 import { WorkspacesTreeDnD } from "./ui/workspacesTreeDnD.js";
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
 import { guardPathsBeforeAdd } from "./ui/syncGuards.js";
-import { collectFilesToAddUnderRoots } from "./utils/syncAddCollect.js";
 import { writeSyncPreviewOutput } from "./ui/syncPreviewUi.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
 import { registerProviderMigrationCommand } from "./ui/providerMigrationUi.js";
@@ -107,13 +105,7 @@ import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
 import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCreate.js";
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
 import { createProviderAuthFlows } from "./auth/providerAuthFlows.js";
-import { resolveFileTarget, resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
-import {
-  openTrackedFileInCloudStorage,
-  runAiMergeForConflict,
-  runConflict3WayDiff,
-  runShowFileHistory,
-} from "./commands/_engineFlows.js";
+import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -785,141 +777,6 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   /** Create a cloud workspace, then add selected files/folders (same rules as add to existing). */
-  const runAddToNewWorkspace = async (uri?: vscode.Uri, allUris?: vscode.Uri[]): Promise<void> => {
-    const selectedUris =
-      Array.isArray(allUris) && allUris.length > 1
-        ? allUris
-        : uri
-          ? [uri]
-          : undefined;
-
-    const target = await resolveFileTarget(selectedUris?.[0] ?? uri);
-    if (!target) {
-      return;
-    }
-
-    const underRoot = (p: string): boolean => {
-      const rel = path.relative(target.root, p);
-      return rel !== ".." && !rel.startsWith(`..${path.sep}`);
-    };
-
-    const rawPaths: string[] = selectedUris
-      ? selectedUris.map((u) => u.fsPath).filter((p) => underRoot(p))
-      : [target.fsPath];
-
-    const note =
-      (await vscode.window.showInputBox({
-        title: "VSCodeSync: новый workspace",
-        prompt: "Будет создан воркспейс и в него добавлены выбранные файлы или содержимое папки",
-        placeHolder: "Название / описание воркспейса",
-      }))?.trim() ?? "";
-    if (!note) {
-      return;
-    }
-
-    await runWithEngine(async (engine, root, gc) => {
-      const cfgProv = await gc.load();
-      const t = cfgProv.activeProvider ?? "onedrive";
-      try {
-        const existing = await engine.listRemoteWorkspaceSummaries();
-        const duplicate = existing.find(
-          (w) => w.workspaceNote.trim().toLowerCase() === note.trim().toLowerCase(),
-        );
-        if (duplicate) {
-          const proceed = await vscode.window.showWarningMessage(
-            `VSCodeSync: workspace с названием «${duplicate.workspaceNote}» уже существует в облаке (${duplicate.workspaceId}). Создать ещё один?`,
-            { modal: true },
-            "Создать",
-          );
-          if (proceed !== "Создать") {
-            return;
-          }
-        }
-      } catch {
-        /* non-fatal: listing may fail */
-      }
-
-      const wid = await engine.createWorkspace(note, t);
-      const wc = await WorkspaceConfigManager.load(root);
-      const ent = wc.activeWorkspaces.find((w) => w.workspaceId === wid);
-      if (!ent) {
-        throw new Error("VSCodeSync: запись workspace не найдена после создания");
-      }
-      const gconf = await gc.load();
-
-      let selectionHadDirectory = false;
-      for (const p of rawPaths) {
-        try {
-          const st = await fs.stat(p);
-          if (st.isDirectory()) {
-            selectionHadDirectory = true;
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      const expanded = await collectFilesToAddUnderRoots(target.root, rawPaths, {
-        entry: ent,
-        cfg: wc,
-        machineName: gconf.machineName,
-      });
-      if (expanded.length === 0) {
-        await vscode.window.showInformationMessage(
-          `VSCodeSync: воркспейс «${note}» создан. Нечего добавить (пусто или всё в правилах исключения).`,
-        );
-        return;
-      }
-      if (expanded.length > 500) {
-        const big = await vscode.window.showWarningMessage(
-          `VSCodeSync: будет добавлено ${String(expanded.length)} файлов. Продолжить?`,
-          { modal: true },
-          "Продолжить",
-        );
-        if (big !== "Продолжить") {
-          await vscode.window.showInformationMessage(
-            `VSCodeSync: воркспейс «${note}» создан без файлов (операция отменена).`,
-          );
-          return;
-        }
-      }
-      const useBulkAddConfirm = expanded.length > 1 || selectionHadDirectory;
-      if (useBulkAddConfirm) {
-        const ok = await vscode.window.showInformationMessage(
-          `Новый воркспейс «${note}»: добавить ${String(expanded.length)} файл(ов) и синхронизировать?`,
-          { modal: true },
-          "Добавить",
-        );
-        if (ok !== "Добавить") {
-          await vscode.window.showInformationMessage(
-            `VSCodeSync: воркспейс «${note}» создан; файлы не добавлены.`,
-          );
-          return;
-        }
-      }
-      const withPreview = !useBulkAddConfirm;
-      if (
-        !(await guardPathsBeforeAdd(expanded, withPreview, target.root, {
-          entry: ent,
-          cfg: wc,
-          machineName: gconf.machineName,
-        }))
-      ) {
-        await vscode.window.showInformationMessage(
-          `VSCodeSync: воркспейс «${note}» создан; добавление файлов отменено.`,
-        );
-        return;
-      }
-      await engine.addFiles(wid, expanded);
-      if (expanded.length === 1) {
-        await vscode.window.showInformationMessage(`Воркспейс «${note}» создан; файл синхронизирован.`);
-      } else {
-        await vscode.window.showInformationMessage(
-          `Воркспейс «${note}» создан; ${String(expanded.length)} файлов синхронизировано.`,
-        );
-      }
-    }, target.root);
-  };
 
   // Set after runWithEngine is defined — uses it in closure.
   repushDeletedWorkspaceRef = async (workspaceId, localRoot, savedEntry, savedFiles) => {
@@ -1181,16 +1038,13 @@ export function activate(context: vscode.ExtensionContext): void {
       workspacesTree,
       statusBar,
       fileDecorations,
+      registry,
       refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
       runWithEngine,
       logSyncActivity: (ev) => { logSyncActivityRef?.(ev); },
-      showFileHistoryAt: (target) => runShowFileHistory(runWithEngine, globalConfig, target),
-      openTrackedFileInCloudStorageAt: (target) => openTrackedFileInCloudStorage(registry, globalConfig, target),
     }),
   );
 
-  // Palette + CodeLens conflict resolution commands now live in
-  // src/commands/registerConflicts.ts.
   context.subscriptions.push(
     ...registerConflictsCommands({
       globalConfig,
@@ -1201,10 +1055,6 @@ export function activate(context: vscode.ExtensionContext): void {
       runWithEngine,
       logSyncActivity: (ev) => { logSyncActivityRef?.(ev); },
       notifiedConflictKeys,
-      resolveFileTarget,
-      runConflict3WayDiffAt: (target) => runConflict3WayDiff(runWithEngine, target),
-      runAiMergeForConflictAt: (target, wsId, rel) =>
-        runAiMergeForConflict(runWithEngine, target, wsId, rel, notifiedConflictKeys),
     }),
   );
 
@@ -1823,12 +1673,8 @@ export function activate(context: vscode.ExtensionContext): void {
       context,
       globalConfig,
       offlineQueueStore,
+      registry,
       runWithEngine,
-      resolveFileTarget,
-      resolveFileTargetLoose: (arg) => resolveFileTargetLoose(globalConfig, arg),
-      runAddToNewWorkspace,
-      showFileHistoryAt: (target) => runShowFileHistory(runWithEngine, globalConfig, target),
-      openTrackedFileInCloudStorageAt: (target) => openTrackedFileInCloudStorage(registry, globalConfig, target),
     }),
   );
 

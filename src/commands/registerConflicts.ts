@@ -26,6 +26,8 @@ import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import { pickRoot } from "./_shared.js";
+import { resolveFileTarget } from "./_fileTargetHelpers.js";
+import { runAiMergeForConflict, runConflict3WayDiff } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 export interface ConflictsCommandsDeps {
@@ -40,15 +42,6 @@ export interface ConflictsCommandsDeps {
    * the engine adds keys via `notifyConflict`, palette commands clear them
    * once the user has resolved the file. */
   notifiedConflictKeys: Set<string>;
-  resolveFileTarget: (
-    uri: vscode.Uri | undefined,
-  ) => Promise<{ root: string; fsPath: string } | undefined>;
-  runConflict3WayDiffAt: (target: { root: string; fsPath: string }) => Promise<void>;
-  runAiMergeForConflictAt: (
-    target: { root: string; fsPath: string },
-    workspaceId: string,
-    localPath: string,
-  ) => Promise<boolean>;
 }
 
 export function registerConflictsCommands(
@@ -63,10 +56,14 @@ export function registerConflictsCommands(
     runWithEngine,
     logSyncActivity,
     notifiedConflictKeys,
-    resolveFileTarget,
-    runConflict3WayDiffAt,
-    runAiMergeForConflictAt,
   } = deps;
+  const runConflict3WayDiffAt = (target: { root: string; fsPath: string }): Promise<void> =>
+    runConflict3WayDiff(runWithEngine, target);
+  const runAiMergeForConflictAt = (
+    target: { root: string; fsPath: string },
+    workspaceId: string,
+    localPath: string,
+  ): Promise<boolean> => runAiMergeForConflict(runWithEngine, target, workspaceId, localPath, notifiedConflictKeys);
 
   async function recordHeatmapRangeForUri(
     uri: vscode.Uri | undefined,
