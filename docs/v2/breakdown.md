@@ -346,8 +346,8 @@ ACL parser / status registry / config watcher) и backends удалены.
 ### v2.20.3. Security / privacy (7–9)
 
 - [x] **Encrypted bundle export** — `vscodesync.exportEncryptedBundle` shipped (commit `c3332db`). `.vscsbundle` format = magic + AES-256-GCM via `exportKeyWithPassword`; ≥12-char passphrase enforced.
-- [~] **OAuth Device Code flow** — pure RFC 8628 helpers shipped in `src/core/oauthDeviceCodeFlow.ts` (commit `c3332db`): `parseDeviceAuthResponse` + `planDeviceCodePoll` (slow_down / authorization_pending / expired_token). UI command `vscodesync.signInDeviceCode` + per-provider device endpoint URLs remain.
-- [~] **Local LLM для AI merge** — setting `vscodesync.aiMerge.endpoint` registered + pure resolver `resolveAiMergeEndpoint` + body builders shipped (commit `c3332db`). Replacement of `vscode.lm` calls in `aiMergeService` to dispatch through the resolver remains.
+- [x] **OAuth Device Code flow** — pure RFC 8628 helpers `src/core/oauthDeviceCodeFlow.ts` (commit `c3332db`); UI command `vscodesync.signInDeviceCode` shipped в `src/commands/registerOAuthDeviceCode.ts`; per-provider endpoints в `src/startup/resolveDeviceCodeProviders.ts` (OneDrive `login.microsoftonline.com/common/oauth2/v2.0` + Google Drive `oauth2.googleapis.com/device/code`, gated на `googleDriveClientId` setting).
+- [x] **Local LLM для AI merge** — `src/core/aiMerge.runAiMerge:84-95` диспатчит через `resolveAiMergeEndpoint`: `vscode-lm` → `callVscodeLm`, иначе → `callHttpEndpoint` (Ollama / OpenAI-chat / lm-studio body shapes). `isAiMergeAvailable` гард: для не-vscode-lm endpoints возвращает true (reachability check at call-time).
 
 ### v2.20.4. Modern protocols (10–12)
 
