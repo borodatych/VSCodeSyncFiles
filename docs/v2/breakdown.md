@@ -112,7 +112,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.3.4. Transition window
 
 - [x] **Команда `vscodesync.checkBlake3Migration`** — `src/commands/registerHashMigration.ts`. Walks `_meta.json` всех active workspaces через `provider.downloadFile(metaCloudPath(workspaceId))`, агрегирует через `runHashAlgoMigrationCheck`, выдаёт rec через `planBlake3MigrationAction` (с `dualWorkflowStartedMs` из `globalState['vscodesync.canonicalHashAlgo.dualWorkflowStartedMs']` — re-stamped при flip на `dual`, очищается при flip обратно). Output channel: per-workspace ratio + global recommendation + setting-aware hint.
-- [~] **Команда `vscodesync.completeBlake3Migration`** — оставлена как follow-up: backfill требует engine-side `pushMetaJson` path и aware о cloud locking; `checkBlake3Migration` (read-only) уже даёт пользователю достаточно данных, чтобы понять готовность к flip-у. `planBlake3MigrationTasks` остаётся reusable для будущей реализации.
+- [x] **Команда `vscodesync.completeBlake3Migration`** — `src/commands/registerHashMigration.ts:registerHashMigrationCommands` принимает `makeEngineForRoot(root, provider)` callback и вызывает `engine.applyHashBlake3Backfill(workspaceId, tasks)` через `planBlake3MigrationTasks`. Wiring в `extension.ts` line 620 (`makeEngineForRoot` factory). Output channel: applied/drift/missing/already counters per workspace + cancellable progress.
 
 ### v2.3.5. Performance + telemetry
 
