@@ -35,6 +35,14 @@ import {
 import { PasskeyRegistryStorage } from "./passkeyRegistryStorage.js";
 import { logSanitisedUsage } from "../telemetry/extensionTelemetry.js";
 import { runWebAuthnEnroll, runWebAuthnUnlock } from "./webauthnWebview.js";
+import { wrapDekForWebauthn, unwrapDekFromWebauthn } from "../core/passkeyEnvelopeWrap.js";
+import { deriveWebauthnKek } from "../core/keyEnvelope.js";
+import {
+  readEncryptionKey,
+  readWebauthnEnvelope,
+  storeEncryptionKey,
+  storeWebauthnEnvelope,
+} from "../core/encryptionKey.js";
 
 function logPasskeyTelemetry(event: PasskeyTelemetryEvent): void {
   const payload = toUsagePayload(event);
@@ -62,12 +70,12 @@ export function registerPasskeyCommands(deps: PasskeyCommandsDeps): vscode.Dispo
     vscode.commands.registerCommand(SHOW_COMMAND, () => runShowPasskeySettings(context, storage)),
     vscode.commands.registerCommand(REMOVE_COMMAND, () => runRemovePasskey(storage)),
     vscode.commands.registerCommand(FALLBACK_COMMAND, () => runPassphraseFallback()),
-    vscode.commands.registerCommand(ENROLL_COMMAND, () => runEnrollPasskey(storage)),
-    vscode.commands.registerCommand(UNLOCK_COMMAND, () => runUnlockWithPasskey(storage)),
+    vscode.commands.registerCommand(ENROLL_COMMAND, () => runEnrollPasskey(storage, context.secrets)),
+    vscode.commands.registerCommand(UNLOCK_COMMAND, () => runUnlockWithPasskey(storage, context.secrets)),
   ];
 }
 
-async function runEnrollPasskey(storage: PasskeyRegistryStorage): Promise<void> {
+async function runEnrollPasskey(storage: PasskeyRegistryStorage, secrets: vscode.SecretStorage): Promise<void> {
   const displayName = await vscode.window.showInputBox({
     prompt: "Имя для нового passkey (например: «MacBook Touch ID», «YubiKey»)",
     placeHolder: "VSCodeSync · enroll passkey",
@@ -110,13 +118,39 @@ async function runEnrollPasskey(storage: PasskeyRegistryStorage): Promise<void> 
     os: "Other",
   });
 
+  // v2.2.x — DEK rewrap. When PRF was returned by the authenticator and a
+  // primary DEK already exists in SecretStorage, wrap the DEK under a KEK
+  // derived from the PRF output and persist the envelope. Future
+  // unlockWithPasskey re-derives the same KEK using the saved prfSaltHex.
+  let rewrapNote = "";
+  if (result.prfB64Url) {
+    try {
+      const dek = await readEncryptionKey(secrets);
+      if (dek) {
+        const prfBytes = b64UrlToBytes(result.prfB64Url);
+        const envelope = wrapDekForWebauthn(
+          new Uint8Array(dek),
+          result.credentialIdB64Url,
+          (_credentialId: string, salt: Uint8Array) => deriveWebauthnKek(prfBytes, salt),
+        );
+        envelope.meta = { ...(envelope.meta ?? {}), prfSaltHex };
+        await storeWebauthnEnvelope(secrets, envelope);
+        rewrapNote = " DEK обёрнут в WebAuthn envelope.";
+      } else {
+        rewrapNote = " DEK ещё не создан (используйте Encryption commands).";
+      }
+    } catch (e) {
+      rewrapNote = ` Wrap DEK failed: ${e instanceof Error ? e.message : String(e)}.`;
+    }
+  }
+
   const prfNote = result.prfB64Url
-    ? "PRF extension активна — KEK будет производным от PRF при unlock."
-    : "PRF extension недоступна (authenticator не поддерживает) — fallback на credential id.";
+    ? `PRF extension активна.${rewrapNote}`
+    : "PRF extension недоступна — DEK rewrap пропущен.";
   await vscode.window.showInformationMessage(`VSCodeSync: passkey добавлен. ${prfNote}`);
 }
 
-async function runUnlockWithPasskey(storage: PasskeyRegistryStorage): Promise<void> {
+async function runUnlockWithPasskey(storage: PasskeyRegistryStorage, secrets: vscode.SecretStorage): Promise<void> {
   const registry = await storage.load();
   if (registry.entries.length === 0) {
     await vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkeys. Запустите Enroll passkey.");
@@ -135,8 +169,11 @@ async function runUnlockWithPasskey(storage: PasskeyRegistryStorage): Promise<vo
   );
   if (!picked) return;
 
+  // v2.2.x — replay enrolled prfSaltHex when an envelope exists, so the
+  // ceremony yields the same PRF output and the saved KEK can be re-derived.
+  const envelope = await readWebauthnEnvelope(secrets);
+  const prfSaltHex = envelope?.meta?.prfSaltHex ?? randomBytes(32).toString("hex");
   const challengeHex = randomBytes(32).toString("hex");
-  const prfSaltHex = randomBytes(32).toString("hex");
   const result = await runWebAuthnUnlock({
     rpId: RP_ID,
     credentialIdB64Url: picked.id,
@@ -161,14 +198,32 @@ async function runUnlockWithPasskey(storage: PasskeyRegistryStorage): Promise<vo
     latencyMs: null,
   });
 
-  const prfNote = result.prfB64Url
-    ? "PRF получен — KEK derivation готов к привязке к envelope (DEK wrap pending)."
-    : "PRF недоступен — fallback flow до integration с DEK envelope.";
-  await vscode.window.showInformationMessage(`VSCodeSync: passkey ceremony OK. ${prfNote}`);
+  let unwrapNote = "";
+  if (envelope && result.prfB64Url) {
+    const prfBytes = b64UrlToBytes(result.prfB64Url);
+    const r = unwrapDekFromWebauthn(envelope, (_credentialId: string, salt: Uint8Array) => deriveWebauthnKek(prfBytes, salt));
+    if (r.ok) {
+      await storeEncryptionKey(secrets, Buffer.from(r.rawDek));
+      unwrapNote = " DEK восстановлен в SecretStorage.";
+    } else {
+      unwrapNote = ` DEK unwrap failed: ${r.reason}.`;
+    }
+  } else if (envelope && !result.prfB64Url) {
+    unwrapNote = " PRF недоступен — DEK не восстановлен (envelope сохранён).";
+  } else if (!envelope && result.prfB64Url) {
+    unwrapNote = " Envelope ещё не создан — запустите Enroll passkey.";
+  }
+
+  await vscode.window.showInformationMessage(`VSCodeSync: passkey ceremony OK.${unwrapNote}`);
 }
 
 function bytesToB64Url(b: Buffer): string {
   return b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64UrlToBytes(s: string): Uint8Array {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  return new Uint8Array(Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64"));
 }
 
 async function runShowPasskeySettings(
