@@ -341,7 +341,7 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 - [~] **WebRTC SCTP multiplexing** — pure planner `src/core/p2pSctpMultiplex.ts` (6 тестов). Runtime adapter `src/core/sctpRuntimeHook.ts:SctpRuntimeAdapter` typed surface + `makeSkeletonSctpRuntime` + `SctpRuntimeNotImplementedError`; 2 теста. Multi-DataChannel wiring (одна `RTCPeerConnection` с N stable channels) остаётся.
 - [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle. Mount planner `src/core/duckdbVirtualTables.ts:planVirtualTableMount` эмитит `INSTALL json; LOAD json;` + `CREATE OR REPLACE VIEW <table> AS read_json_auto(...)` per source; SQL identifier validation + `DuckDbHostNotAvailableError`; 4 теста. Worker host остаётся (нужен webview-side bundle).
-- [~] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (7 тестов). Defensive adapter `src/ui/workspaceFsPrefetchAdapter.ts:tryPrefetchUris` пробит на `surface.fs.prefetch` runtime check + discriminated result (`api_not_available` / `no_uris` / `error`); 4 теста. Команда `vscodesync.prefetchActiveWorkspace` wiring остаётся.
+- [x] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (7 тестов). Defensive adapter `src/ui/workspaceFsPrefetchAdapter.ts:tryPrefetchUris` (4 теста). Команда `vscodesync.prefetchActiveWorkspace` зарегистрирована в `src/commands/registerPrefetchCommand.ts`: load tracked files → `planPrefetchHints` → `tryPrefetchUris` через `vscode.workspace.fs` cast; user-toast на каждый rejection branch (api_not_available / no_uris / error).
 
 ### v2.20.3. Security / privacy (7–9)
 

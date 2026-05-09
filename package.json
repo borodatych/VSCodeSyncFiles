@@ -1276,6 +1276,10 @@
       {
         "command": "vscodesync.exportEncryptedBundle",
         "title": "VSCodeSync: Export Encrypted Bundle"
+      },
+      {
+        "command": "vscodesync.prefetchActiveWorkspace",
+        "title": "VSCodeSync: Prefetch Active Workspace"
       }
     ],
     "menus": {
