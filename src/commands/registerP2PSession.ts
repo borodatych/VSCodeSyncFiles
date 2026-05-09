@@ -35,6 +35,7 @@ import { createSignalingTransport } from "../ui/p2pSignalingTransport.js";
 import { openP2PSession } from "../ui/p2pSessionRuntime.js";
 import type { MirrorRegistryHandle } from "../ui/p2pFileTransferMirror.js";
 import type { ActivityEventInput } from "../core/activityLog.js";
+import { attachFileReceiver } from "../ui/p2pFileTransferReceiver.js";
 
 const CFG = "vscodesync";
 
@@ -166,6 +167,12 @@ async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
       // v2.12.4 — bind authenticated channel to mirror registry so engine
       // pushFile events fan out over WebRTC alongside cloud upload.
       deps.mirrorRegistry?.bind(sessionId.trim(), null, result.channel);
+      // v2.12.4 — attach inbound receiver so peers' mirrored files land on
+      // disk. Workspace resolution falls back to the first vscode workspace
+      // folder; future iteration carries workspaceId in the manifest frame.
+      attachFileReceiver(result.channel, {
+        resolveWorkspaceRoot: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
+      });
       await vscode.window.showInformationMessage(
         `VSCodeSync: P2P session ${sessionId.trim()} открыта с ${peerMachineId.trim()}.`,
       );
