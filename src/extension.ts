@@ -47,7 +47,6 @@ import { guardPathsBeforeAdd, guardPathsBeforePush } from "./ui/syncGuards.js";
 import { collectFilesToAddUnderRoots } from "./utils/syncAddCollect.js";
 import { confirmTreeWorkspaceBulkSyncIfNeeded, writeSyncPreviewOutput } from "./ui/syncPreviewUi.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
-import { runActiveProviderSwitch } from "./ui/activeProviderSwitch.js";
 import { registerProviderMigrationCommand } from "./ui/providerMigrationUi.js";
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
 import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
@@ -114,6 +113,7 @@ import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
+import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 
 const CFG_SECTION = "vscodesync";
@@ -4302,79 +4302,21 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    vscode.commands.registerCommand("vscodesync.setActiveProvider", async () => {
-      await runActiveProviderSwitch({
-        registry,
-        globalConfig,
-        workspacesTree,
-        signInOneDrive: () => runOneDriveAuth(true),
-        signInGoogleDrive: () => runGoogleDriveAuth(true),
-        signInDropbox: () => runDropboxAuth(true),
-        signInYandexDisk: () => runYandexDiskAuth(true),
-        refreshStatusAndPanels: async () => {
-          await statusBar.refresh();
-          workspacesTree.refresh();
-          fileDecorations.refresh();
-          void refreshActiveEditorSyncContext();
-          refreshCloudWebhooks();
-        },
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.onedriveSignIn", async () => {
-      await runOneDriveAuth(true);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.onedriveSignInHeadless", async () => {
-      await runOneDriveAuth(false);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.googleDriveSignIn", async () => {
-      await runGoogleDriveAuth(true);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.googleDriveSignInHeadless", async () => {
-      await runGoogleDriveAuth(false);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.dropboxSignIn", async () => {
-      await runDropboxAuth(true);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.dropboxSignInHeadless", async () => {
-      await runDropboxAuth(false);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.yandexDiskSignIn", async () => {
-      await runYandexDiskAuth(true);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.yandexDiskSignInHeadless", async () => {
-      await runYandexDiskAuth(false);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.yandexDiskEnterToken", async () => {
-      const token = await vscode.window.showInputBox({
-        title: "VSCodeSync: Яндекс Диск — ввод токена вручную",
-        prompt: "Вставьте OAuth-токен (AQA…). Получить: oauth.yandex.ru → ваше приложение → «Получить OAuth-токен»",
-        password: true,
-        placeHolder: "AQAAAABxxxxxxxx…",
-        validateInput: (v) => (v.trim().length < 10 ? "Слишком короткий токен" : undefined),
-      });
-      if (!token?.trim()) return;
-      const { storeYandexTokens } = await import("./providers/yandex/yandexTokens.js");
-      await storeYandexTokens(context.secrets, {
-        accessToken: token.trim(),
-        expiresAtMs: Date.now() + 365 * 24 * 3600 * 1000, // отладочный токен не истекает
-      });
-      await globalConfig.set("activeProvider", "yandex");
-      await globalConfig.save();
-      workspacesTree.setActiveCloudProvider("yandex");
-      await vscode.window.showInformationMessage("Яндекс Диск: токен сохранён.");
-      await statusBar.refresh();
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
+    ...registerProviderSignInCommands({
+      context,
+      globalConfig,
+      workspacesTree,
+      statusBar,
+      fileDecorations,
+      registry,
+      refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
+      refreshCloudWebhooks,
+      signIn: {
+        oneDrive: runOneDriveAuth,
+        googleDrive: runGoogleDriveAuth,
+        dropbox: runDropboxAuth,
+        yandexDisk: runYandexDiskAuth,
+      },
     }),
 
     vscode.commands.registerCommand("vscodesync.resolveKeepMine", async (uri?: vscode.Uri) => {
