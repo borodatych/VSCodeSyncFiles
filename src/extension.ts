@@ -8,16 +8,9 @@ import { ProviderRegistry } from "./providers/registry.js";
 import { ensureWorkspaceGitignoreEntry } from "./core/workspaceGitignore.js";
 import { OneDriveProvider } from "./providers/onedrive/onedriveProvider.js";
 import { readOneDriveTokenBundle } from "./providers/onedrive/onedriveProvider.js";
-import { runOneDriveDeviceCodeLogin } from "./providers/onedrive/onedriveDeviceCode.js";
 import { GdriveProvider } from "./providers/gdrive/gdriveProvider.js";
-import { runGoogleDriveDeviceCodeLogin } from "./providers/gdrive/gdriveDeviceCode.js";
 import { DropboxProvider } from "./providers/dropbox/dropboxProvider.js";
-import { DROPBOX_OAUTH_REDIRECT_URI, runDropboxOAuthLoopback } from "./providers/dropbox/dropboxPkceOAuth.js";
 import { YandexDiskProvider } from "./providers/yandex/yandexDiskProvider.js";
-import {
-  YANDEX_OAUTH_REDIRECT_URI,
-  runYandexOAuthLoopback,
-} from "./providers/yandex/yandexPkceOAuth.js";
 import { appendActivityEvent, type ActivityEventInput } from "./core/activityLog.js";
 import { recordCompressionSaving, recordTransferBytes, type SyncTransferEvent } from "./core/syncStatsStore.js";
 import { SyncEngine } from "./core/syncEngine.js";
@@ -113,6 +106,7 @@ import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
 import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
 import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCreate.js";
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
+import { createProviderAuthFlows } from "./auth/providerAuthFlows.js";
 import { resolveFileTarget, resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import {
   openTrackedFileInCloudStorage,
@@ -554,14 +548,6 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(syncPreviewChannel);
   const healthCheckChannel = vscode.window.createOutputChannel("VSCodeSync · Health Check");
   context.subscriptions.push(healthCheckChannel);
-  const oneDriveOutputChannel = vscode.window.createOutputChannel("VSCodeSync · OneDrive");
-  context.subscriptions.push(oneDriveOutputChannel);
-  const googleDriveOutputChannel = vscode.window.createOutputChannel("VSCodeSync · Google Drive");
-  context.subscriptions.push(googleDriveOutputChannel);
-  const dropboxOutputChannel = vscode.window.createOutputChannel("VSCodeSync · Dropbox");
-  context.subscriptions.push(dropboxOutputChannel);
-  const yandexOutputChannel = vscode.window.createOutputChannel("VSCodeSync · Yandex Disk");
-  context.subscriptions.push(yandexOutputChannel);
   const fileDecorationRegistration = vscode.window.registerFileDecorationProvider(fileDecorations);
 
   // Last-sync CodeLens — visible over every tracked file (toggle via vscodesync.codeLens.enabled).
@@ -1142,190 +1128,26 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerSettingsCommands({ globalConfig, registry, statusBar }),
   );
 
-  const runOneDriveAuth = async (openBrowser: boolean): Promise<void> => {
-    const clientId = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("onedriveClientId", "");
-    if (!clientId) {
-      await vscode.window.showErrorMessage("Задайте vscodesync.onedriveClientId в настройках.");
-      return;
-    }
-    oneDriveOutputChannel.clear();
-    oneDriveOutputChannel.show(true);
-    try {
-      await runOneDriveDeviceCodeLogin(context.secrets, clientId, (uri, userCode, msg) => {
-        oneDriveOutputChannel.appendLine(msg);
-        oneDriveOutputChannel.appendLine("");
-        oneDriveOutputChannel.appendLine("Verification URL:");
-        oneDriveOutputChannel.appendLine(uri);
-        oneDriveOutputChannel.appendLine("");
-        oneDriveOutputChannel.appendLine(`User code: ${userCode}`);
-        if (openBrowser) {
-          void vscode.window.showInformationMessage(msg);
-          void vscode.env.openExternal(vscode.Uri.parse(uri));
-        } else {
-          void vscode.window.showInformationMessage(
-            "OneDrive Device Code: откройте URL из панели Output (VSCodeSync · OneDrive), например в браузере на другой машине, и введите код.",
-          );
-        }
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      oneDriveOutputChannel.appendLine(`Error: ${msg}`);
-      await vscode.window.showErrorMessage(`OneDrive: ${msg}`);
-      return;
-    }
-    await globalConfig.set("activeProvider", "onedrive");
-    await globalConfig.save();
-    workspacesTree.setActiveCloudProvider("onedrive");
-    refreshCloudWebhooks();
-    await vscode.window.showInformationMessage("OneDrive: токены сохранены.");
-    await statusBar.refresh();
-    workspacesTree.refresh();
-    fileDecorations.refresh();
-    void refreshActiveEditorSyncContext();
-  };
 
-  const runGoogleDriveAuth = async (openBrowser: boolean): Promise<void> => {
-    const clientId = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("googleDriveClientId", "");
-    if (!clientId) {
-      await vscode.window.showErrorMessage("Задайте vscodesync.googleDriveClientId в настройках.");
-      return;
-    }
-    googleDriveOutputChannel.clear();
-    googleDriveOutputChannel.show(true);
-    try {
-      await runGoogleDriveDeviceCodeLogin(context.secrets, clientId, (uri, userCode, msg) => {
-        googleDriveOutputChannel.appendLine(msg);
-        googleDriveOutputChannel.appendLine("");
-        googleDriveOutputChannel.appendLine("Verification URL:");
-        googleDriveOutputChannel.appendLine(uri);
-        googleDriveOutputChannel.appendLine("");
-        googleDriveOutputChannel.appendLine(`User code: ${userCode}`);
-        if (openBrowser) {
-          void vscode.window.showInformationMessage(msg);
-          void vscode.env.openExternal(vscode.Uri.parse(uri));
-        } else {
-          void vscode.window.showInformationMessage(
-            "Google Drive Device Code: откройте URL из панели Output (VSCodeSync · Google Drive), например в браузере на другой машине, и введите код.",
-          );
-        }
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      googleDriveOutputChannel.appendLine(`Error: ${msg}`);
-      await vscode.window.showErrorMessage(`Google Drive: ${msg}`);
-      return;
-    }
-    await globalConfig.set("activeProvider", "gdrive");
-    await globalConfig.save();
-    workspacesTree.setActiveCloudProvider("gdrive");
-    await vscode.window.showInformationMessage("Google Drive: токены сохранены.");
-    await statusBar.refresh();
-    workspacesTree.refresh();
-    fileDecorations.refresh();
-    void refreshActiveEditorSyncContext();
-    refreshCloudWebhooks();
-  };
-
-  const runDropboxAuth = async (openBrowser: boolean): Promise<void> => {
-    const appKey = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("dropboxAppKey", "");
-    if (!appKey) {
-      await vscode.window.showErrorMessage(
-        `Задайте vscodesync.dropboxAppKey в настройках. Redirect URI в Dropbox Console: ${DROPBOX_OAUTH_REDIRECT_URI}`,
-      );
-      return;
-    }
-    dropboxOutputChannel.clear();
-    dropboxOutputChannel.show(true);
-    dropboxOutputChannel.appendLine(`OAuth redirect (must match Dropbox app): ${DROPBOX_OAUTH_REDIRECT_URI}`);
-    dropboxOutputChannel.appendLine("");
-    try {
-      await runDropboxOAuthLoopback(context.secrets, appKey, (authUrl: string) => {
-        dropboxOutputChannel.appendLine("Authorization URL:");
-        dropboxOutputChannel.appendLine(authUrl);
-        dropboxOutputChannel.appendLine("");
-        if (openBrowser) {
-          void vscode.window.showInformationMessage("Откройте браузер для входа в Dropbox (URL также в Output).");
-          void vscode.env.openExternal(vscode.Uri.parse(authUrl));
-        } else {
-          void vscode.window.showInformationMessage(
-            "Dropbox OAuth: откройте URL из панели Output (VSCodeSync · Dropbox).",
-          );
-        }
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      dropboxOutputChannel.appendLine(`Error: ${msg}`);
-      await vscode.window.showErrorMessage(`Dropbox: ${msg}`);
-      return;
-    }
-    await globalConfig.set("activeProvider", "dropbox");
-    await globalConfig.save();
-    workspacesTree.setActiveCloudProvider("dropbox");
-    await vscode.window.showInformationMessage("Dropbox: токены сохранены.");
-    await statusBar.refresh();
-    workspacesTree.refresh();
-    fileDecorations.refresh();
-    void refreshActiveEditorSyncContext();
-    refreshCloudWebhooks();
-  };
-
-  const runYandexDiskAuth = async (openBrowser: boolean): Promise<void> => {
-    const yandexCfg = vscode.workspace.getConfiguration(CFG_SECTION);
-    const clientId = yandexCfg.get<string>("yandexOAuthClientId", "");
-    const useAppFolder = yandexCfg.get<boolean>("yandexUseAppFolder", false);
-    if (!clientId) {
-      await vscode.window.showErrorMessage(
-        `Задайте vscodesync.yandexOAuthClientId в настройках. Redirect URI в Яндекс OAuth: ${YANDEX_OAUTH_REDIRECT_URI}`,
-      );
-      return;
-    }
-    yandexOutputChannel.clear();
-    yandexOutputChannel.show(true);
-    yandexOutputChannel.appendLine(`OAuth redirect (должен совпадать с приложением Яндекса): ${YANDEX_OAUTH_REDIRECT_URI}`);
-    if (useAppFolder) {
-      yandexOutputChannel.appendLine("Режим: папка приложения (scope: cloud_api:disk.app_folder)");
-    }
-    yandexOutputChannel.appendLine("");
-    try {
-      await runYandexOAuthLoopback(context.secrets, clientId, (authUrl: string) => {
-        yandexOutputChannel.appendLine("Authorization URL:");
-        yandexOutputChannel.appendLine(authUrl);
-        yandexOutputChannel.appendLine("");
-        if (openBrowser) {
-          void vscode.window.showInformationMessage("Откройте браузер для входа в Яндекс (URL также в Output).");
-          void vscode.env.openExternal(vscode.Uri.parse(authUrl));
-        } else {
-          void vscode.window.showInformationMessage(
-            "Yandex OAuth: откройте URL из панели Output (VSCodeSync · Yandex Disk).",
-          );
-        }
-      }, useAppFolder);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      yandexOutputChannel.appendLine(`Error: ${msg}`);
-      await vscode.window.showErrorMessage(`Yandex Disk: ${msg}`);
-      return;
-    }
-    await globalConfig.set("activeProvider", "yandex");
-    await globalConfig.save();
-    workspacesTree.setActiveCloudProvider("yandex");
-    await vscode.window.showInformationMessage("Яндекс Диск: токены сохранены.");
-    await statusBar.refresh();
-    workspacesTree.refresh();
-    fileDecorations.refresh();
-    void refreshActiveEditorSyncContext();
-    refreshCloudWebhooks();
-  };
+  const providerAuthFlows = createProviderAuthFlows({
+    context,
+    globalConfig,
+    workspacesTree,
+    statusBar,
+    fileDecorations,
+    refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
+    refreshCloudWebhooks,
+  });
 
   registerProviderMigrationCommand(context, {
     registry,
     globalConfig,
     workspacesTree,
     makeEngine,
-    signInOneDrive: () => runOneDriveAuth(true),
-    signInGoogleDrive: () => runGoogleDriveAuth(true),
-    signInDropbox: () => runDropboxAuth(true),
-    signInYandexDisk: () => runYandexDiskAuth(true),
+    signInOneDrive: () => providerAuthFlows.oneDrive(true),
+    signInGoogleDrive: () => providerAuthFlows.googleDrive(true),
+    signInDropbox: () => providerAuthFlows.dropbox(true),
+    signInYandexDisk: () => providerAuthFlows.yandexDisk(true),
     refreshUi: async () => {
       await statusBar.refresh();
       workspacesTree.refresh();
@@ -1414,12 +1236,7 @@ export function activate(context: vscode.ExtensionContext): void {
       registry,
       refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
       refreshCloudWebhooks,
-      signIn: {
-        oneDrive: runOneDriveAuth,
-        googleDrive: runGoogleDriveAuth,
-        dropbox: runDropboxAuth,
-        yandexDisk: runYandexDiskAuth,
-      },
+      signIn: providerAuthFlows,
     }),
 
     ...registerHeavyMiscCommands({
