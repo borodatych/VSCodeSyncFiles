@@ -50,6 +50,8 @@ import { registerProviders } from "./startup/registerProviders.js";
 import { registerConfigChangeListeners } from "./startup/registerConfigChangeListeners.js";
 import { restoreWorkspacesTreeFilters } from "./startup/restoreWorkspacesTreeFilters.js";
 import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceInstanceLockRefresher.js";
+import { createSyncOutputChannels } from "./startup/createSyncOutputChannels.js";
+import { unpausePersistedSync } from "./startup/unpausePersistedSync.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -176,23 +178,13 @@ export function activate(context: vscode.ExtensionContext): void {
     void recordCompressionSaving(globalConfig.getStorageDir(), saved);
   };
 
-  void (async () => {
-    const g = await globalConfig.load();
-    if (g.syncPaused) {
-      syncSessionPause.setPaused(true);
-      await globalConfig.set("syncPaused", false);
-      await globalConfig.save();
-    }
-  })();
+  unpausePersistedSync(globalConfig, syncSessionPause);
 
   const registry = registerProviders({ context, globalConfig });
 
   const fileDecorations = new SyncFileDecorationController();
   context.subscriptions.push(fileDecorations);
-  const syncPreviewChannel = vscode.window.createOutputChannel("VSCodeSync · Preview");
-  context.subscriptions.push(syncPreviewChannel);
-  const healthCheckChannel = vscode.window.createOutputChannel("VSCodeSync · Health Check");
-  context.subscriptions.push(healthCheckChannel);
+  const { syncPreviewChannel, healthCheckChannel } = createSyncOutputChannels(context);
   const fileDecorationRegistration = vscode.window.registerFileDecorationProvider(fileDecorations);
 
   registerCodeLensProviders({ context, globalConfig });
