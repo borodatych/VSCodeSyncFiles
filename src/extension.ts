@@ -114,6 +114,7 @@ import { registerWorkspaceTreeContextCommands } from "./commands/registerWorkspa
 import { registerFileTreeContextCommands } from "./commands/registerFileTreeContext.js";
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
+import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -2077,146 +2078,7 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
     }),
 
-
-    vscode.commands.registerCommand("vscodesync.pushAll", async () => {
-      await runWithEngine(async (engine) => {
-        await engine.pushAll();
-        await vscode.window.showInformationMessage("Push all: готово.");
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.bulkPush", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const cfg = await WorkspaceConfigManager.load(root);
-      if (cfg.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace для push.");
-        return;
-      }
-      const { planBulkPush, formatBulkPushResults } = await import("./core/bulkPushWizard.js");
-      const targets = cfg.activeWorkspaces.map((w) => {
-        const pendingFileCount = cfg.files.filter(
-          (f) => f.workspaceId === w.workspaceId && f.syncStatus !== "conflict",
-        ).length;
-        return {
-          workspaceId: w.workspaceId,
-          workspaceNote: w.workspaceNote || w.workspaceId,
-          pendingFileCount,
-        };
-      });
-      const plan = planBulkPush(targets);
-      if (plan.totalWorkspaces === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет workspace c файлами для push.");
-        return;
-      }
-      const picks = await vscode.window.showQuickPick(
-        plan.targets.map((t) => ({
-          label: t.workspaceNote,
-          description: `${String(t.pendingFileCount)} файл(ов) · ${t.workspaceId.slice(0, 8)}`,
-          picked: true,
-          workspaceId: t.workspaceId,
-        })),
-        {
-          canPickMany: true,
-          title: `Bulk Push — ${String(plan.totalWorkspaces)} workspace(s), ${String(plan.totalPendingFiles)} файл(ов)`,
-          placeHolder: "Выберите workspace'ы для push (Space — toggle, Enter — старт)",
-        },
-      );
-      if (!picks || picks.length === 0) {
-        return;
-      }
-      const selected = new Set(picks.map((p) => p.workspaceId));
-      const channel = vscode.window.createOutputChannel("VSCodeSync · Bulk Push");
-      channel.clear();
-      channel.show(true);
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "VSCodeSync · Bulk Push",
-          cancellable: false,
-        },
-        async (progress) => {
-          await runWithEngine(async (engine) => {
-            const results: import("./core/syncEngine.js").PushAllResult[] = [];
-            for (const { workspaceId, label } of picks) {
-              if (!selected.has(workspaceId)) continue;
-              try {
-                const r = await engine.pushAll(workspaceId, (ev) => {
-                  if (ev.kind === "workspace_started") {
-                    progress.report({ message: `${ev.workspaceNote} (${String(ev.index + 1)}/${String(ev.total)})…` });
-                    channel.appendLine(`▶ ${ev.workspaceNote} (${ev.workspaceId})`);
-                  } else if (ev.ok) {
-                    channel.appendLine(`  ✓ pushed ${String(ev.pushedFiles)} file(s)`);
-                  }
-                });
-                results.push(...r);
-              } catch (e) {
-                const error = e instanceof Error ? e.message : String(e);
-                channel.appendLine(`  ✗ ${error}`);
-                results.push({ workspaceId, ok: false, pushedFiles: 0, error });
-                void label;
-              }
-            }
-            channel.appendLine("");
-            channel.appendLine(formatBulkPushResults(results));
-          }, root);
-        },
-      );
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pullAll", async () => {
-      await runWithEngine(async (engine) => {
-        await engine.pullAll();
-        await vscode.window.showInformationMessage("Pull all: готово.");
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.syncWorkspace", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.syncWorkspace(ws);
-        await vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pushWorkspace", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.pushAll(ws);
-        await vscode.window.showInformationMessage("Push workspace: готово.");
-      });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pullWorkspace", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const ws = await pickWorkspaceId(root);
-      if (!ws) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.pullAll(ws);
-        await vscode.window.showInformationMessage("Pull workspace: готово.");
-      });
-    }),
+    ...registerSyncOpsCommands({ runWithEngine }),
 
     vscode.commands.registerCommand("vscodesync.detachWorkspace", async () => {
       const root = pickRoot();
