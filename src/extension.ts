@@ -1,12 +1,7 @@
 import * as vscode from "vscode";
 import { GlobalConfigManager } from "./core/globalConfigManager.js";
 import { initLog } from "./utils/logVscode.js";
-import { ProviderRegistry } from "./providers/registry.js";
 import type { ICloudProvider } from "./providers/cloudProviderTypes.js";
-import { OneDriveProvider } from "./providers/onedrive/onedriveProvider.js";
-import { GdriveProvider } from "./providers/gdrive/gdriveProvider.js";
-import { DropboxProvider } from "./providers/dropbox/dropboxProvider.js";
-import { YandexDiskProvider } from "./providers/yandex/yandexDiskProvider.js";
 import { appendActivityEvent } from "./core/activityLog.js";
 import { recordCompressionSaving, recordTransferBytes } from "./core/syncStatsStore.js";
 import { SyncEngine } from "./core/syncEngine.js";
@@ -54,6 +49,7 @@ import { registerSmartFeaturesEngineCommands } from "./commands/registerSmartFea
 import { registerHashMigrationCommands } from "./commands/registerHashMigration.js";
 import { registerOAuthDeviceCodeCommand } from "./commands/registerOAuthDeviceCode.js"; import { resolveDeviceCodeProviders } from "./startup/resolveDeviceCodeProviders.js"; import { registerTemplateMarketplace } from "./commands/registerTemplateMarketplace.js";
 import { registerPrefetchCommand } from "./commands/registerPrefetchCommand.js";
+import { registerProviders } from "./startup/registerProviders.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -194,39 +190,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   })();
 
-  const registry = new ProviderRegistry(() => globalConfig.load());
-  registry.register("onedrive", () => new OneDriveProvider(context.secrets));
-  registry.register(
-    "gdrive",
-    () =>
-      new GdriveProvider(context.secrets, () => {
-        const raw = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("googleDriveClientId", "");
-        return typeof raw === "string" ? raw : "";
-      }),
-  );
-  registry.register(
-    "yandex",
-    () => {
-      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
-      const useAppFolder = cfg.get<boolean>("yandexUseAppFolder", false);
-      return new YandexDiskProvider(
-        context.secrets,
-        () => {
-          const raw = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("yandexOAuthClientId", "");
-          return typeof raw === "string" ? raw : "";
-        },
-        useAppFolder,
-      );
-    },
-  );
-  registry.register(
-    "dropbox",
-    () =>
-      new DropboxProvider(context.secrets, () => {
-        const raw = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("dropboxAppKey", "");
-        return typeof raw === "string" ? raw : "";
-      }),
-  );
+  const registry = registerProviders({ context, globalConfig });
 
   const fileDecorations = new SyncFileDecorationController();
   context.subscriptions.push(fileDecorations);

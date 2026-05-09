@@ -21,7 +21,7 @@ const EXTENSION_TS = resolve(HERE, "..", "..", "src", "extension.ts");
 
 /** Hard ceiling — see header for the rationale. Lower this whenever a new
  * extraction lands; never raise it without a follow-up extraction issue. */
-const LOC_CEILING = 818;
+const LOC_CEILING = 781;
 
 /** Soft target — when current LoC drops below this, lower the ceiling. */
 const LOC_SOFT_TARGET = 500;
