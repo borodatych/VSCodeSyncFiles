@@ -256,75 +256,70 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ## v2.11. Foundation wiring — extension.ts decomposition (Phase 0)
 
-**Текущее состояние:** [extension.ts](../../src/extension.ts) — 1734 LoC, 6 module-level dedup Set'ов, 5 ref-callbacks, `makeEngine` (~218 LoC) + `runWithEngine` (~50 LoC) + startup-orchestration. Дальнейшее сокращение требует решения по shared state ownership; этот раздел фиксирует план.
+**Текущее состояние (2026-05-09):** SHIPPED in commit `6a5e827`. extension.ts
+ушёл с 1734 → 806 LoC (-54%). 8 startup modules под `src/startup/`.
+1604/1604 unit tests pass.
 
 ### v2.11.1. Engine factory extraction
 
-- [ ] **`src/startup/_engineFactory.ts`** — `createEngineFactory(deps): { makeEngine, setRefs, dedupSets }`. Переносит:
-  - `makeEngine` целиком (200–413).
-  - 6 dedup Set'ов: `warnedEncodingIssueKeys` / `warnedPreserveLfConflictKeys` / `warnedPurgeLostKeys` / `warnedSchemaVersionKeys` / `warnedCorruptManifestKeys` / `warnedRemoteDeletedKeys` (как `dedupSets`-объект, exposed для тестов).
-  - 5 ref-callbacks: `logSyncActivityRef` / `logSyncStatsTransferRef` / `logSyncCompressionRef` / `treeRefreshRef` / `repushDeletedWorkspaceRef` (через `setRefs(refs)`).
-  - `notifiedConflictKeys` Set (использует registerConflicts.ts через deps).
-  - `makeOnFilePulledCallback` helper.
-  - `syncWarnDedupeKey` helper.
-- [ ] Контракт `EngineFactoryDeps`: `{ getCfg: () => vscode.WorkspaceConfiguration }`. Engine state — module-private к `_engineFactory.ts`.
-- [ ] Тесты: `tests/unit/engineFactory.test.ts` — dedup Set'ы изолированы между instance'ами (важно для multi-window).
+- [x] **`src/startup/_engineFactory.ts`** — `createEngineFactory(): EngineFactory` (`makeEngine`, `setRefs`, `notifiedConflictKeys`). Переносит весь `makeEngine` (213 LoC), 6 dedup Set'ов и 5 ref-callbacks.
+- [ ] Тесты: `tests/unit/engineFactory.test.ts` (отложено — pure helpers тестируются через integration в существующих engine tests).
 
 ### v2.11.2. runWithEngine extraction
 
-- [ ] **`src/startup/_runWithEngine.ts`** — `createRunWithEngine(deps): RunWithEngineFn`. Принимает:
-  - `registry`, `globalConfig`, `getEncKey`, `statusBar`, `workspacesTree`, `fileDecorations`.
-  - `makeEngine` (из `_engineFactory.ts`).
-- [ ] `RunWithEngineFn` signature перенести в общий `src/commands/_shared.ts` (уже есть, обновить).
+- [x] **`src/startup/_runWithEngine.ts`** — `createRunWithEngine(deps): RunWithEngineFn`. Сигнатура `RunWithEngineFn` остаётся exported из `commands/registerWorkspaceLifecycle.ts` для совместимости с существующими bundle imports.
 
 ### v2.11.3. Startup helpers split
 
-- [ ] **`src/startup/registerWebhookLifecycles.ts`** — wraps `registerOneDriveWebhookLifecycle` + `registerGoogleDriveWebhookLifecycle`. Принимает `{ context, globalConfig, registry, makeEngine, runWithEngine }`. Подготавливает точку для wiring v2.10.1/v2.10.2.
-- [ ] **`src/startup/registerCodeLensProviders.ts`** — `last-sync` + `inline-conflict` + `hot-zone` CodeLens. Принимает `{ context, makeToRelPathDeps }`. Возвращает `{ refresh(): void }`.
-- [ ] **`src/startup/registerScheduledHelpers.ts`** — `scheduleStartupSyncSummary` / `scheduleWorkspaceInactiveArchivePrompt` / `scheduleSmartWorkspaceSuggestions` / `scheduleMachineApprovalNotifier` / `scheduleAchievementsWarmup`. Принимает `{ context, globalConfig, runWithEngine, statusBar, workspacesTree }`.
+- [x] **`src/startup/registerWebhookLifecycles.ts`** — wraps OneDrive + GoogleDrive lifecycles + общий `webhooksOut` channel + общий `webhookSyncDeps`. Возвращает `{ refresh, webhookSyncDeps }`.
+- [x] **`src/startup/registerCodeLensProviders.ts`** — last-sync + inline-conflict + hot-zone CodeLens + hover-diff (4 providers).
+- [x] **`src/startup/registerScheduledHelpers.ts`** — startup summary + long-absence + token-expiry + workspace-inactive-archive prompt + smart-workspace-suggestions + machine-approval-notifier (вместе с `VSCodeSync · Startup` OutputChannel).
+- [x] **`src/startup/registerFileLifecycleEvents.ts`** — file deletions / renames + soft-lock lifecycle (60 min auto-clear).
+- [x] **`src/startup/registerOnboardingFlow.ts`** — onboarding wizard + machines self-sync + URI handler + gitignore self + health auto check + Timeline provider.
+- [x] **`src/startup/registerWorkspaceTreeWiring.ts`** — workspaces tree DnD + setFetchRemoteSummaries + treeView creation + filter chrome + badge update subscription.
 
 ### v2.11.4. extension.ts target
 
-- [ ] **`extension.ts ≤ 700 LoC`** (текущий 1734, target -60%). После Phase 0 в `extension.ts` остаётся только `activate()` orchestration: provider registration, фактические `register*Commands` calls, soft-lock lifecycle, deactivate hook.
-- [ ] CI assert: `tests/unit/extensionTsLoc.test.ts` падает если LoC > 700 (regression guard).
+- [x] **`extension.ts → 806 LoC`** (target was ≤ 700; -54% achieved, additional -106 LoC requires extracting `runAfterSessionResume` closure (~75 LoC) and provider migration block (~45 LoC) — separate pass).
+- [ ] CI assert: `tests/unit/extensionTsLoc.test.ts` падает если LoC > 850 (regression guard for current state, lowered later).
 
 ---
 
 ## v2.12. P2P UI wiring — visible Phase 1.A
 
-**Текущее состояние:** все pure-helpers готовы (signaling envelope, transport, wizard planner, status-bar formatter, idle tracker, file-transfer planner, heartbeat frames, state machine).
+**Текущее состояние (2026-05-09):** scaffolding shipped (commit `55ae99b`).
+Pure-helpers полностью готовы; команда + status bar + registry поверх них
+работают, но реальный signaling round-trip + DataChannel + qrcode-terminal
+рендер запрятаны за `vscodesync.p2p.experimental` setting (off by default)
+и пока возвращают информационное сообщение. Полная реализация — следующая
+итерация.
 
 ### v2.12.1. Session command
 
-- [ ] **`src/commands/registerP2PSession.ts`** — `vscodesync.startP2PSession` + `vscodesync.disconnectP2PSession`. Контракт `{ context, registry, globalConfig, runWithEngine, statusBar, workspacesTree }`.
-- [ ] Multi-step QuickPick из `planP2PSessionWizard({ role, onlinePeerCount, activeSessionCount, ... })`. Шаги — pick_role → pick_target_machine → generate_offer → wait_for_answer → ice_exchange → connection_established (cloud) или QR analogues.
-- [ ] Cloud transport — `createSignalingTransport({ provider, workspaceWritable, now })` + `wrapAuthenticated(channel, key)` + `createP2PIdleTracker`.
-- [ ] QR transport — `qrcode-terminal` рендер в OutputChannel `VSCodeSync · P2P QR`. Reading scanned answer — InputBox с paste-режимом (multi-line).
-- [ ] Aborts при `no_online_peers` / `no_active_invites` warnings — modal с suggestion переключиться на QR transport.
+- [x] **`src/commands/registerP2PSession.ts`** — `vscodesync.startP2PSession` + `vscodesync.disconnectP2PSession` (scaffolding).
+- [x] Multi-step QuickPick из `planP2PSessionWizard(...)`. Шаги отображаются с описанием каждой фазы и transport (cloud / qr).
+- [~] Cloud transport — gated behind `vscodesync.p2p.experimental`; pure helpers готовы, signaling round-trip + DataChannel wiring остаётся.
+- [~] QR transport — wizard plan показывает шаги; `qrcode-terminal` рендер в OutputChannel + InputBox для scanned answer остаётся.
+- [x] Aborts при `no_online_peers` / `no_active_invites` warnings — отображаются в QuickPick как `$(warning)` items.
 
 ### v2.12.2. Status bar
 
-- [ ] **`src/ui/p2pStatusBar.ts`** — `createP2PStatusBarItem(context, sessionRuntime)`. Использует `formatP2PStatusBar(snapshot)`. Click → `vscodesync.disconnectP2PSession`.
-- [ ] `setInterval(5s)` — re-render snapshot. Snapshot собирается из live state machine + idle tracker.
+- [x] **`src/ui/p2pStatusBar.ts`** — `createP2PStatusBarItem(context, registry)` поверх `formatP2PStatusBar(registry.primary().snapshot)`. Click → `vscodesync.disconnectP2PSession`. `registry.subscribe()` driven re-render — без `setInterval`.
 
 ### v2.12.3. Idle tick runner
 
-- [ ] **`src/ui/p2pIdleTickRunner.ts`** — `setInterval(15s)` tick. На каждый tick вызывает `idleTracker.evaluate(now)`:
-  - `continue` — no-op.
-  - `warn` — статус-бар severity `warn` (4 мин до disconnect).
-  - `disconnect` — tear-down через `sessionRuntime.dispose()`, activity event `p2p_session_idle_disconnect`, статус-бар → `off`.
-- [ ] Сбрасывается на `noteFrame(now)` при каждом полученном frame'е (heartbeat / file chunk / control).
+- [ ] **`src/ui/p2pIdleTickRunner.ts`** — gated until full DataChannel wiring; pure `createP2PIdleTracker` готов в `p2pIdleDisconnect.ts`.
 
 ### v2.12.4. Session runtime + file-transfer hook
 
-- [ ] **`src/ui/p2pSessionRuntime.ts`** — клей: `state machine` (`createP2PSessionStateMachine`) + `signaling transport` + `wrapAuthenticated channel` + `idle tracker`. Exposes `dispose()`, `currentSnapshot()`, `addEventListener(type, fn)`.
-- [ ] **`syncEngine.pushFile`** хук: добавить optional `onPushFile?: (workspaceId, relPath, content) => void` в SyncEngineConfig. Хук читает `p2pSessionRegistry.getActiveSession(workspaceId)` — если есть активная P2P-сессия, отправляет файл через `planP2PFileChunks` + `sendFrame("file_chunk", ...)`. Облако всё ещё пишется (manifest-first sохраняется).
-- [ ] **`src/core/p2pSessionRegistry.ts`** — pure registry (Map<workspaceId, sessionHandle>) + idempotent register/unregister.
-- [ ] Heartbeat — `setInterval(30s)` ping. Lost-heartbeat (3× missed) → state machine event → reconnect.
+- [x] **`src/core/p2pSessionRegistry.ts`** — pure in-memory registry с notify-on-mutation (commit `55ae99b`).
+- [ ] **`src/ui/p2pSessionRuntime.ts`** — клей через state machine / signaling transport / wrapAuthenticated channel — gated behind `p2p.experimental`.
+- [ ] **`syncEngine.pushFile`** хук: optional `onPushFile?: (workspaceId, relPath, content) => void` в SyncEngineConfig — engine API change, отдельная итерация.
+- [ ] Heartbeat tick — gated.
 
 ### v2.12.5. Activity log integration
 
-- [ ] Все события из `state machine.events[]` пишутся в `activity.json` через существующий `appendActivityEvent`. `kind: "p2p_session_*"` уже зарегистрированы в `ActivityKind`.
+- [ ] Все события из `state machine.events[]` пишутся в `activity.json` — gated behind full DataChannel wiring.
 
 ---
 
@@ -334,57 +329,51 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.13.1. Cloudflared spawn
 
-- [ ] **`src/ui/tunnelBackendCloudflaredSpawn.ts`** — `child_process.spawn("cloudflared", ["tunnel", "--url", ...])` поверх `createTunnelSpawnWatchdog` + `scrapeTunnelUrl(stderr, "cloudflared")`. Lazy probe — если `cloudflared --version` exit-code != 0, возвращаем `{ ok: false, reason: "not_available" }`.
-- [ ] Existing skeleton `tunnelBackendCloudflared.ts` сохраняется как probe-only path; новый module — реализация с running process.
-- [ ] Process lifecycle: spawn → 30 s URL-scrape timeout → дождаться regex `https://[a-z0-9-]+\.trycloudflare\.com` → return TunnelHandle с `dispose() { process.kill('SIGTERM'); waitMs(2s); process.kill('SIGKILL') }`.
-- [ ] Reconnect через watchdog: process exit → exponential backoff (1s/2s/4s/cap 30s, max 3 attempts) → `state: 'giveup'` → fallback на smee.
-- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)` — emit stderr lines, verify URL extraction. 6 unit-тестов.
+- [x] **`src/ui/tunnelBackendCloudflared.ts`** — `child_process.spawn("cloudflared", ["tunnel", "--url", ...])` directly upgraded from skeleton (commit `84ce6a6`). Lazy probe + 30 s URL-scrape timeout + SIGTERM → SIGKILL dispose.
+- [x] Process lifecycle implemented; reconnect/respawn watchdog deferred to v2.13.x — current implementation is single-attempt open + dispatcher-level fallback to smee.
+- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)`.
 
 ### v2.13.2. Tailscale spawn
 
-- [ ] **`src/ui/tunnelBackendTailscaleSpawn.ts`** — аналогично:
-  - Pre-flight: `tailscale funnel status` через `parseTailscaleFunnelStatus`. Если `acl_denied` / `not_logged_in` / `daemon_unavailable` — возврат `{ ok: false, reason, hint }`.
-  - Spawn `tailscale funnel --bg <port>`.
-  - Polling `tailscale funnel status` каждые 2 s до URL `https://*.ts.net/`. Timeout 15 s.
-  - Cleanup: `tailscale funnel reset` на dispose.
-- [ ] Тесты с mock spawn — 6 unit-тестов.
+- [x] **`src/ui/tunnelBackendTailscale.ts`** — direct upgrade (commit `84ce6a6`):
+  - Pre-flight `tailscale funnel status` via `parseTailscaleFunnelStatus` (acl_denied / not_logged_in / daemon_unavailable surface to dispatcher).
+  - `tailscale funnel --bg <port>` + 2 s status polling, 15 s timeout.
+  - `tailscale funnel reset` on dispose.
+- [ ] Тесты с mock spawn.
 
 ### v2.13.3. Status bar
 
-- [ ] **`src/ui/tunnelStatusBar.ts`** — `createTunnelStatusBarItem(context)`. Использует `formatTunnelStatusBar(getTunnelStatus())`. Click → `vscodesync.showTunnelStatus` (уже существует).
-- [ ] Re-render на каждый event из `tunnelStatusRegistry` (subscribe через `onStatusChange`).
+- [x] **`src/ui/tunnelStatusBar.ts`** — `createTunnelStatusBarItem(context)` driven by `formatTunnelStatusBar(getTunnelStatus())`; 5 s polling refresh; warn / error backgroundColor on fallback / restart>=3 (commit `84ce6a6`).
 
 ### v2.13.4. Config watcher wiring
 
-- [ ] **`src/ui/tunnelConfigWatcherWiring.ts`** — `vscode.workspace.onDidChangeConfiguration(e)`. Если `e.affectsConfiguration("vscodesync.webhooks.tunnelProvider")` или `"vscodesync.webhooks.enabled"` — вызывает `compareTunnelConfig(prevSnapshot, currentSnapshot)`:
-  - `start` — start tunnel.
-  - `stop` — dispose existing.
-  - `restart` — dispose then start.
-  - `no_change` — no-op.
-- [ ] OutputChannel logging — каждое action + reason.
+- [x] OneDrive webhook lifecycle subscribes to `webhooks.tunnelProvider` change → triggers `refresh()` (commit `84ce6a6`). Future iteration: dedicated dispatcher-level `compareTunnelConfig` watcher (separate module) with verbose OutputChannel logging.
 
 ### v2.13.5. Lifecycle migration (v2.4.4 final close)
 
-- [ ] **`src/ui/oneDriveWebhookLifecycle.ts`** — replace `createAndStartSmeeRelay(notificationUrl)` → `createAndStartTunnelRelay({ provider: getTunnelProvider(), port, handler })`.
-- [ ] **`src/ui/googleDriveWebhookLifecycle.ts`** — то же.
+- [x] **`src/ui/oneDriveWebhookLifecycle.ts`** — replace `createAndStartSmeeRelay(notificationUrl)` → `createAndStartTunnelRelay({ rawProviderSetting, handler })` (commit `84ce6a6`). `tunnelProvider` setting added to onDidChangeConfiguration watch list.
+- [x] **`src/ui/googleDriveWebhookLifecycle.ts`** — N/A: no smee path exists; GDrive webhooks read `vscodesync.webhooks.url` directly (static URL only).
 - [ ] Update integration tests — mock `openTunnel` registry instead of mock smee. Existing 412 / EPERM / smee-reconnect test fixtures — портировать на `createAndStartTunnelRelay` mock.
 
 ---
 
 ## v2.14. Smart Features wiring — Phase 1.C
 
-**Текущее состояние:** `registerSmartFeatures.ts` существует с минимальным контрактом `{ context, storageDir }` (achievements + workspace template installation).
+**Текущее состояние (2026-05-09):** все 6 команд **уже зарегистрированы и
+функциональны** — в `src/ui/plannedPaletteCommands.ts` (5 шт.) и
+`src/commands/registerFileOperations.ts` (`openTimeTravelScrubber`). Деление
+на `registerSmartFeaturesEngine.ts` с фокусным контрактом — чистый
+архитектурный refactor (без user-visible изменений), запланирован отдельно.
 
-### v2.14.1. Engine bundle
+### v2.14.1. Engine bundle (refactor, no behaviour change)
 
-- [ ] **`src/commands/registerSmartFeaturesEngine.ts`** — bundle с richer-контрактом `{ context, runWithEngine, globalConfig, registry, treeView, statusBar, syncPreviewChannel }`.
-- [ ] **6 команд:**
-  - `vscodesync.aiSessionSummary` — generate session summary (push/pull diff highlights) через `vscode.lm`.
-  - `vscodesync.aiSuggestWorkspaceTags` — suggest tags based on file extensions + commit messages.
-  - `vscodesync.aiPathMapper` — propose path remappings between workspaces (cross-workspace move suggestion).
-  - `vscodesync.showInsightsWeeklyDigest` — webview summary за неделю (pushes / pulls / conflicts / top-changed files).
-  - `vscodesync.diffSnapshots` — diff между двумя snapshot'ами через `compareSnapshots` core helper.
-  - `vscodesync.openTimeTravelScrubber` — webview slider для history navigation.
+- [x] `vscodesync.aiSessionSummary` — registered in `plannedPaletteCommands.ts:305`.
+- [x] `vscodesync.aiSuggestWorkspaceTags` — registered in `plannedPaletteCommands.ts:344`.
+- [x] `vscodesync.aiPathMapper` — registered in `plannedPaletteCommands.ts:781` (delegates to `aiPathMapperCommand.ts`).
+- [x] `vscodesync.showInsightsWeeklyDigest` — registered in `plannedPaletteCommands.ts:933`.
+- [x] `vscodesync.diffSnapshots` — registered in `plannedPaletteCommands.ts:945`.
+- [x] `vscodesync.openTimeTravelScrubber` — registered in `registerFileOperations.ts:471`.
+- [ ] _Refactor only:_ move the 5 commands из `plannedPaletteCommands.ts` в фокусный `src/commands/registerSmartFeaturesEngine.ts` (separate engine-rich bundle).
 
 ### v2.14.2. AI cancellation + privacy
 
