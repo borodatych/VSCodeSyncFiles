@@ -23,7 +23,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.1.2. Альтернативный air-gapped signaling через QR-обмен
 
 - [x] **`src/core/p2pQrExchange.ts`** — pure helpers `planQrChunks(payload, sessionId, chunkLen?)`, `encodeQrChunkLine(chunk)`, `parseQrChunkLine(line)`, `createQrAssembler()`. Wire-format `VSS1|<sid>|<idx>|<total>|<base64>`. Reassembly при out-of-order сканах. 12 unit-тестов. `qrcode-terminal` ^0.12 в `optionalDependencies` для ASCII-рендера.
-- [~] UI flow inviter↔invitee multi-step QuickPick + render через `qrcode-terminal` — pure substep controller `createQrExchangeFlow({ role, localPayload, sessionId, chunkLen? })` готов в `src/core/p2pQrExchangeFlow.ts`. Phases: inviter `render_offer → await_answer_scan → decode_answer → done`, invitee `await_offer_scan → render_answer → await_ack → done`. `currentOutboundLine` / `nextOutboundChunk` (round-robin) / `acceptScannedLine` (с rejection paths bad_format / wrong_protocol / session_mismatch / total_mismatch / wrong_phase). 11 unit-тестов. UI рендер через `qrcode-terminal` остаётся.
+- [x] UI flow inviter↔invitee multi-step — pure substep controller `createQrExchangeFlow` (`src/core/p2pQrExchangeFlow.ts`, 11 тестов) wired через `src/ui/p2pQrSessionUi.ts:runQrSessionUi`. Render outbound chunks через `renderChunkBlock` → `OutputChannel.appendLine`; inbound chunks через `vscode.window.showInputBox` цикл с rejection toasts на каждый QrScanRejection. Modal ack для `await_ack` фазы. Loop safety guard 200 iterations.
 - [x] Maximum payload: `QR_CHUNK_PAYLOAD_BASE64_LIMIT = 1500` keeps a single QR safely under 2 KB; больше → split на N chunks с sequence number.
 
 ### v2.1.3. UI команда «Start P2P session»
@@ -268,7 +268,7 @@ Pure-helpers полностью готовы; команда + status bar + regi
 - [x] **`src/commands/registerP2PSession.ts`** — `vscodesync.startP2PSession` + `vscodesync.disconnectP2PSession` (scaffolding).
 - [x] Multi-step QuickPick из `planP2PSessionWizard(...)`. Шаги отображаются с описанием каждой фазы и transport (cloud / qr).
 - [x] Cloud transport — wired в `runStartP2PSession` (registerP2PSession.ts:135) через `createSignalingTransport` + `openP2PSession`; gated behind `vscodesync.p2p.experimental`. Real `@roamhq/wrtc` DataChannel + crypto envelope активны при включённой настройке.
-- [~] QR transport — `src/core/p2pQrTerminalRenderer.ts` (`renderQrToLines` + `renderChunkBlock`) lazy-load'ит `qrcode-terminal` (optional dep), 6 unit-тестов на module_not_installed / module_load_failed / shape rejection / chunk header. UI-обвязка (`OutputChannel.appendLine` + `InputBox` для scanned answer) — следующая итерация.
+- [x] QR transport — `src/core/p2pQrTerminalRenderer.ts` (`renderQrToLines` + `renderChunkBlock`, 6 тестов) lazy-load'ит `qrcode-terminal`. UI flow `src/ui/p2pQrSessionUi.ts:runQrSessionUi` подключает renderer + InputBox-loop поверх `createQrExchangeFlow`; result discriminated `{ ok: true; peerPayload } | { ok: false; reason: "user_cancelled" | "renderer_unavailable" | "no_peer_payload" }`.
 - [x] Aborts при `no_online_peers` / `no_active_invites` warnings — отображаются в QuickPick как `$(warning)` items.
 
 ### v2.12.2. Status bar
