@@ -1,0 +1,61 @@
+name: P2P loopback smoke
+
+# v2.1.6 — opt-in CI smoke that runs the in-process @roamhq/wrtc loopback
+# round-trip. Default workflow is non-blocking: hosted runners often fail to
+# load the native ALSA/PulseAudio bindings @roamhq/wrtc imports transitively,
+# so the suite is informational and runs only on:
+#   - PRs that touch P2P code (paths filter below), or
+#   - manual workflow_dispatch.
+#
+# For deterministic coverage register a self-hosted runner with the label
+# `p2p-smoke` and a desktop OS where Chromium-WebRTC peers can talk to each
+# other. Without the self-hosted runner, the job falls back to ubuntu-latest
+# with continue-on-error, so PR checks remain green.
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "src/core/p2p*.ts"
+      - "src/ui/p2p*.ts"
+      - "src/ui/p2pSessionRuntime.ts"
+      - "tests/unit/p2pSessionRuntime.smoke.test.ts"
+      - ".github/workflows/p2p-smoke.yml"
+
+jobs:
+  hosted-smoke:
+    name: P2P smoke (hosted, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    env:
+      P2P_SMOKE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Probe @roamhq/wrtc binding
+        run: |
+          node -e "import('@roamhq/wrtc').then(m=>{console.log('wrtc loaded:', !!m.RTCPeerConnection);}).catch(e=>{console.log('wrtc not loadable:', e.message); process.exit(0);})"
+      - name: Loopback smoke
+        run: npx vitest run tests/unit/p2pSessionRuntime.smoke.test.ts
+
+  self-hosted-smoke:
+    name: P2P smoke (self-hosted)
+    runs-on: [self-hosted, p2p-smoke]
+    if: ${{ vars.P2P_SMOKE_SELF_HOSTED == '1' }}
+    timeout-minutes: 5
+    env:
+      P2P_SMOKE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Loopback smoke
+        run: npx vitest run tests/unit/p2pSessionRuntime.smoke.test.ts

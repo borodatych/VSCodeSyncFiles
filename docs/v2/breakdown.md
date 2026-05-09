@@ -47,7 +47,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.1.6. Smoke-test environment
 
 - [x] **`docs/v2/p2p-smoke-guide.md`** — manual reproduction guide; перечисление 8 pure модулей, инструкция собрать end-to-end сессию (offer → answer → ICE → DataChannel → file chunks → cleanup), pass criteria.
-- [ ] CI smoke в single-process mode через `@roamhq/wrtc` — blocked: native binding на CI runner ненадёжен, ICE timing для vitest-default 5s timeout слишком тугой. _(roadmap-max 2026-05-09: confirmed blocked.)_
+- [x] CI smoke в single-process mode через `@roamhq/wrtc` — `tests/unit/p2pSessionRuntime.smoke.test.ts` (opt-in через `P2P_SMOKE=1` env) + `.github/workflows/p2p-smoke.yml` (hosted-non-blocking + self-hosted optional с label `p2p-smoke`). Vitest timeout bumped до 30 s для cold-start dynamic-import. Sentinel-test (без binding) всегда проходит для регресс-cover.
 
 ---
 
