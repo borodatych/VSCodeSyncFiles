@@ -244,7 +244,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Smart Conflict Prediction — status-bar warning when another machine has
   // marked itself as editing the same active file.
-  const conflictPredictor = new SmartConflictPredictionService(globalConfig);
+  const conflictPredictor = new SmartConflictPredictionService(globalConfig, () => tryAuthenticatedProvider(registry));
   conflictPredictor.start();
   context.subscriptions.push(conflictPredictor);
 

@@ -25,15 +25,34 @@ import {
   scoreConflictRisk,
   type OtherMachineEdit,
 } from "../core/smartConflictPrediction.js";
+import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
+import { parseMachinesRegistry } from "../core/machineRegistry.js";
+import { machinesRegistryCloudPath } from "../core/cloudLayout.js";
+import {
+  createPresenceCache,
+  findHighRiskPeer,
+  type PresenceCache,
+} from "../core/presenceCacheTTL.js";
+import { warnLog } from "../utils/log.js";
 
 const REFRESH_INTERVAL_MS = 30_000;
+/** v2.9.3 — interval at which the presence reader polls `_machines.json`.
+ * Slower than the UI refresh so we don't hammer the provider; the local
+ * cache (PresenceCache TTL 60s) keeps the UI responsive. */
+const PRESENCE_FETCH_INTERVAL_MS = 60_000;
 
 export class SmartConflictPredictionService implements vscode.Disposable {
   private readonly statusBar: vscode.StatusBarItem;
   private readonly disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | null = null;
+  private presenceTimer: NodeJS.Timeout | null = null;
+  private readonly presenceCache: PresenceCache = createPresenceCache();
+  private lastPresenceFetchMs = 0;
 
-  constructor(private readonly globalConfig: GlobalConfigManager) {
+  constructor(
+    private readonly globalConfig: GlobalConfigManager,
+    private readonly tryAuthenticatedProvider?: () => Promise<ICloudProvider | null>,
+  ) {
     this.statusBar = vscode.window.createStatusBarItem(
       "vscodesync.smartConflictPrediction",
       vscode.StatusBarAlignment.Left,
@@ -53,6 +72,10 @@ export class SmartConflictPredictionService implements vscode.Disposable {
       }),
     );
     this.timer = setInterval(() => { void this.refresh(); }, REFRESH_INTERVAL_MS);
+    if (this.tryAuthenticatedProvider) {
+      this.presenceTimer = setInterval(() => { void this.fetchPresence(); }, PRESENCE_FETCH_INTERVAL_MS);
+      void this.fetchPresence();
+    }
     void this.refresh();
   }
 
@@ -61,9 +84,42 @@ export class SmartConflictPredictionService implements vscode.Disposable {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.presenceTimer !== null) {
+      clearInterval(this.presenceTimer);
+      this.presenceTimer = null;
+    }
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
     this.statusBar.dispose();
+  }
+
+  /** v2.9.3 — pull `_machines.json` and refresh the in-memory presence cache. */
+  private async fetchPresence(): Promise<void> {
+    if (!this.tryAuthenticatedProvider) return;
+    try {
+      const provider = await this.tryAuthenticatedProvider();
+      if (!provider) return;
+      const cloudPath = machinesRegistryCloudPath();
+      const res = await provider.downloadFile(cloudPath);
+      if (res.notModified || res.body.length === 0) return;
+      const entries = parseMachinesRegistry(res.body);
+      const gc = await this.globalConfig.load().catch(() => null);
+      const myMachineId = gc?.machineId ?? "";
+      const nowMs = Date.now();
+      this.lastPresenceFetchMs = nowMs;
+      for (const e of entries) {
+        if (e.machineId === myMachineId) continue;
+        if (e.currentEditing === undefined) continue; // unknown — skip
+        this.presenceCache.put({
+          machineId: e.machineId,
+          machineName: e.machineName,
+          frame: e.currentEditing,
+          receivedAtMs: nowMs,
+        });
+      }
+    } catch (err) {
+      warnLog("smart-conflict", `presence fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async refresh(): Promise<void> {
@@ -116,15 +172,36 @@ export class SmartConflictPredictionService implements vscode.Disposable {
       others,
       nowMs: Date.now(),
     });
-    if (result.score === 0) {
+
+    // v2.9.3 — augment with presence reader: peers that have just opened the
+    // same file but haven't yet bumped soft-lock fields. Higher signal than
+    // soft-lock for "right now" concurrent editing.
+    const trackedFile = wc.files.find((f) => f.localPath === rel);
+    let presenceHit: { machineName: string; risk: number } | null = null;
+    if (trackedFile) {
+      const peer = findHighRiskPeer({
+        cache: this.presenceCache,
+        myWorkspaceId: trackedFile.workspaceId,
+        myRelPath: rel,
+      });
+      if (peer) presenceHit = { machineName: peer.entry.machineName, risk: peer.risk };
+    }
+
+    if (result.score === 0 && presenceHit === null) {
       this.statusBar.hide();
       return;
     }
-    const who = result.activeOthers.join(", ");
+    const score = Math.max(result.score, presenceHit?.risk ?? 0);
+    const softLockOthers = result.activeOthers;
+    const presenceOthers = presenceHit ? [presenceHit.machineName] : [];
+    const who = [...new Set([...softLockOthers, ...presenceOthers])].join(", ");
     this.statusBar.text = `$(warning) Conflict risk: ${who} editing this file`;
+    const sourceLine = presenceHit
+      ? `\n\nИсточник: ${result.score > 0 ? "soft-lock + " : ""}live presence (\`_machines.json\`).`
+      : "";
     this.statusBar.tooltip = new vscode.MarkdownString(
-      `**VSCodeSync** · риск конфликта ${(result.score * 100).toFixed(0)}%.\n\n` +
-        `Параллельная работа на: ${who}.\n\n` +
+      `**VSCodeSync** · риск конфликта ${(score * 100).toFixed(0)}%.\n\n` +
+        `Параллельная работа на: ${who}.${sourceLine}\n\n` +
         `Сохраните и сделайте Push раньше них, либо подождите их sync.`,
     );
     this.statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");

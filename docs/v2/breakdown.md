@@ -191,7 +191,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.9.3. Reader
 
-- [x] `scorePresenceRisk({ myWorkspaceId, myRelPath, myAnonymised?, peerCurrentEditing })` — pure scorer, returns 0..1. Полная обвязка `SmartConflictPredictionService` к чтению `_machines.json` каждые 60 с — следующая итерация (нужен ICloudProvider injection).
+- [x] `scorePresenceRisk({ myWorkspaceId, myRelPath, myAnonymised?, peerCurrentEditing })` — pure scorer, returns 0..1. Wired в `SmartConflictPredictionService`: optional `tryAuthenticatedProvider` constructor parameter; presence reader poll-ит `_machines.json` каждые 60 с, парсит `currentEditing` peer'ов в `PresenceCache` (TTL 60 s); `findHighRiskPeer` augment'ит soft-lock score'ом `live presence`. Status-bar tooltip отмечает источник риска (soft-lock / live presence / both).
 
 ### v2.9.4. Privacy
 
