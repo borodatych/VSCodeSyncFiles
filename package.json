@@ -376,6 +376,16 @@
           "default": false,
           "description": "%cfg.aiMerge.description%"
         },
+        "vscodesync.passkey.peerRegistrySync": {
+          "type": "string",
+          "enum": [
+            "off",
+            "p2p",
+            "cloud_mirror"
+          ],
+          "default": "off",
+          "description": "Multi-device passkey registry sync (v2.20.4). When 'off' (default) — registry stays per-machine. 'p2p' fans out the local registry to peers over an authenticated P2P channel. 'cloud_mirror' publishes an encrypted blob to the active provider. Both transports require the recipient to opt-in too; the reconciler merges by credential id without losing local displayName / primaryId."
+        },
         "vscodesync.webhooks.tunnelEnabled": {
           "type": "boolean",
           "default": false,
