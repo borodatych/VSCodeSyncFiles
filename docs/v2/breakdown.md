@@ -191,7 +191,18 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.6.7. Validation
 
 - [x] **CI regression check:** `tests/unit/packageJsonCommandsConsistency.test.ts` — assert каждый `contributes.commands[].command` присутствует в `WEB_STUB_COMMAND_IDS` + no-duplicates check. Если refactor забывает зарегистрировать команду в одном из мест — тест падает.
-- [~] **`extension.ts < 500 LoC` assert** — текущий **2486 LoC** (87 / 87 inline-команд = 100% extracted). Оставшиеся ~2400 — `makeEngine` / `runWithEngine` factory / `ensureProvider` / `tryAuthenticatedProvider` / OAuth closures (`runOneDriveAuth` / etc) / `getEncKey` / startup-wiring (config load, registry init, watchers, event handlers) / helper functions (`buildInlineDiff`, `makeOnFilePulledCallback`, `runShowFileHistory`, `runConflict3WayDiff`, etc.). Снижение до < 500 LoC требует подъёма factory pattern (`createRunWithEngine`/`createMakeEngine`) в `src/commands/_engineFactory.ts` + миграции OAuth closures в shared module + декомпозиции startup-wiring (например `src/startup/registerLifecycle.ts`).
+- [~] **`extension.ts < 500 LoC` assert** — текущий **1734 LoC** (стартовый 5085 = -66%). Прогресс по подъёму closures + helpers в shared modules:
+  - `_providerFactory.ts` — `ensureProvider` + `tryAuthenticatedProvider` (49 LoC)
+  - `_fileTargetHelpers.ts` — `resolveFileTarget` + `resolveFileTargetLoose` (~60 LoC)
+  - `_engineFlows.ts` — `runShowFileHistory` + `runConflict3WayDiff` + `runAiMergeForConflict` + `openTrackedFileInCloudStorage` + internal `historyVersionLabel` (~310 LoC)
+  - `auth/providerAuthFlows.ts` — `createProviderAuthFlows(deps)` factory packs 4 OAuth closures + 4 OutputChannels (~205 LoC)
+  - Plus `runAddToNewWorkspace` (135 LoC) перенесён в `registerFileOperations.ts` как private impl.
+  Bundles теперь импортируют helpers напрямую — отпали 6 callback-deps wrappers в extension.ts.
+
+  Оставшийся ~1700 LoC: `makeEngine` factory (~218 LoC, 6 module-level mutable Sets для dedup warnings + 5 ref-сettable callbacks для activity/transfer/compression/tree-refresh/repush), `runWithEngine` closure (~50 LoC), startup-wiring (config load / registry init / watchers / event handlers / `registerXxx` calls для panels/timers/health/heartbeat / soft-lock lifecycle), `updateWorkspacesTreeBadge` + helper closures. Дальнейшее снижение требует:
+  1. `_engineFactory.ts` с `createMakeEngine(deps)` — overhead ~280 LoC moves out, но требует осознанного решения по shared state ownership (warnedXxx Sets либо module-private к `_engineFactory.ts`, либо проброс через deps).
+  2. `_runWithEngine.ts` с `createRunWithEngine(deps)` — отдельный compose поверх `_engineFactory.ts`.
+  3. Декомпозиция startup-wiring в `src/startup/` с темами (lifecycle / watchers / panels / timers).
 
 ---
 
