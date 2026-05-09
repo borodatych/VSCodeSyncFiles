@@ -9,6 +9,17 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 ## [Unreleased]
 
 ### Added
+- **P2P file-transfer receiver** (v2.12.4) — `attachFileReceiver` подписывается на manifest+file_chunk frames на сессионном channel, собирает файл через `createChunkAssembler`, проверяет hash и пишет атомарно через tmp-rename. Conflict-vs-cloud-pull: P2P deliveries advisory, manifest authoritative.
+- **OAuth Device Code flow UI** (v2.20.3) — `vscodesync.signInDeviceCode` walks user через POST device-auth → user-code modal → polling token endpoint via `planDeviceCodePoll`. OneDrive provider entry готов; GDrive — отдельная итерация.
+- **Local LLM endpoint в aiMerge** (v2.20.3) — `runAiMerge` теперь dispatch'ит через `resolveAiMergeEndpoint`: `vscode-lm` / `ollama` / `lm-studio` / custom URL. Новая setting `vscodesync.aiMerge.endpointModel`.
+- **Workspace templates marketplace** (v2.20.5) — `vscodesync.installWorkspaceTemplateFromMarketplace` fetch'ит registry index, валидирует manifests через `parseWorkspaceTemplate`, применяет: `.vscodesync-template.json` provenance + merge ignorePatterns + welcome webview + extension recommendations.
+- **MCP server stub** (v2.20.1) — `@modelcontextprotocol/sdk` installed; `mcpServerHost.startMcpServer` lazy-loads SDK, регистрирует `vscodesync.list_workspaces` tool с реальным data source.
+- **DuckDB-WASM lazy-load** (v2.20.2) — `@duckdb/duckdb-wasm@1.33` installed; `duckdbAnalyticsHost.runReadOnlyQuery` валидирует SQL и возвращает `tables_not_mounted` sentinel пока virtual-table mount не landед.
+
+### Changed
+- **CLI vscodesync** (v2.20.1) — re-confirmed: `cli/` subpackage уже имеет bin entry `./dist/cli.cjs` с dispatch table (`status` / `pull` / `auth --device-code`); breakdown updated.
+
+### Added
 - **DEK rewrap через WebAuthn KEK** (v2.2.x) — `enrollPasskey` оборачивает primary DEK в `KeyEnvelope` с источником `webauthn` (HKDF over PRF output), `unlockWithPasskey` восстанавливает DEK через replay PRF salt из `meta.prfSaltHex`. Helpers `readWebauthnEnvelope` / `storeWebauthnEnvelope` в `core/encryptionKey.ts`.
 - **P2P file-transfer mirror** (v2.12.4) — `engine.onPushFile` callback теперь fan-out'ит manifest + file_chunk frames через каждую authenticated session, зарегистрированную в `MirrorRegistry`. Best-effort: ошибки encoding / send swallowed (cloud upload уже authoritative).
 - **P2P idle tick + activity log** (v2.12.3 / v2.12.5) — runtime создаёт `createP2PIdleTracker` + 30s setInterval; idle threshold (5 min default) тригерит graceful disconnect. State machine events публикуются как `kind: "p2p_session"` в activity.json через `logSyncActivity`.
