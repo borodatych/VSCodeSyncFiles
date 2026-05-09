@@ -376,6 +376,11 @@
           "default": false,
           "description": "%cfg.webhooks.tunnelEnabled.description%"
         },
+        "vscodesync.p2p.experimental": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental WebRTC P2P session (cloud-bypass mode). When off, the Start P2P Session command shows the planned wizard but does not open a DataChannel. Requires the optional @roamhq/wrtc binding to be loadable."
+        },
         "vscodesync.gitBranchAutoSync": {
           "type": "boolean",
           "default": true,
@@ -1166,6 +1171,14 @@
       {
         "command": "vscodesync.showTunnelStatus",
         "title": "%cmd.showTunnelStatus.title%"
+      },
+      {
+        "command": "vscodesync.startP2PSession",
+        "title": "VSCodeSync: Start P2P Session"
+      },
+      {
+        "command": "vscodesync.disconnectP2PSession",
+        "title": "VSCodeSync: Disconnect P2P Session"
       }
     ],
     "menus": {

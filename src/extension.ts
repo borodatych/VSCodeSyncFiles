@@ -78,6 +78,9 @@ import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js"
 import { registerFileLifecycleEvents } from "./startup/registerFileLifecycleEvents.js";
 import { registerOnboardingFlow } from "./startup/registerOnboardingFlow.js";
 import { registerWorkspaceTreeWiring } from "./startup/registerWorkspaceTreeWiring.js";
+import { createP2PSessionRegistry } from "./core/p2pSessionRegistry.js";
+import { createP2PStatusBarItem } from "./ui/p2pStatusBar.js";
+import { registerP2PSessionCommands } from "./commands/registerP2PSession.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -131,6 +134,12 @@ export function activate(context: vscode.ExtensionContext): void {
   registerTunnelBackend(cloudflaredTunnelBackend);
   registerTunnelBackend(tailscaleFunnelTunnelBackend);
   createTunnelStatusBarItem(context);
+
+  const p2pSessionRegistry = createP2PSessionRegistry();
+  createP2PStatusBarItem(context, p2pSessionRegistry);
+  context.subscriptions.push(
+    ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry }),
+  );
 
   registerVsCodeSyncTelemetry(context, globalConfig, CFG_SECTION);
   registerProviderSetupGuide(context);
