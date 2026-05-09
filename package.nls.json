@@ -135,6 +135,7 @@
   "cmd.editWorkspaceTags.title": "VSCodeSync: Edit workspace tags",
   "cmd.purgeEncryptedWorkspace.title": "VSCodeSync: Purge encrypted workspace…",
   "cmd.mergeWorkspaces.title": "VSCodeSync: Merge workspaces",
+  "cmd.checkBlake3Migration.title": "VSCodeSync: Check BLAKE3 migration status",
 
   "cfg.notificationLevel.description": "Notification verbosity (minimal / normal / verbose)",
   "cfg.notifications.emojiFree.description": "Replace emoji in notifications with text markers ([ok], [warn], [err]) — for corporate chats and accessibility tools.",

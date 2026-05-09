@@ -45,6 +45,7 @@ import { registerScheduledSnapshots } from "./ui/scheduledSnapshots.js";
 import { scheduleAchievementsWarmup } from "./ui/achievementsService.js";
 import { registerSmartFeaturesCommands } from "./commands/registerSmartFeatures.js";
 import { registerSmartFeaturesEngineCommands } from "./commands/registerSmartFeaturesEngine.js";
+import { registerHashMigrationCommands } from "./commands/registerHashMigration.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -614,10 +615,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerFileLifecycleEvents({ context, runWithEngine });
 
-  context.subscriptions.push(...registerSmartFeaturesEngineCommands({
-    context, globalConfig,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-  }));
+  const tap = () => tryAuthenticatedProvider(registry);
+  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap }));
 
   registerPlannedPaletteCommands(context, {
     globalConfig,

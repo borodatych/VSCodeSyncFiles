@@ -1180,6 +1180,10 @@
         "title": "%cmd.mergeWorkspaces.title%"
       },
       {
+        "command": "vscodesync.checkBlake3Migration",
+        "title": "%cmd.checkBlake3Migration.title%"
+      },
+      {
         "command": "vscodesync.startP2PSession",
         "title": "VSCodeSync: Start P2P Session"
       },
