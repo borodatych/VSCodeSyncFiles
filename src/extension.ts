@@ -109,6 +109,13 @@ import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
 import { registerWorkspaceLifecycleCommands } from "./commands/registerWorkspaceLifecycle.js";
+import { registerViewManagementCommands } from "./commands/registerViewManagement.js";
+import {
+  WORKSPACES_NOTE_FILTER_KEY,
+  WORKSPACES_TAG_FILTERS_KEY,
+  WORKSPACES_SHOW_ARCHIVED_KEY,
+  applyWorkspacesTreeFilterChrome,
+} from "./ui/workspacesTreeFilterState.js";
 import { pickRoot, pickWorkspaceId } from "./commands/_shared.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 
@@ -145,58 +152,6 @@ function syncWarnDedupeKey(workspaceRoot: string, segment: string, rel: string):
   return `${workspaceRoot}\u0000${segment}\u0000${rel}`;
 }
 
-const WORKSPACES_NOTE_FILTER_KEY = "vscodesync.workspacesNoteFilter";
-const WORKSPACES_TAG_FILTERS_KEY = "vscodesync.workspacesTagFilters";
-const WORKSPACES_SHOW_ARCHIVED_KEY = "vscodesync.workspacesShowArchived";
-
-let workspacesFilterInputBox: vscode.InputBox | undefined;
-
-async function collectAllWorkspaceTags(): Promise<string[]> {
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  const seen = new Map<string, string>();
-  for (const folder of folders) {
-    const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-    for (const e of wc.activeWorkspaces) {
-      for (const t of e.tags ?? []) {
-        const trim = t.trim();
-        if (!trim) {
-          continue;
-        }
-        const low = trim.toLowerCase();
-        if (!seen.has(low)) {
-          seen.set(low, trim);
-        }
-      }
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-}
-
-async function applyWorkspacesTreeFilterChrome(
-  treeView: vscode.TreeView<SyncTreeElement>,
-  provider: WorkspacesTreeProvider,
-): Promise<void> {
-  const q = provider.getNoteFilter().trim();
-  const tags = [...provider.getTagFilters()];
-  const parts: string[] = [];
-  if (q.length > 0) {
-    const short = q.length > 36 ? `${q.slice(0, 33)}…` : q;
-    parts.push(`🔍 ${short}`);
-  }
-  if (tags.length > 0) {
-    parts.push(tags.map((t) => `#${t.replace(/\s+/g, "_")}`).join(" "));
-  }
-  if (provider.getShowArchived()) {
-    parts.push("+archived");
-  }
-  const desc = parts.join(" · ");
-  treeView.description = desc.length > 0 ? desc.slice(0, 120) : undefined;
-  await vscode.commands.executeCommand(
-    "setContext",
-    "vscodesync.workspacesFilterActive",
-    q.length > 0 || tags.length > 0,
-  );
-}
 
 function roots(): readonly vscode.WorkspaceFolder[] {
   return vscode.workspace.workspaceFolders ?? [];
@@ -1608,99 +1563,11 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   void updateWorkspacesTreeBadge(treeView);
 
-  // Custom collapse all (built-in disabled to control toolbar position)
   context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.collapseAllWorkspaces", () => {
-      // `collapseAll` exists at runtime but is missing from older @types/vscode.
-      const v = treeView as unknown as { collapseAll?: () => Thenable<void> };
-      void v.collapseAll?.();
-    }),
+    ...registerViewManagementCommands({ context, treeView, workspacesTree, statusBar }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.showSyncDashboard", async () => {
-      await statusBar.showDashboard();
-    }),
-
-    vscode.commands.registerCommand("vscodesync.focusWorkspacesView", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.vscodesync.focus");
-    }),
-
-    vscode.commands.registerCommand("vscodesync.refreshWorkspacesView", () => {
-      workspacesTree.invalidateRemoteCache();
-      workspacesTree.refresh();
-    }),
-
-    vscode.commands.registerCommand("vscodesync.filterWorkspaces", () => {
-      if (workspacesFilterInputBox) {
-        workspacesFilterInputBox.show();
-        return;
-      }
-      const ib = vscode.window.createInputBox();
-      workspacesFilterInputBox = ib;
-      ib.title = "VSCodeSync: фильтр Workspaces";
-      ib.placeholder = "По заметке или ID workspace";
-      ib.value = workspacesTree.getNoteFilter();
-      let debounce: ReturnType<typeof setTimeout> | undefined;
-      ib.onDidChangeValue((v) => {
-        if (debounce !== undefined) {
-          clearTimeout(debounce);
-        }
-        debounce = setTimeout(() => {
-          debounce = undefined;
-          const trimmed = v.trim();
-          workspacesTree.setNoteFilter(v);
-          void context.globalState.update(WORKSPACES_NOTE_FILTER_KEY, trimmed);
-          void applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
-        }, 120);
-      });
-      ib.onDidAccept(() => {
-        ib.hide();
-      });
-      ib.onDidHide(() => {
-        if (debounce !== undefined) {
-          clearTimeout(debounce);
-        }
-        workspacesFilterInputBox = undefined;
-        ib.dispose();
-      });
-      ib.show();
-    }),
-
-    vscode.commands.registerCommand("vscodesync.clearWorkspacesFilter", async () => {
-      workspacesTree.setNoteFilter("");
-      workspacesTree.setTagFilters([]);
-      await context.globalState.update(WORKSPACES_NOTE_FILTER_KEY, "");
-      await context.globalState.update(WORKSPACES_TAG_FILTERS_KEY, []);
-      await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pickWorkspaceTagFilters", async () => {
-      const allTags = await collectAllWorkspaceTags();
-      if (allTags.length === 0) {
-        await vscode.window.showWarningMessage(
-          "VSCodeSync: в локальном кэше нет тегов. Выполните sync / Repair State или задайте теги для workspace.",
-        );
-        return;
-      }
-      const current = new Set(workspacesTree.getTagFilters().map((t) => t.trim().toLowerCase()));
-      const picked = await vscode.window.showQuickPick(
-        allTags.map((label) => ({ label, picked: current.has(label.trim().toLowerCase()) })),
-        { canPickMany: true, title: "VSCodeSync: фильтр тегов (все выбранные — AND)" },
-      );
-      if (picked === undefined) {
-        return;
-      }
-      workspacesTree.setTagFilters(picked.map((p) => p.label));
-      await context.globalState.update(WORKSPACES_TAG_FILTERS_KEY, [...workspacesTree.getTagFilters()]);
-      await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.toggleShowArchivedWorkspaces", async () => {
-      workspacesTree.setShowArchived(!workspacesTree.getShowArchived());
-      await context.globalState.update(WORKSPACES_SHOW_ARCHIVED_KEY, workspacesTree.getShowArchived());
-      await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
-    }),
 
     vscode.commands.registerCommand("vscodesync.setNotificationLevel", async () => {
       const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
