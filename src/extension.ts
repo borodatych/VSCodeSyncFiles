@@ -37,7 +37,7 @@ import { SyncStatusBarController } from "./ui/statusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { WorkspacesTreeDnD } from "./ui/workspacesTreeDnD.js";
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
-import { guardPathsBeforeAdd, guardPathsBeforePush } from "./ui/syncGuards.js";
+import { guardPathsBeforeAdd } from "./ui/syncGuards.js";
 import { collectFilesToAddUnderRoots } from "./utils/syncAddCollect.js";
 import { writeSyncPreviewOutput } from "./ui/syncPreviewUi.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
@@ -113,6 +113,7 @@ import { registerSettingsCommands } from "./commands/registerSettings.js";
 import { registerWorkspaceTreeContextCommands } from "./commands/registerWorkspaceTreeContext.js";
 import { registerFileTreeContextCommands } from "./commands/registerFileTreeContext.js";
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
+import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -469,25 +470,6 @@ function makeEngine(
 }
 
 
-async function pickOtherWorkspaceId(root: string, excludeWorkspaceId: string): Promise<string | undefined> {
-  const wc = await WorkspaceConfigManager.load(root);
-  const candidates = wc.activeWorkspaces.filter((w) => w.workspaceId !== excludeWorkspaceId);
-  if (candidates.length === 0) {
-    await vscode.window.showWarningMessage("VSCodeSync: нет другого workspace для перемещения.");
-    return undefined;
-  }
-  if (candidates.length === 1) {
-    return candidates[0]?.workspaceId;
-  }
-  const picked = await vscode.window.showQuickPick(
-    candidates.map((e) => ({
-      label: `${e.workspaceNote} (${e.workspaceId})`,
-      id: e.workspaceId,
-    })),
-    { placeHolder: "Переместить в workspace" },
-  );
-  return picked?.id;
-}
 
 async function resolveFileTarget(
   uri: vscode.Uri | undefined,
@@ -2072,210 +2054,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     // VS Code passes (uri, allUris) when multiple files are selected in Explorer
-    vscode.commands.registerCommand("vscodesync.addCurrentFile", async (uri?: vscode.Uri, allUris?: vscode.Uri[]) => {
-      // Multi-select: use all selected URIs if provided; otherwise fall back to single
-      const selectedUris =
-        Array.isArray(allUris) && allUris.length > 1
-          ? allUris
-          : uri
-          ? [uri]
-          : undefined;
-
-      const target = await resolveFileTarget(selectedUris?.[0] ?? uri);
-      if (!target) {
-        return;
-      }
-
-      const underRoot = (p: string): boolean => {
-        const rel = path.relative(target.root, p);
-        return rel !== ".." && !rel.startsWith(`..${path.sep}`);
-      };
-
-      const rawPaths: string[] = selectedUris
-        ? selectedUris.map((u) => u.fsPath).filter((p) => underRoot(p))
-        : [target.fsPath];
-
-      const ws = await pickWorkspaceId(target.root);
-      if (!ws) {
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(target.root);
-      const ent = wc.activeWorkspaces.find((w) => w.workspaceId === ws);
-      const gconf = await globalConfig.load();
-
-      let selectionHadDirectory = false;
-      for (const p of rawPaths) {
-        try {
-          const st = await fs.stat(p);
-          if (st.isDirectory()) {
-            selectionHadDirectory = true;
-          }
-        } catch {
-          /* ignore missing */
-        }
-      }
-
-      const expanded = await collectFilesToAddUnderRoots(target.root, rawPaths, {
-        entry: ent,
-        cfg: wc,
-        machineName: gconf.machineName,
-      });
-      if (expanded.length === 0) {
-        await vscode.window.showWarningMessage(
-          "VSCodeSync: нет файлов для добавления (пустая папка или все пути совпали с правилами исключения).",
-        );
-        return;
-      }
-      if (expanded.length > 500) {
-        const big = await vscode.window.showWarningMessage(
-          `VSCodeSync: будет добавлено ${String(expanded.length)} файлов. Продолжить?`,
-          { modal: true },
-          "Продолжить",
-        );
-        if (big !== "Продолжить") {
-          return;
-        }
-      }
-      const useBulkAddConfirm = expanded.length > 1 || selectionHadDirectory;
-      if (useBulkAddConfirm) {
-        const ok = await vscode.window.showInformationMessage(
-          `Добавить в VSCodeSync ${String(expanded.length)} файл(ов) и синхронизировать?`,
-          { modal: true },
-          "Добавить",
-        );
-        if (ok !== "Добавить") {
-          return;
-        }
-      }
-      const withPreview = !useBulkAddConfirm;
-      if (
-        !(await guardPathsBeforeAdd(expanded, withPreview, target.root, {
-          entry: ent,
-          cfg: wc,
-          machineName: gconf.machineName,
-        }))
-      ) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.addFiles(ws, expanded);
-        if (expanded.length === 1) {
-          await vscode.window.showInformationMessage("Файл добавлен и синхронизирован.");
-        } else {
-          await vscode.window.showInformationMessage(
-            `${String(expanded.length)} файлов добавлено и синхронизировано.`,
-          );
-        }
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.addFolderToSync", async (uri?: vscode.Uri, allUris?: vscode.Uri[]) => {
-      await vscode.commands.executeCommand("vscodesync.addCurrentFile", uri, allUris);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.addToNewWorkspace", runAddToNewWorkspace),
-
-    vscode.commands.registerCommand("vscodesync.removeFromSync", async (arg?: unknown) => {
-      const target = await resolveFileTargetLoose(globalConfig, arg);
-      if (!target) {
-        return;
-      }
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const fileEntry = cfg.files.find((f) => f.localPath === rel);
-      if (!fileEntry) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-        return;
-      }
-      const basename = path.basename(target.fsPath);
-      type RemoveChoice = "cloud" | "local" | "all";
-      const choice = await vscode.window.showWarningMessage(
-        `Как убрать «${basename}» из VSCodeSync?`,
-        { modal: true },
-        "Удалить с облака",
-        "Только отвязать здесь",
-        "Убрать у всех машин",
-      );
-      if (!choice) {
-        return;
-      }
-      const action: RemoveChoice =
-        choice === "Удалить с облака"
-          ? "cloud"
-          : choice === "Только отвязать здесь"
-            ? "local"
-            : "all";
-      await runWithEngine(async (engine) => {
-        if (action === "cloud") {
-          await engine.removeTrackedFiles(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage("Файл убран из синхронизации и удалён с облака.");
-        } else if (action === "local") {
-          await engine.untrackFileLocal(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage(
-            "Файл отвязан на этой машине. В облаке и на других машинах остался.",
-          );
-        } else {
-          await engine.untrackFileTombstoneOnly(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage(
-            "Файл убран у всех машин (tombstone). Blob в облаке не удалён.",
-          );
-        }
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pushCurrentFile", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const abs = path.join(target.root, ...rel.split("/"));
-      if (!(await guardPathsBeforePush([abs]))) {
-        return;
-      }
-      await runWithEngine(async (engine, root) => {
-        const cfg = await WorkspaceConfigManager.load(root);
-        const fileEntry = cfg.files.find((f) => f.localPath === rel);
-        if (!fileEntry) {
-          await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-          return;
-        }
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === fileEntry.workspaceId);
-        if (!entry) {
-          await vscode.window.showErrorMessage("VSCodeSync: workspace не найден в конфиге.");
-          return;
-        }
-        await engine.pushFile(cfg, fileEntry.workspaceId, rel, entry);
-        await vscode.window.showInformationMessage(`Push ${rel}: готово.`);
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.pullCurrentFile", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      await runWithEngine(async (engine, root) => {
-        const cfg = await WorkspaceConfigManager.load(root);
-        const fileEntry = cfg.files.find((f) => f.localPath === rel);
-        if (!fileEntry) {
-          await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-          return;
-        }
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === fileEntry.workspaceId);
-        if (!entry) {
-          await vscode.window.showErrorMessage("VSCodeSync: workspace не найден в конфиге.");
-          return;
-        }
-        const result = await engine.pullFile(cfg, fileEntry.workspaceId, rel, entry);
-        if (result === "already_current") {
-          await vscode.window.showInformationMessage(`${rel}: уже актуален.`);
-        } else {
-          await vscode.window.showInformationMessage(`Pull ${rel}: готово.`);
-        }
-      }, target.root);
-    }),
 
     vscode.commands.registerCommand("vscodesync.takeSyncOwnership", async () => {
       const storageDir = globalConfig.getStorageDir();
@@ -2299,106 +2077,6 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
     }),
 
-    vscode.commands.registerCommand("vscodesync.moveCurrentFileToWorkspace", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const cfg0 = await WorkspaceConfigManager.load(target.root);
-      const fileEntry = cfg0.files.find((f) => f.localPath === rel);
-      if (!fileEntry) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-        return;
-      }
-      const toWs = await pickOtherWorkspaceId(target.root, fileEntry.workspaceId);
-      if (!toWs) {
-        return;
-      }
-      const fromWs = fileEntry.workspaceId;
-      const gconf = await globalConfig.load();
-      const ent = cfg0.activeWorkspaces.find((w) => w.workspaceId === toWs);
-      if (
-        !(await guardPathsBeforeAdd([target.fsPath], false, target.root, {
-          entry: ent,
-          cfg: cfg0,
-          machineName: gconf.machineName,
-        }))
-      ) {
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.removeTrackedFiles(fromWs, [target.fsPath]);
-        await engine.addFiles(toWs, [target.fsPath]);
-        await vscode.window.showInformationMessage("Файл перемещён в другой workspace.");
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.diffWithCloud", async (arg?: unknown) => {
-      const target = await resolveFileTargetLoose(globalConfig, arg);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const cfg0 = await WorkspaceConfigManager.load(target.root);
-      if (!cfg0.files.some((f) => f.localPath === rel)) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-        return;
-      }
-      await runWithEngine(
-        async (engine) => {
-          const { body } = await engine.downloadTrackedBlob(rel);
-          const tmp = path.join(
-            os.tmpdir(),
-            `vscodesync-cloud-${String(Date.now())}-${path.basename(target.fsPath)}`,
-          );
-          await fs.writeFile(tmp, body);
-          const right = vscode.Uri.file(tmp);
-          const left = vscode.Uri.file(target.fsPath);
-          const title = `${path.basename(target.fsPath)} (локально ↔ облако)`;
-          await vscode.commands.executeCommand("vscode.diff", left, right, title);
-        },
-        target.root,
-      );
-    }),
-
-    vscode.commands.registerCommand("vscodesync.showFileHistory", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      await runShowFileHistory(runWithEngine, globalConfig, target);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.openTimeTravelScrubber", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) return;
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const row = cfg.files.find((f) => f.localPath === rel);
-      if (!row) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не отслеживается этим расширением.");
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        const provider = engine.deps.provider;
-        const { openTimeTravelScrubber } = await import("./ui/timeTravelScrubberPanel.js");
-        await openTimeTravelScrubber({
-          context,
-          provider,
-          workspaceId: row.workspaceId,
-          relPath: rel,
-        });
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.openInCloudStorage", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      await openTrackedFileInCloudStorage(registry, globalConfig, target);
-    }),
 
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
       await runWithEngine(async (engine) => {
@@ -3507,28 +3185,16 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     ...registerActivitySearchCommands({ context }),
     ...registerPanelCommands({ context, storageDir: globalConfig.getStorageDir() }),
-
-    vscode.commands.registerCommand("vscodesync.pinFileForSync", async (uri?: vscode.Uri) => {
-      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
-      if (target?.scheme !== "file") {
-        await vscode.window.showWarningMessage("VSCodeSync: откройте файл для pin.");
-        return;
-      }
-      const folder = vscode.workspace.getWorkspaceFolder(target);
-      if (!folder) return;
-      const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-      const rel = path.relative(folder.uri.fsPath, target.fsPath).split(path.sep).join("/");
-      const tf = wc.files.find((f) => f.localPath === rel);
-      if (!tf) {
-        await vscode.window.showWarningMessage(
-          "VSCodeSync: файл не отслеживается — добавьте его в workspace.",
-        );
-        return;
-      }
-      await offlineQueueStore.enqueuePush(folder.uri.fsPath, rel, tf.workspaceId, true);
-      await vscode.window.showInformationMessage(
-        `VSCodeSync: «${rel}» закреплён в начале очереди — выгрузится первым при следующем flush.`,
-      );
+    ...registerFileOperationsCommands({
+      context,
+      globalConfig,
+      offlineQueueStore,
+      runWithEngine,
+      resolveFileTarget,
+      resolveFileTargetLoose: (arg) => resolveFileTargetLoose(globalConfig, arg),
+      runAddToNewWorkspace,
+      showFileHistoryAt: (target) => runShowFileHistory(runWithEngine, globalConfig, target),
+      openTrackedFileInCloudStorageAt: (target) => openTrackedFileInCloudStorage(registry, globalConfig, target),
     }),
   );
 

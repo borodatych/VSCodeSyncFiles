@@ -43,6 +43,30 @@ export async function pickWorkspaceId(root: string): Promise<string | undefined>
   return picked?.id;
 }
 
+/** Pick a workspace from the local config, excluding the given one. */
+export async function pickOtherWorkspaceId(
+  root: string,
+  excludeWorkspaceId: string,
+): Promise<string | undefined> {
+  const wc = await WorkspaceConfigManager.load(root);
+  const candidates = wc.activeWorkspaces.filter((w) => w.workspaceId !== excludeWorkspaceId);
+  if (candidates.length === 0) {
+    await vscode.window.showWarningMessage("VSCodeSync: нет другого workspace для перемещения.");
+    return undefined;
+  }
+  if (candidates.length === 1) {
+    return candidates[0]?.workspaceId;
+  }
+  const picked = await vscode.window.showQuickPick(
+    candidates.map((e) => ({
+      label: `${e.workspaceNote} (${e.workspaceId})`,
+      id: e.workspaceId,
+    })),
+    { placeHolder: "Переместить в workspace" },
+  );
+  return picked?.id;
+}
+
 /** Same as `pickWorkspaceId` but filters candidates by a predicate first. */
 export async function pickWorkspaceIdMatching(
   root: string,
