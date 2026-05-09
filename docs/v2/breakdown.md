@@ -47,7 +47,7 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.1.6. Smoke-test environment
 
 - [x] **`docs/v2/p2p-smoke-guide.md`** — manual reproduction guide; перечисление 8 pure модулей, инструкция собрать end-to-end сессию (offer → answer → ICE → DataChannel → file chunks → cleanup), pass criteria.
-- [ ] CI smoke в single-process mode через `@roamhq/wrtc` — blocked: native binding на CI runner ненадёжен, ICE timing для vitest-default 5s timeout слишком тугой.
+- [ ] CI smoke в single-process mode через `@roamhq/wrtc` — blocked: native binding на CI runner ненадёжен, ICE timing для vitest-default 5s timeout слишком тугой. _(roadmap-max 2026-05-09: confirmed blocked.)_
 
 ---
 
@@ -64,28 +64,28 @@ wrapAuthenticated — все готовы и тестированы. UI и signa
 ### v2.2.2. Desktop platform (electron / vscode native)
 
 - [ ] **Native FIDO2:** через webview API → `navigator.credentials` (vscode webviews используют Chromium inside, поддерживают WebAuthn).
-- [ ] Альтернатива: native binding `node-webauthn` (но native dep). Skeleton-acceptable если binding не установлен.
+- [~] Альтернатива: native binding `node-webauthn` — typed `WebAuthnAdapter` + `makeSkeletonWebAuthnAdapter` sentinel in `src/core/webauthnPlatformAdapter.ts` (commit `c45337d`). Real native binding remains.
 
 ### v2.2.3. UI flow
 
 - [ ] **Команда `vscodesync.enrollPasskey`** — модалка «Add hardware key / biometric»: generate credential → store id → wrap existing DEK с derived KEK → write encrypted envelope в SecretStorage.
 - [ ] **Команда `vscodesync.unlockWithPasskey`** — при попытке использовать DEK после lock: prompt biometric → derive KEK → unwrap DEK.
-- [ ] **Команда `vscodesync.removePasskey`** — удалить credential id (DEK остаётся wrapped, нужен fallback passphrase).
+- [x] **Команда `vscodesync.removePasskey`** — palette QuickPick + confirm modal + telemetry; storage в `passkeyRegistryStorage.ts` (commit `0733329`).
 
 ### v2.2.4. Recovery + fallback
 
 - [x] **5 одноразовых recovery codes** — `src/core/passkeyRecoveryCodes.ts`: `generateRecoveryCodes(count?)` (default 5, max 50) формат `xxxx-xxxx-xxxx-xxxx-xxxx` (28-symbol alphabet без 0/o/1/i/l). `hashRecoveryCode` нормализует case+dashes+whitespace перед SHA-256. `verifyRecoveryCode(code, hashes)` constant-time match, пропускает consumed (`""`). 7 unit-тестов.
-- [~] **Passphrase fallback** — pure step planner `planPassphraseFlow({ mode, hasEnrolledPassphrase, strengthScore?, recentFailedAttempts?, maxAttempts?, lockoutStartedAtMs?, lockoutDurationMs?, nowMs })` готов в `src/core/passphraseFallbackFlow.ts`. 3 modes (`enroll` / `unlock` / `recover`) × 4 warnings (`no_passphrase_enrolled` / `weak_passphrase_strength` < 0.5 / `lockout_active` / `near_lockout` ≤ 1 attempt). 5-attempt default with 5-min lockout, expired lockout автоматически clears. 13 unit-тестов. UI обвязка остаётся.
-- [~] **Multi-device** — мульти-credential map. `src/core/passkeyCredentialRegistry.ts`: `PasskeyCredentialRegistry { version: 1, entries[], primaryId? }` + pure helpers `upsertCredential` / `removeCredential` / `setPrimaryCredential` / `findPrimaryCredential` (fallback to most-recent enrolled) / `findCredentialById` / `orderForDisplay` (primary → recency) / `noteCredentialUsed` + strict `parsePasskeyRegistry` (rejection: `bad_root_shape` / `bad_version` / `bad_entries` / `bad_entry_shape` / `bad_primary_id`). 28 unit-тестов. SecretStorage-обвязка остаётся.
+- [x] **Passphrase fallback** — `vscodesync.passkeyFallback` command exposes the wizard via QuickPick (`src/ui/passkeyCommands.ts`, commit `0733329`). Real enroll/unlock paths gated behind v2.2.1 WebAuthn impl.
+- [x] **Multi-device** — `src/ui/passkeyRegistryStorage.ts` round-trip via SecretStorage (commit `0733329`); strict-decoder rejection paths surface via `warnLog`.
 
 ### v2.2.5. Settings UI
 
-- [~] **`vscodesync.showPasskeySettings`** — pure formatter `renderPasskeyDevicesHtml(devices, { formatDate?, title?, styleNonce? })` готов в `src/core/passkeyDevicesFormatter.ts`. Renders device list (sorted by enrolledAtMs desc, "never" placeholder для unused devices, action buttons rename/remove с `data-action` / `data-id`). XSS-safe (every interpolation через `escapeHtml`). `parseDeviceUserAgent(uaString)` — heuristic для derive friendly label "Chrome 124 on macOS 14.2" (Edge before Chrome detection, Safari/iOS/Android/Linux/Windows + macOS supported, fallback "Unknown device"). 13 unit-тестов. Webview controller + onDidReceiveMessage обвязка остаётся.
+- [x] **`vscodesync.showPasskeySettings`** — webview controller + `onDidReceiveMessage` for rename / remove actions wired in `src/ui/passkeyCommands.ts` (commit `0733329`).
 
 ### v2.2.6. Tests + telemetry
 
 - [x] Unit-тесты на envelope wrap/unwrap — `src/core/passkeyEnvelopeWrap.ts` с инжекцией `DeriveKekFn(credentialId, salt) → Uint8Array`. AES-256-GCM, authTag append к ciphertext (без расширения `KeyEnvelope` shape). 5 unit-тестов с deterministic mock derive: round-trip, auth_failure при mismatched derive, shape rejection.
-- [~] Telemetry: track WebAuthn failure reasons — pure event-shape `PasskeyTelemetryEvent` (discriminated union: enroll_success / enroll_failure / unlock_success / unlock_failure / removal / recovery_code_used / passphrase_fallback_used) + `toUsagePayload(event)` → `{ name, data }` готовы в `src/core/passkeyTelemetryEvents.ts`. Sanitiser: failure-reason taxonomy с fallback `"unknown"` — никогда не сериализуется raw exception text; clamp counters; PII (credential id, raw UA) недоступна по типу. 14 unit-тестов. Wire через существующий `vscode.TelemetryLogger.logUsage` остаётся.
+- [x] Telemetry: WebAuthn failure reasons wired via module-level `logSanitisedUsage` in `extensionTelemetry.ts` (commit `0733329`). Wave B passkey commands dispatch removal + passphrase_fallback_used events.
 
 ---
 
@@ -331,7 +331,7 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 - [x] **`src/ui/tunnelBackendCloudflared.ts`** — `child_process.spawn("cloudflared", ["tunnel", "--url", ...])` directly upgraded from skeleton (commit `84ce6a6`). Lazy probe + 30 s URL-scrape timeout + SIGTERM → SIGKILL dispose.
 - [x] Process lifecycle implemented; reconnect/respawn watchdog deferred to v2.13.x — current implementation is single-attempt open + dispatcher-level fallback to smee.
-- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)`.
+- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)`. _(roadmap-max 2026-05-09: deferred — pure URL-scrape and watchdog state machine already covered in `tunnelUrlScrape.test.ts` + `tunnelSpawnWatchdog.test.ts`; full spawn-mock requires DI refactor or `vi.mock("node:child_process")`.)_
 
 ### v2.13.2. Tailscale spawn
 
@@ -339,7 +339,7 @@ Pure-helpers полностью готовы; команда + status bar + regi
   - Pre-flight `tailscale funnel status` via `parseTailscaleFunnelStatus` (acl_denied / not_logged_in / daemon_unavailable surface to dispatcher).
   - `tailscale funnel --bg <port>` + 2 s status polling, 15 s timeout.
   - `tailscale funnel reset` on dispose.
-- [ ] Тесты с mock spawn.
+- [ ] Тесты с mock spawn. _(roadmap-max 2026-05-09: deferred — same reasoning as v2.13.1.)_
 
 ### v2.13.3. Status bar
 
@@ -389,21 +389,21 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 ### v2.20.1. Архитектурные / DX (1–3)
 
-- [ ] **MCP server endpoint** — VSCodeSync как MCP-сервер для Claude Code / Cursor / Continue / любых MCP-aware агентов. Tools: `vscodesync.list_workspaces`, `push_file(workspace, path)`, `query_history(workspace, since)`, `list_conflicts`, `resolve_conflict(strategy)`. Пакет `@modelcontextprotocol/sdk` (MIT). **Зачем:** AI-агенты получают доступ к sync state без прямого чтения файлов; индустриальный стандарт (Anthropic, OpenAI, JetBrains).
-- [ ] **CLI `vscodesync`** — npx-runnable bin для headless push/pull/status. Use cases: SSH boxes, Docker dev containers, CI smoke. Базируется на extracted `src/core/` (после Phase 0 это выполнимо). Подкоманды: `vscodesync status`, `vscodesync push [workspace]`, `vscodesync pull [workspace]`, `vscodesync sign-in --device-code`. **Зачем:** часто просят, low-effort после foundation.
+- [~] **MCP server endpoint** — typed contract `src/core/mcpServerContract.ts` shipped (commit `c45337d`); `@modelcontextprotocol/sdk` integration + transport layer remain. Sentinel `McpNotImplementedError`.
+- [~] **CLI `vscodesync`** — pure `parseCliArgs(argv)` shipped in `src/core/cliArgsParser.ts` (commit `c45337d`); separate npm bin entry + dispatch-table-to-engine remain. Sentinel `CliNotImplementedError`.
 - [ ] **Settings Sync integration** — `vscode.authentication.getSession("vscode-settings-sync")` (если доступен в Cursor / VS Code 1.95+) → синхронизация machineName, providerType через native VS Code Settings Sync. **Зачем:** новая машина → меньше шагов setup'а.
 
 ### v2.20.2. Performance / scale (4–6)
 
 - [ ] **WebRTC SCTP multiplexing** — после v2.12 (P2P UI): мультиплексировать N parallel transfers (один DataChannel на crit-path manifest, второй–N на bulk files). Использует SCTP stream identifiers нативно. **Зачем:** initial sync ускоряется в N раз для маленьких файлов.
-- [ ] **DuckDB-WASM для analytics** — встроить в settings webview для SQL-query'ев против `activity.json` + `stats.json`. SQL вместо custom UI с фильтрами. Пакет `@duckdb/duckdb-wasm` (MIT, ~10 MB но lazy-load only when settings webview open). **Зачем:** power-users получают флексибельность без растущего UI кода.
+- [~] **DuckDB-WASM для analytics** — read-only SQL validator + table-discovery planner shipped in `src/core/analyticsQueryShape.ts` (commit `c45337d`); `@duckdb/duckdb-wasm` lazy-load + virtual-table mount remain. Sentinel `AnalyticsBackendNotImplementedError`.
 - [ ] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` API (если доступен в Cursor / VS Code 1.95+) — для облачных workspace заранее загружаем файлы в local cache. **Зачем:** open-folder latency = 0 после первого pull.
 
 ### v2.20.3. Security / privacy (7–9)
 
-- [ ] **Encrypted bundle export** — `vscodesync.exportEncryptedBundle` команда: `.tar.zst.aes256` файл со всем workspace + manifest + history. Use case: air-gapped передача через USB / S3 cold storage. **Зачем:** альтернатива cloud + P2P для compliance-environments.
-- [ ] **OAuth Device Code flow** — `vscodesync.signInDeviceCode` команда для headless SSH контекстов. Display code + URL → user opens browser elsewhere → VSCode poll'ит token endpoint. **Зачем:** PKCE через UriHandler не работает на удалённой машине без локального браузера.
-- [ ] **Local LLM для AI merge** — setting `vscodesync.aiMerge.endpoint = "ollama" | "lm-studio" | "<custom-url>"`. Replace `vscode.lm` для on-prem environments. Default остаётся `vscode.lm`. **Зачем:** corp-юзеры не отправляют код в публичные LLM API.
+- [x] **Encrypted bundle export** — `vscodesync.exportEncryptedBundle` shipped (commit `c3332db`). `.vscsbundle` format = magic + AES-256-GCM via `exportKeyWithPassword`; ≥12-char passphrase enforced.
+- [~] **OAuth Device Code flow** — pure RFC 8628 helpers shipped in `src/core/oauthDeviceCodeFlow.ts` (commit `c3332db`): `parseDeviceAuthResponse` + `planDeviceCodePoll` (slow_down / authorization_pending / expired_token). UI command `vscodesync.signInDeviceCode` + per-provider device endpoint URLs remain.
+- [~] **Local LLM для AI merge** — setting `vscodesync.aiMerge.endpoint` registered + pure resolver `resolveAiMergeEndpoint` + body builders shipped (commit `c3332db`). Replacement of `vscode.lm` calls in `aiMergeService` to dispatch through the resolver remains.
 
 ### v2.20.4. Modern protocols (10–12)
 
@@ -413,9 +413,9 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 ### v2.20.5. UX / fit-and-finish (13–16)
 
-- [ ] **`.vscodesync-readme.md` auto-render** — при первом открытии workspace на новой машине показать webview с rendered markdown из `.vscodesync-readme.md` (если присутствует в workspace). Создатель workspace описывает: что это, как пользоваться, кого пинговать. **Зачем:** custom welcome от автора workspace.
-- [ ] **Conflict heatmap → SARIF export** — команда `vscodesync.exportConflictsToSarif` пишет `.sarif` (Static Analysis Results Interchange Format) для GitHub Code Scanning / SonarQube ingestion. Каждый конфликт → SARIF result с `level: warning`, location: file+range, ruleId: "vscodesync/conflict". **Зачем:** integration с corp tooling pipelines.
-- [ ] **Workspace templates marketplace** — публиковать `.vscodesync-template.json` (manifest, default-files-glob, ignore-rules, recommended extensions) в реестр (Open VSX-style, git-hosted в `vscodesync/templates` repo). Команда `vscodesync.installWorkspaceTemplate` ищет в реестре + локально. **Зачем:** быстрый bootstrap workspace для типичных стеков.
+- [x] **`.vscodesync-readme.md` auto-render** — `vscodesync.showWorkspaceReadme` + first-open auto-render in `src/commands/registerReadmeAutoRender.ts`; pure markdown renderer in `src/core/workspaceReadmeMd.ts` (XSS-safe; subset: headings / lists / inline bold-italic-code / safe http(s) links). 6 unit tests. Commit `c3332db`.
+- [x] **Conflict heatmap → SARIF export** — `vscodesync.exportConflictsToSarif` shipped (commit `c3332db`). SARIF v2.1.0 builder in `src/core/conflictHeatmapSarif.ts` with %SRCROOT% uriBaseId, dedup, line-range clamping. 7 unit tests.
+- [~] **Workspace templates marketplace** — typed `WorkspaceTemplateManifest` + strict `parseWorkspaceTemplate` + sentinel `TemplateMarketplaceNotImplementedError` shipped in `src/core/workspaceTemplate.ts` (commit `c45337d`). Registry fetch (git-hosted index) + install command remain.
 - [ ] **Onboarding video walkthroughs** — short MP4 в `media/walkthroughs/` (3 video по 30 s: «add first file», «resolve conflict», «time-travel»). Walkthrough JSON ссылается на video через `data-href`. **Зачем:** видео конвертит лучше чем текст.
 
 ---
