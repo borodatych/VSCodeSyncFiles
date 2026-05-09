@@ -351,9 +351,9 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ### v2.20.4. Modern protocols (10–12)
 
-- [~] **Webhook → SSE upgrade для GDrive / OneDrive** — pure SSE декодер `src/core/webhookSseDecoder.ts` (`createSseDecoder` + `SseTransportNotImplementedError`). 10 unit-тестов на event boundary parsing, multi-line data, retry/id capture, \r\n line endings. Per-provider connection wiring (Drive Activity API streaming) остаётся.
-- [~] **OAuth 2.1 PAR (Pushed Authorization Requests)** — pure planner `src/core/oauthPushedAuthRequest.ts` (`buildParRequestBody` / `parseParResponse` / `buildAuthorizeUrlWithRequestUri` + `ParEndpointNotConfiguredError`). 10 unit-тестов. Wiring через провайдер-specific endpoint (когда провайдер объявит PAR endpoint metadata) — следующая итерация.
-- [~] **WebAuthn → Passkeys (FIDO2 with sync)** — pure reconciler `src/core/passkeyMultiDeviceReconciler.ts:reconcilePasskeyRegistries` мержит локальный + remote registry без потери `displayName` / `primaryId`; 6 unit-тестов. Transport (P2P или cloud-mirror) для импорта peer-registry — следующая итерация.
+- [~] **Webhook → SSE upgrade для GDrive / OneDrive** — pure SSE декодер `src/core/webhookSseDecoder.ts` (10 тестов). Per-provider config registry `src/core/sseProviderRegistry.ts:SSE_PROVIDER_REGISTRY` (4 провайдера, все `available: false` с unavailableReason); `SseProviderUnavailableError` sentinel; 4 теста. Real per-provider connection (Drive Activity API streaming) остаётся.
+- [~] **OAuth 2.1 PAR (Pushed Authorization Requests)** — pure planner `src/core/oauthPushedAuthRequest.ts` (10 тестов). Per-provider config `src/core/parProviderRegistry.ts:PAR_PROVIDER_REGISTRY` (4 провайдера, все `parEndpointUrl: null` — никто из консьюмерских OAuth endpoints не объявил PAR в OIDC discovery); `extendParParamsForProvider` помощник; 4 теста. PAR-aware sign-in flow остаётся (включится автоматически когда провайдер объявит endpoint).
+- [~] **WebAuthn → Passkeys (FIDO2 with sync)** — pure reconciler `src/core/passkeyMultiDeviceReconciler.ts:reconcilePasskeyRegistries` (6 тестов). Wire-format transport `src/core/passkeyPeerRegistryTransport.ts` (`encodePeerRegistryFrame` / `decodePeerRegistryFrame` strict-decoder с reasons `bad_envelope` / `bad_version` / `bad_payload` + `PasskeyTransportNotEnabledError` для p2p и cloud_mirror транспортов); 5 тестов. Wire-up в `openP2PSession` / cloud-mirror flow остаётся под opt-in setting.
 
 ### v2.20.5. UX / fit-and-finish (13–16)
 
