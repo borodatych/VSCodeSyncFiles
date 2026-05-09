@@ -10,7 +10,7 @@ import {
   formatResumeSummaryMessage,
   summariseResumePlans,
 } from "./core/sessionResumeSummary.js";
-import { readEncryptionKey, ensureEncryptionKey } from "./core/encryptionKey.js";
+import { readEncryptionKey } from "./core/encryptionKey.js";
 import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
 import type { ProviderType } from "./core/types.js";
@@ -50,6 +50,7 @@ import { registerHashMigrationCommands } from "./commands/registerHashMigration.
 import { registerOAuthDeviceCodeCommand } from "./commands/registerOAuthDeviceCode.js"; import { resolveDeviceCodeProviders } from "./startup/resolveDeviceCodeProviders.js"; import { registerTemplateMarketplace } from "./commands/registerTemplateMarketplace.js";
 import { registerPrefetchCommand } from "./commands/registerPrefetchCommand.js";
 import { registerProviders } from "./startup/registerProviders.js";
+import { registerConfigChangeListeners } from "./startup/registerConfigChangeListeners.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -221,40 +222,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(conflictPredictor);
 
   context.subscriptions.push(fileDecorationRegistration);
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("vscodesync.showFileDecorations") || e.affectsConfiguration("vscodesync.lineEnding")) {
-        fileDecorations.refresh();
-      }
-      if (e.affectsConfiguration("vscodesync.encryption")) {
-        const on = vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false);
-        if (on) {
-          void (async () => {
-            const existing = await readEncryptionKey(context.secrets);
-            if (!existing) {
-              await ensureEncryptionKey(context.secrets);
-              await vscode.window.showWarningMessage(
-                "VSCodeSync: шифрование включено. Ключ AES-256 сгенерирован и сохранён в системный keychain. Сохраните резервную копию через «VSCodeSync: Export Encryption Key».",
-                "Экспортировать сейчас",
-              ).then(async (choice) => {
-                if (choice === "Экспортировать сейчас") {
-                  await vscode.commands.executeCommand("vscodesync.exportEncryptionKey");
-                }
-              });
-            }
-          })();
-        }
-      }
-      if (e.affectsConfiguration("vscodesync.watchIntervalSeconds")) {
-        const sec = vscode.workspace.getConfiguration(CFG_SECTION).get<number>("watchIntervalSeconds", 30);
-        if (sec < 30) {
-          void vscode.window.showWarningMessage(
-            `VSCodeSync: watchIntervalSeconds = ${String(sec)} — рекомендуется ≥ 30 сек. Слишком частый polling может исчерпать лимиты API провайдера.`,
-          );
-        }
-      }
-    }),
-  );
+  context.subscriptions.push(registerConfigChangeListeners({ context, fileDecorations }));
 
   const statusBar = new SyncStatusBarController({
     globalConfig,
