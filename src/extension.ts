@@ -82,7 +82,7 @@ import {
 import { registerVsCodeSyncTelemetry } from "./telemetry/extensionTelemetry.js";
 import { runOnboardingWizard } from "./ui/onboarding.js";
 import { SyncTimelineProvider } from "./ui/syncTimelineProvider.js";
-import { runAiMerge, isAiMergeAvailable } from "./core/aiMerge.js";
+import { runAiMerge } from "./core/aiMerge.js";
 import { registerProviderSetupGuide } from "./ui/providerSetupGuide.js";
 import { registerCommandCenter } from "./ui/commandCenter.js";
 import { registerSettingsPanel } from "./ui/settingsPanel.js";
@@ -112,6 +112,7 @@ import { registerViewManagementCommands } from "./commands/registerViewManagemen
 import { registerSettingsCommands } from "./commands/registerSettings.js";
 import { registerWorkspaceTreeContextCommands } from "./commands/registerWorkspaceTreeContext.js";
 import { registerFileTreeContextCommands } from "./commands/registerFileTreeContext.js";
+import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -1853,82 +1854,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Palette conflict resolution commands (work from active editor or pick from list)
+  // Palette + CodeLens conflict resolution commands now live in
+  // src/commands/registerConflicts.ts.
   context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.keepMine", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const fileEntry = cfg.files.find((f) => f.localPath === rel && f.syncStatus === "conflict");
-      if (!fileEntry) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не находится в состоянии конфликта.");
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.resolveConflictKeepMine(fileEntry.workspaceId, rel);
-        await vscode.window.showInformationMessage(`Конфликт разрешён: оставлена локальная версия «${path.basename(target.fsPath)}».`);
-        notifiedConflictKeys.delete(`${fileEntry.workspaceId}:${rel}`);
-      }, target.root);
+    ...registerConflictsCommands({
+      globalConfig,
+      workspacesTree,
+      statusBar,
+      fileDecorations,
+      refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
+      runWithEngine,
+      logSyncActivity: (ev) => { logSyncActivityRef?.(ev); },
+      notifiedConflictKeys,
+      resolveFileTarget,
+      runConflict3WayDiffAt: (target) => runConflict3WayDiff(runWithEngine, target),
+      runAiMergeForConflictAt: (target, wsId, rel) =>
+        runAiMergeForConflict(runWithEngine, target, wsId, rel, notifiedConflictKeys),
     }),
-
-    vscode.commands.registerCommand("vscodesync.takeTheirs", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const fileEntry = cfg.files.find((f) => f.localPath === rel && f.syncStatus === "conflict");
-      if (!fileEntry) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не находится в состоянии конфликта.");
-        return;
-      }
-      await runWithEngine(async (engine) => {
-        await engine.resolveConflictTakeTheirs(fileEntry.workspaceId, rel);
-        await vscode.window.showInformationMessage(`Конфликт разрешён: принята облачная версия «${path.basename(target.fsPath)}».`);
-        notifiedConflictKeys.delete(`${fileEntry.workspaceId}:${rel}`);
-      }, target.root);
-    }),
-
-    // Inline-CodeLens variants — same effect, but record the conflict's real
-    // line range in the heatmap before delegating. Internal commands (no
-    // palette title) so users still see "Keep mine" / "Take theirs" in the
-    // command center.
-    vscode.commands.registerCommand(
-      "vscodesync.keepMineWithRange",
-      async (uri: vscode.Uri | undefined, range: { startLine: number; endLine: number } | undefined) => {
-        await recordHeatmapRangeForUri(uri, range);
-        await vscode.commands.executeCommand("vscodesync.keepMine", uri);
-      },
-    ),
-    vscode.commands.registerCommand(
-      "vscodesync.takeTheirsWithRange",
-      async (uri: vscode.Uri | undefined, range: { startLine: number; endLine: number } | undefined) => {
-        await recordHeatmapRangeForUri(uri, range);
-        await vscode.commands.executeCommand("vscodesync.takeTheirs", uri);
-      },
-    ),
   );
-
-  async function recordHeatmapRangeForUri(
-    uri: vscode.Uri | undefined,
-    range: { startLine: number; endLine: number } | undefined,
-  ): Promise<void> {
-    if (!uri || !range) return;
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) return;
-    const rel = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/");
-    if (!rel || rel.startsWith("..")) return;
-    try {
-      const { recordConflictResolution } = await import("./ui/conflictHeatmapStoreFs.js");
-      await recordConflictResolution(globalConfig.getStorageDir(), rel, range.startLine, range.endLine);
-    } catch {
-      /* heatmap is best-effort; silent on I/O errors */
-    }
-  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("vscodesync.createWorkspace", async () => {
@@ -2419,14 +2362,6 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }),
 
-    vscode.commands.registerCommand("vscodesync.openConflictDiff3way", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      await runConflict3WayDiff(runWithEngine, target);
-    }),
-
     vscode.commands.registerCommand("vscodesync.showFileHistory", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) {
@@ -2463,43 +2398,6 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       await openTrackedFileInCloudStorage(registry, globalConfig, target);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.resolveTakeTheirs", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      await runWithEngine(async (engine, root) => {
-        let cfg = await WorkspaceConfigManager.load(root);
-        const row = cfg.files.find((f) => f.localPath === rel);
-        if (row?.syncStatus !== "conflict") {
-          await vscode.window.showWarningMessage("VSCodeSync: нет конфликта для этого файла.");
-          return;
-        }
-        row.syncStatus = "ok";
-        await WorkspaceConfigManager.save(cfg, root);
-        cfg = await WorkspaceConfigManager.load(root);
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === row.workspaceId);
-        if (!entry) {
-          await vscode.window.showErrorMessage("VSCodeSync: workspace не найден.");
-          return;
-        }
-        await engine.pullFile(cfg, row.workspaceId, rel, entry);
-        const gconf = await globalConfig.load();
-        const wnote =
-          cfg.activeWorkspaces.find((w) => w.workspaceId === row.workspaceId)?.workspaceNote ?? row.workspaceId;
-        logSyncActivityRef?.({
-          kind: "resolve_take_theirs",
-          workspaceId: row.workspaceId,
-          workspaceNote: wnote,
-          relPath: rel,
-          machineName: gconf.machineName,
-          provider: gconf.activeProvider ?? "onedrive",
-        });
-        await vscode.window.showInformationMessage(`Принята облачная версия: ${rel}`);
-      }, target.root);
     }),
 
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
@@ -2991,111 +2889,6 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }),
 
-    vscode.commands.registerCommand("vscodesync.resolveConflicts", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const wc = await WorkspaceConfigManager.load(root);
-      const conflicts = wc.files.filter((f) => f.syncStatus === "conflict");
-      if (conflicts.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет конфликтов.");
-        return;
-      }
-
-      type BatchChoice = "keepMineAll" | "taketheirsAll" | "manual";
-
-      // Bulk choice first if > 1 conflict
-      let batchMode: BatchChoice = "manual";
-      if (conflicts.length > 1) {
-        const bulk = await vscode.window.showWarningMessage(
-          `VSCodeSync: ${String(conflicts.length)} файлов в конфликте. Как разрешить?`,
-          "Keep Mine All",
-          "Take Theirs All",
-          "Разрешить по одному",
-        );
-        if (!bulk) {
-          return;
-        }
-        if (bulk === "Keep Mine All") {
-          batchMode = "keepMineAll";
-        } else if (bulk === "Take Theirs All") {
-          batchMode = "taketheirsAll";
-        }
-      }
-
-      if (batchMode !== "manual") {
-        await runWithEngine(async (engine) => {
-          for (const f of conflicts) {
-            try {
-              if (batchMode === "keepMineAll") {
-                await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
-              } else {
-                await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
-              }
-              notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
-            } catch {
-              /* individual errors are non-fatal in batch */
-            }
-          }
-          await vscode.window.showInformationMessage(
-            `VSCodeSync: разрешено ${String(conflicts.length)} конфликтов (${batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs"}).`,
-          );
-        });
-        return;
-      }
-
-      // One-by-one queue
-      const aiAvailable = await isAiMergeAvailable();
-      for (const f of conflicts) {
-        let resolved = false;
-        while (!resolved) {
-          const idx = conflicts.indexOf(f);
-          const wsNote = wc.activeWorkspaces.find((w) => w.workspaceId === f.workspaceId)?.workspaceNote ?? f.workspaceId;
-          const buttons = aiAvailable
-            ? ["Keep Mine", "Take Theirs", "Open Diff", "✨ Merge with AI", "Skip"]
-            : ["Keep Mine", "Take Theirs", "Open Diff", "Skip"];
-          const choice = await vscode.window.showWarningMessage(
-            `⚠ Конфликт ${String(idx + 1)}/${String(conflicts.length)}: ${f.localPath} (workspace «${wsNote}»)`,
-            ...buttons,
-          );
-          if (!choice || choice === "Skip") {
-            resolved = true;
-            continue;
-          }
-          if (choice === "Open Diff") {
-            const conflictUri = vscode.Uri.file(path.join(root, ...f.localPath.split("/")));
-            await runConflict3WayDiff(runWithEngine, { root, fsPath: conflictUri.fsPath });
-            continue; // re-show the same file dialog
-          }
-          if (choice === "✨ Merge with AI") {
-            const conflictUri = vscode.Uri.file(path.join(root, ...f.localPath.split("/")));
-            const aiResolved = await runAiMergeForConflict(
-              runWithEngine,
-              { root, fsPath: conflictUri.fsPath },
-              f.workspaceId,
-              f.localPath,
-              notifiedConflictKeys,
-            );
-            if (aiResolved) {
-              resolved = true;
-            }
-            // If not resolved (error / model refused) — re-show dialog for manual choice
-            continue;
-          }
-          await runWithEngine(async (engine) => {
-            if (choice === "Keep Mine") {
-              await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
-            } else {
-              await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
-            }
-            notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
-          });
-          resolved = true;
-        }
-      }
-    }),
-
     ...registerProviderSignInCommands({
       context,
       globalConfig,
@@ -3111,32 +2904,6 @@ export function activate(context: vscode.ExtensionContext): void {
         dropbox: runDropboxAuth,
         yandexDisk: runYandexDiskAuth,
       },
-    }),
-
-    vscode.commands.registerCommand("vscodesync.resolveKeepMine", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      let touched = false;
-      for (const f of cfg.files) {
-        if (f.localPath === rel) {
-          f.syncStatus = "ok";
-          touched = true;
-        }
-      }
-      if (!touched) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-        return;
-      }
-      await WorkspaceConfigManager.save(cfg, target.root);
-      await vscode.window.showInformationMessage("Флаг конфликта снят; при необходимости выполните Push.");
-      await statusBar.refresh();
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
     }),
 
     vscode.commands.registerCommand("vscodesync.startOnboarding", async () => {
