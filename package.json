@@ -1714,6 +1714,7 @@
     "qrcode-terminal": "^0.12.0"
   },
   "dependencies": {
+    "@duckdb/duckdb-wasm": "^1.33.1-dev45.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

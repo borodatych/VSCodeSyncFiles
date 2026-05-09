@@ -340,7 +340,7 @@ ACL parser / status registry / config watcher) и backends удалены.
 ### v2.20.2. Performance / scale (4–6)
 
 - [ ] **WebRTC SCTP multiplexing** — после v2.12 (P2P UI): мультиплексировать N parallel transfers (один DataChannel на crit-path manifest, второй–N на bulk files). Использует SCTP stream identifiers нативно. **Зачем:** initial sync ускоряется в N раз для маленьких файлов.
-- [~] **DuckDB-WASM для analytics** — read-only SQL validator + table-discovery planner shipped in `src/core/analyticsQueryShape.ts` (commit `c45337d`); `@duckdb/duckdb-wasm` lazy-load + virtual-table mount remain. Sentinel `AnalyticsBackendNotImplementedError`.
+- [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle, `runReadOnlyQuery` валидирует через `validateReadOnlySql` и возвращает explicit `tables_not_mounted` sentinel. Virtual-table mount (activity.json + stats.json) — webview-side follow-up (DuckDB-WASM работает лучше из Worker).
 - [ ] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` API (если доступен в Cursor / VS Code 1.95+) — для облачных workspace заранее загружаем файлы в local cache. **Зачем:** open-folder latency = 0 после первого pull.
 
 ### v2.20.3. Security / privacy (7–9)
