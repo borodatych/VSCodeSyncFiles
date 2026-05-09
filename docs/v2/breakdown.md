@@ -267,8 +267,8 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 - [x] **`src/commands/registerP2PSession.ts`** — `vscodesync.startP2PSession` + `vscodesync.disconnectP2PSession` (scaffolding).
 - [x] Multi-step QuickPick из `planP2PSessionWizard(...)`. Шаги отображаются с описанием каждой фазы и transport (cloud / qr).
-- [~] Cloud transport — gated behind `vscodesync.p2p.experimental`; pure helpers готовы, signaling round-trip + DataChannel wiring остаётся.
-- [~] QR transport — wizard plan показывает шаги; `qrcode-terminal` рендер в OutputChannel + InputBox для scanned answer остаётся.
+- [x] Cloud transport — wired в `runStartP2PSession` (registerP2PSession.ts:135) через `createSignalingTransport` + `openP2PSession`; gated behind `vscodesync.p2p.experimental`. Real `@roamhq/wrtc` DataChannel + crypto envelope активны при включённой настройке.
+- [~] QR transport — `src/core/p2pQrTerminalRenderer.ts` (`renderQrToLines` + `renderChunkBlock`) lazy-load'ит `qrcode-terminal` (optional dep), 6 unit-тестов на module_not_installed / module_load_failed / shape rejection / chunk header. UI-обвязка (`OutputChannel.appendLine` + `InputBox` для scanned answer) — следующая итерация.
 - [x] Aborts при `no_online_peers` / `no_active_invites` warnings — отображаются в QuickPick как `$(warning)` items.
 
 ### v2.12.2. Status bar
