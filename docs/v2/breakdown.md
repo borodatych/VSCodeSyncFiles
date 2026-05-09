@@ -162,7 +162,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ## v2.6. Декомпозиция `extension.ts` — per-area split
 
-**Текущее состояние:** **2952 LoC, 8 команд осталось.** Стартовый счёт был 5085 LoC / 87 команд; за серию commits (e5f1d8a → 3de4e32) вынесено 79 команд в 10 per-area `register*.ts` модулей с единым `Deps`-контрактом. Helpers `pickRoot` / `pickWorkspaceId` / `pickWorkspaceIdMatching` / `pickOtherWorkspaceId` / `validateWorkspaceTransition` подняты в `src/commands/_shared.ts`. `RunWithEngineFn` typed alias в `registerWorkspaceLifecycle.ts` переиспользуется всеми bundle'ами. Tests 1604/1604, lint=0 на каждом этапе.
+**Текущее состояние:** **2486 LoC, 0 inline-команд осталось.** Стартовый счёт был 5085 LoC / 87 команд; за серию commits (e5f1d8a → следующий) вынесено **все 87 команд** в 13 per-area `register*.ts` модулей с единым `Deps`-контрактом. Helpers `pickRoot` / `pickWorkspaceId` / `pickWorkspaceIdMatching` / `pickOtherWorkspaceId` / `validateWorkspaceTransition` подняты в `src/commands/_shared.ts`. `RunWithEngineFn` typed alias в `registerWorkspaceLifecycle.ts` переиспользуется всеми bundle'ами. Tests 1604/1604, lint=0 на каждом этапе. Что осталось в extension.ts (2486 LoC) — startup wiring (config / registry / watchers / event handlers), helper functions (`makeEngine`, `runWithEngine`, `ensureProvider`, OAuth closures), `activate()` / `deactivate()` orchestration.
 
 ### v2.6.1. Workspace lifecycle
 
@@ -182,7 +182,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ### v2.6.5. Health + diagnostics
 
-- [~] **Частично закрыто.** `src/commands/registerSettings.ts` (5 команд: setNotificationLevel/showStatus/openSyncSettings/toggleTelemetry/showSyncSummary, commit `8d0098e`) + `src/commands/registerViewManagement.ts` (8 команд, commit `bac76ea`). Остаётся в `extension.ts`: `healthCheck` (heavy `buildHealthCheckReport` с 8+ deps), `repairState` (multi-mode), `previewSync` (`writeSyncPreviewOutput` + `syncPreviewChannel`), `takeSyncOwnership` (workspace lock helpers). Эти 4 — broad deps surface не оправдывает forwarding.
+- [x] **Полностью закрыто.** `src/commands/registerSettings.ts` (5 команд: setNotificationLevel/showStatus/openSyncSettings/toggleTelemetry/showSyncSummary, commit `8d0098e`) + `src/commands/registerViewManagement.ts` (8 команд, commit `bac76ea`) + `src/commands/registerHeavyMisc.ts` (4 команды: setGitBranchWorkspace/repairState/previewSync/startOnboarding) + `src/commands/registerDiagnostics.ts` (2 команды: takeSyncOwnership/healthCheck) + `src/commands/registerWorkspaceCreate.ts` (2 команды: createWorkspace/connectCloudWorkspace, плюс fix bug с undeclared `connected` variable).
 
 ### v2.6.6. Smart features
 
@@ -191,7 +191,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.6.7. Validation
 
 - [x] **CI regression check:** `tests/unit/packageJsonCommandsConsistency.test.ts` — assert каждый `contributes.commands[].command` присутствует в `WEB_STUB_COMMAND_IDS` + no-duplicates check. Если refactor забывает зарегистрировать команду в одном из мест — тест падает.
-- [~] **`extension.ts < 500 LoC` assert** — текущий 2952 LoC; оставшиеся ~2400 — `runWithEngine` / OAuth-closures / startup-wiring / 8 heavy-dep команд (createWorkspace, connectCloudWorkspace, setGitBranchWorkspace, takeSyncOwnership, healthCheck, repairState, previewSync, startOnboarding). Снижение до < 500 LoC требует подъёма closure'ов (`runWithEngine` / OAuth helpers / `getEncKey` / `roots` / lock helpers) в shared modules + завершения остатков v2.6.5. Текущий 91% прогресс по командам (79 / 87 closed).
+- [~] **`extension.ts < 500 LoC` assert** — текущий **2486 LoC** (87 / 87 inline-команд = 100% extracted). Оставшиеся ~2400 — `makeEngine` / `runWithEngine` factory / `ensureProvider` / `tryAuthenticatedProvider` / OAuth closures (`runOneDriveAuth` / etc) / `getEncKey` / startup-wiring (config load, registry init, watchers, event handlers) / helper functions (`buildInlineDiff`, `makeOnFilePulledCallback`, `runShowFileHistory`, `runConflict3WayDiff`, etc.). Снижение до < 500 LoC требует подъёма factory pattern (`createRunWithEngine`/`createMakeEngine`) в `src/commands/_engineFactory.ts` + миграции OAuth closures в shared module + декомпозиции startup-wiring (например `src/startup/registerLifecycle.ts`).
 
 ---
 
