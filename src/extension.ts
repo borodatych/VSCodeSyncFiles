@@ -81,6 +81,7 @@ import { registerWorkspaceTreeWiring } from "./startup/registerWorkspaceTreeWiri
 import { createP2PSessionRegistry } from "./core/p2pSessionRegistry.js";
 import { createP2PStatusBarItem } from "./ui/p2pStatusBar.js";
 import { registerP2PSessionCommands } from "./commands/registerP2PSession.js";
+import { registerPasskeyCommands } from "./ui/passkeyCommands.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -139,6 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
   createP2PStatusBarItem(context, p2pSessionRegistry);
   context.subscriptions.push(
     ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry }),
+    ...registerPasskeyCommands({ context }),
   );
 
   registerVsCodeSyncTelemetry(context, globalConfig, CFG_SECTION);

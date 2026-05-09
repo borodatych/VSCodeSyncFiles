@@ -35,6 +35,15 @@ export class VsCodeSyncTelemetry implements vscode.Disposable {
       },
       { ignoreUnhandledErrors: true },
     );
+    setActiveTelemetry(this);
+  }
+
+  /** External hook for sub-features (passkey, AI, …) that have their own
+   * pure event sanitisers and just need to dispatch the resulting `{ name,
+   * data }` through the shared logger. No-op if telemetry is disabled or
+   * not yet activated. */
+  logSanitisedUsage(name: string, data: Record<string, string | number | boolean | null>): void {
+    this.logger.logUsage(name, data);
   }
 
   private forwardToIngest(kind: string, name: string, data?: Record<string, unknown>): void {
@@ -107,8 +116,29 @@ export class VsCodeSyncTelemetry implements vscode.Disposable {
   }
 
   dispose(): void {
+    clearActiveTelemetryIf(this);
     this.logger.dispose();
   }
+}
+
+let activeTelemetry: VsCodeSyncTelemetry | undefined;
+
+function setActiveTelemetry(t: VsCodeSyncTelemetry): void {
+  activeTelemetry = t;
+}
+
+function clearActiveTelemetryIf(t: VsCodeSyncTelemetry): void {
+  if (activeTelemetry === t) activeTelemetry = undefined;
+}
+
+/** Module-level fan-in for sub-features (passkey, AI, etc.) that don't have
+ * their own way to reach the singleton instance. No-op when telemetry isn't
+ * active (extension deactivated / never activated). */
+export function logSanitisedUsage(
+  name: string,
+  data: Record<string, string | number | boolean | null>,
+): void {
+  activeTelemetry?.logSanitisedUsage(name, data);
 }
 
 export function registerVsCodeSyncTelemetry(

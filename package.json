@@ -1179,6 +1179,18 @@
       {
         "command": "vscodesync.disconnectP2PSession",
         "title": "VSCodeSync: Disconnect P2P Session"
+      },
+      {
+        "command": "vscodesync.showPasskeySettings",
+        "title": "VSCodeSync: Show Passkey Settings"
+      },
+      {
+        "command": "vscodesync.removePasskey",
+        "title": "VSCodeSync: Remove Passkey"
+      },
+      {
+        "command": "vscodesync.passkeyFallback",
+        "title": "VSCodeSync: Passphrase Fallback"
       }
     ],
     "menus": {
