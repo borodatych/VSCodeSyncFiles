@@ -282,9 +282,10 @@ Pure-helpers полностью готовы; команда + status bar + regi
 ### v2.12.4. Session runtime + file-transfer hook
 
 - [x] **`src/core/p2pSessionRegistry.ts`** — pure in-memory registry с notify-on-mutation (commit `55ae99b`).
-- [ ] **`src/ui/p2pSessionRuntime.ts`** — клей через state machine / signaling transport / wrapAuthenticated channel — gated behind `p2p.experimental`.
-- [ ] **`syncEngine.pushFile`** хук: optional `onPushFile?: (workspaceId, relPath, content) => void` в SyncEngineConfig — engine API change, отдельная итерация.
-- [ ] Heartbeat tick — gated.
+- [x] **`src/ui/p2pSessionRuntime.ts`** — `openP2PSession` glues state machine / signaling transport / wrapAuthenticated channel (run 23, commit `1991d81`).
+- [x] **`syncEngine.pushFile`** хук: `SyncEngineDeps.onPushFile?: (workspaceId, posixRel, plaintext, meta)` callback (run 22, commit `ffebda1`).
+- [x] **File-transfer mirror** — `src/ui/p2pFileTransferMirror.ts:mirrorPushedFile` + `createMirrorRegistry`. `_engineFactory.ts` вызывает mirror через `refs.mirrorPushedFile`. `runStartP2PSession` биндит authenticated channel в registry; disconnect — `unbind`. На каждый `pushFile`: `planP2PFileChunks` → `manifest` frame → N × `file_chunk` frames через `wrapAuthenticated.sendFrame`. Best-effort, errors swallowed. _Receiver путь (chunk assembly + write to disk) остаётся следующей итерацией._
+- [ ] Heartbeat tick — gated (см. v2.12.3).
 
 ### v2.12.5. Activity log integration
 

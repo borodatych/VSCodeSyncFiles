@@ -33,6 +33,7 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { createSignalingTransport } from "../ui/p2pSignalingTransport.js";
 import { openP2PSession } from "../ui/p2pSessionRuntime.js";
+import type { MirrorRegistryHandle } from "../ui/p2pFileTransferMirror.js";
 
 const CFG = "vscodesync";
 
@@ -43,15 +44,18 @@ export interface P2PSessionCommandsDeps {
    * real signaling round-trip + DataChannel open via `openP2PSession`. */
   tryAuthenticatedProvider?: () => Promise<ICloudProvider | null>;
   globalConfig?: GlobalConfigManager;
+  /** v2.12.4 — when present, successful sessions register their authenticated
+   * channel so engine-side `onPushFile` mirrors land on every connected peer. */
+  mirrorRegistry?: MirrorRegistryHandle;
 }
 
 export function registerP2PSessionCommands(deps: P2PSessionCommandsDeps): vscode.Disposable[] {
-  const { context, registry } = deps;
+  const { context } = deps;
   void context;
 
   return [
     vscode.commands.registerCommand("vscodesync.startP2PSession", () => runStartP2PSession(deps)),
-    vscode.commands.registerCommand("vscodesync.disconnectP2PSession", () => runDisconnectP2PSession(registry)),
+    vscode.commands.registerCommand("vscodesync.disconnectP2PSession", () => runDisconnectP2PSession(deps)),
   ];
 }
 
@@ -141,6 +145,9 @@ async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
         id: sessionId.trim(),
         snapshot: { state: result.machine.state, transport: "cloud", peerCount: 1, peerLabel: peerMachineId.trim() },
       });
+      // v2.12.4 — bind authenticated channel to mirror registry so engine
+      // pushFile events fan out over WebRTC alongside cloud upload.
+      deps.mirrorRegistry?.bind(sessionId.trim(), null, result.channel);
       await vscode.window.showInformationMessage(
         `VSCodeSync: P2P session ${sessionId.trim()} открыта с ${peerMachineId.trim()}.`,
       );
@@ -148,13 +155,14 @@ async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
   );
 }
 
-async function runDisconnectP2PSession(registry: P2PSessionRegistry): Promise<void> {
-  const primary = registry.primary();
+async function runDisconnectP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
+  const primary = deps.registry.primary();
   if (!primary) {
     await vscode.window.showInformationMessage("VSCodeSync: нет активной P2P сессии.");
     return;
   }
-  registry.remove(primary.id);
+  deps.registry.remove(primary.id);
+  deps.mirrorRegistry?.unbind(primary.id);
   await vscode.window.showInformationMessage(
     `VSCodeSync: P2P сессия ${primary.id} закрыта.`,
   );

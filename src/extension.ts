@@ -76,7 +76,7 @@ import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js"
 import { registerFileLifecycleEvents } from "./startup/registerFileLifecycleEvents.js";
 import { registerOnboardingFlow } from "./startup/registerOnboardingFlow.js";
 import { registerWorkspaceTreeWiring } from "./startup/registerWorkspaceTreeWiring.js";
-import { createP2PSessionRegistry } from "./core/p2pSessionRegistry.js";
+import { createP2PSessionRegistry } from "./core/p2pSessionRegistry.js"; import { createMirrorRegistry, mirrorPushedFile } from "./ui/p2pFileTransferMirror.js";
 import { createP2PStatusBarItem } from "./ui/p2pStatusBar.js";
 import { registerP2PSessionCommands } from "./commands/registerP2PSession.js";
 import { registerPasskeyCommands } from "./ui/passkeyCommands.js";
@@ -129,7 +129,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
   const offlineQueueStore = new SyncOfflineQueueStore(globalConfig.getStorageDir());
 
-  const p2pSessionRegistry = createP2PSessionRegistry();
+  const p2pSessionRegistry = createP2PSessionRegistry(); const p2pMirrorRegistry = createMirrorRegistry();
   createP2PStatusBarItem(context, p2pSessionRegistry);
   context.subscriptions.push(
     ...registerPasskeyCommands({ context }),
@@ -378,6 +378,7 @@ export function activate(context: vscode.ExtensionContext): void {
     logSyncCompression,
     treeRefresh: () => { workspacesTree.refresh(); },
     repushDeletedWorkspace,
+    mirrorPushedFile: (wId, rel, pt) => { mirrorPushedFile(p2pMirrorRegistry, wId, rel, pt); },
   });
 
   registerVscodeSyncTaskProvider(context, {
@@ -617,7 +618,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const tap = () => tryAuthenticatedProvider(registry);
   const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName); };
-  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig }));
+  context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig, mirrorRegistry: p2pMirrorRegistry }));
 
   registerPlannedPaletteCommands(context, {
     globalConfig,
