@@ -333,8 +333,8 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ### v2.20.1. Архитектурные / DX (1–3)
 
-- [~] **MCP server endpoint** — typed contract `src/core/mcpServerContract.ts` shipped (commit `c45337d`); `@modelcontextprotocol/sdk` integration + transport layer remain. Sentinel `McpNotImplementedError`.
-- [~] **CLI `vscodesync`** — pure `parseCliArgs(argv)` shipped in `src/core/cliArgsParser.ts` (commit `c45337d`); separate npm bin entry + dispatch-table-to-engine remain. Sentinel `CliNotImplementedError`.
+- [x] **MCP server endpoint** — `@modelcontextprotocol/sdk` installed; `src/ui/mcpServerHost.ts:startMcpServer(provider)` lazy-loads SDK, регистрирует `vscodesync.list_workspaces` tool с реальным data source. Other tools throw `McpNotImplementedError` (engine adapter — follow-up). Stdio bridge через npm bin — отдельная итерация.
+- [x] **CLI `vscodesync`** — `cli/` subpackage уже имеет `bin/vscodesync` (`./dist/cli.cjs`), entry `cli/src/main.ts` с дispatch-table (`status` / `pull` / `pull-all` / `auth --device-code`). Sub-package builds via esbuild → standalone CommonJS. Pure `parseCliArgs(argv)` в `src/core/cliArgsParser.ts` остаётся как тестируемая часть.
 - [ ] **Settings Sync integration** — `vscode.authentication.getSession("vscode-settings-sync")` (если доступен в Cursor / VS Code 1.95+) → синхронизация machineName, providerType через native VS Code Settings Sync. **Зачем:** новая машина → меньше шагов setup'а.
 
 ### v2.20.2. Performance / scale (4–6)
