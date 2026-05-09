@@ -110,6 +110,7 @@ import { registerActivitySearchCommands } from "./commands/registerActivitySearc
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
 import { registerWorkspaceLifecycleCommands } from "./commands/registerWorkspaceLifecycle.js";
 import { registerViewManagementCommands } from "./commands/registerViewManagement.js";
+import { registerSettingsCommands } from "./commands/registerSettings.js";
 import {
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -1569,23 +1570,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
 
-    vscode.commands.registerCommand("vscodesync.setNotificationLevel", async () => {
-      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
-      const cur = cfg.get<string>("notificationLevel", "normal");
-      const picked = await vscode.window.showQuickPick(
-        [
-          { label: "minimal", description: "Только ошибки", value: "minimal" as const },
-          { label: "normal", description: "Стандартные уведомления", value: "normal" as const },
-          { label: "verbose", description: "Подробные сообщения", value: "verbose" as const },
-        ],
-        { placeHolder: `Сейчас: ${cur}` },
-      );
-      if (!picked) {
-        return;
-      }
-      await cfg.update("notificationLevel", picked.value, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(`VSCodeSync: уровень уведомлений — ${picked.label}`);
-    }),
+    ...registerSettingsCommands({ globalConfig, registry, statusBar }),
   );
 
   const runOneDriveAuth = async (openBrowser: boolean): Promise<void> => {
@@ -2436,15 +2421,6 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("vscodesync.showStatus", async () => {
-      const cfg = await globalConfig.load();
-      const p = await registry.getActive();
-      const name = (p?.type ?? cfg.activeProvider ?? "none") as string;
-      await vscode.window.showInformationMessage(
-        `VSCodeSync · ${cfg.machineName} · провайдер: ${name}`,
-      );
-    }),
-
     vscode.commands.registerCommand("vscodesync.createWorkspace", async () => {
       const note =
         (await vscode.window.showInputBox({
@@ -3448,32 +3424,6 @@ export function activate(context: vscode.ExtensionContext): void {
           },
         );
       });
-    }),
-
-    vscode.commands.registerCommand("vscodesync.openSyncSettings", async () => {
-      await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:vscodesync.vscodesync");
-    }),
-
-    vscode.commands.registerCommand("vscodesync.toggleTelemetry", async () => {
-      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
-      const cur = cfg.get<boolean>("telemetry", false);
-      await cfg.update("telemetry", !cur, vscode.ConfigurationTarget.Global);
-      const vscodeOff = !vscode.env.isTelemetryEnabled;
-      if (cur) {
-        await vscode.window.showInformationMessage(
-          "VSCodeSync: расширение больше не отправляет события (vscodesync.telemetry): выкл.",
-        );
-      } else {
-        await vscode.window.showInformationMessage(
-          vscodeOff
-            ? "VSCodeSync: телеметрия расширения включена. Чтобы события уходили в Microsoft / инструменты разработчика, включите телеметрию в настройках VS Code. Внешняя отправка — только при непустом vscodesync.telemetryIngestUrl."
-            : "VSCodeSync: телеметрия расширения включена. События без путей к файлам; внешний endpoint — только при заданном vscodesync.telemetryIngestUrl.",
-        );
-      }
-    }),
-
-    vscode.commands.registerCommand("vscodesync.showSyncSummary", async () => {
-      await statusBar.showDashboard();
     }),
 
     vscode.commands.registerCommand("vscodesync.previewSync", async () => {
