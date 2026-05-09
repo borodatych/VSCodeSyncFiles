@@ -389,8 +389,12 @@
         "vscodesync.aiMerge.endpoint": {
           "type": "string",
           "default": "vscode-lm",
-          "enum": ["vscode-lm", "ollama", "lm-studio"],
           "description": "AI merge backend. 'vscode-lm' uses the built-in VS Code Language Model API; 'ollama' targets a local Ollama server (http://localhost:11434); 'lm-studio' targets LM Studio's OpenAI-compatible local endpoint (http://localhost:1234). Use a custom http(s):// URL for any other OpenAI-compatible service — non-localhost custom URLs warn before sending content."
+        },
+        "vscodesync.aiMerge.endpointModel": {
+          "type": "string",
+          "default": "llama3.2",
+          "description": "Model name passed to the local AI merge endpoint. Ignored when endpoint is 'vscode-lm'."
         },
         "vscodesync.gitBranchAutoSync": {
           "type": "boolean",

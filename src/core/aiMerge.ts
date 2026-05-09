@@ -6,9 +6,15 @@
  * to produce a merged result. If the model cannot resolve the conflict it returns null.
  */
 import * as vscode from "vscode";
+import {
+  buildOllamaBody,
+  buildOpenAiChatBody,
+  resolveAiMergeEndpoint,
+} from "./aiMergeEndpoint.js";
 
 const CFG = "vscodesync";
 const MAX_CONTENT_CHARS = 12_000; // per section; ~3K tokens each
+const LOCAL_LLM_DEFAULT_MODEL = "llama3.2";
 
 export type AiMergeResult =
   | { ok: true; merged: string }
@@ -75,42 +81,17 @@ export async function runAiMerge(
     };
   }
 
-  const lm = getLm();
-  if (!lm) {
-    return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен в этой версии VS Code" };
-  }
-
-  // Select LM — prefer gpt-4o class, fall back to any available
-  let model: LmChatModel;
-  try {
-    const preferred = await lm.api.selectChatModels({ vendor: "copilot", family: "gpt-4o" });
-    const list = preferred.length > 0 ? preferred : await lm.api.selectChatModels();
-    if (list.length === 0) {
-      return {
-        ok: false,
-        reason: "no_model",
-        detail: "Нет доступной языковой модели (Copilot не активирован?)",
-      };
-    }
-    model = list[0];
-  } catch {
-    return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен" };
-  }
-
+  const endpoint = resolveAiMergeEndpoint(cfg.get<string>("aiMerge.endpoint"));
   const prompt = buildMergePrompt(base, local, remote, relPath);
-  const cts = new vscode.CancellationTokenSource();
-  const messages = [lm.ChatMessage.User(prompt)];
-
-  let responseText = "";
-  try {
-    const response = await model.sendRequest(messages, {}, cts.token);
-    for await (const chunk of response.text) {
-      responseText += chunk;
-    }
-  } catch (e: unknown) {
-    return { ok: false, reason: "error", detail: e instanceof Error ? e.message : String(e) };
-  } finally {
-    cts.dispose();
+  let responseText: string;
+  if (endpoint.kind === "vscode-lm") {
+    const r = await callVscodeLm(prompt);
+    if (!r.ok) return r;
+    responseText = r.text;
+  } else {
+    const r = await callHttpEndpoint(endpoint.kind, endpoint.url, endpoint.bodyShape, prompt, cfg);
+    if (!r.ok) return r;
+    responseText = r.text;
   }
 
   const merged = extractMergedContent(responseText);
@@ -147,6 +128,66 @@ ${remote}
 </remote>`;
 }
 
+type LmCallResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: "no_model" | "error"; detail?: string };
+
+async function callVscodeLm(prompt: string): Promise<LmCallResult> {
+  const lm = getLm();
+  if (!lm) return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен" };
+  let model: LmChatModel;
+  try {
+    const preferred = await lm.api.selectChatModels({ vendor: "copilot", family: "gpt-4o" });
+    const list = preferred.length > 0 ? preferred : await lm.api.selectChatModels();
+    if (list.length === 0) return { ok: false, reason: "no_model", detail: "Нет доступной модели" };
+    model = list[0];
+  } catch {
+    return { ok: false, reason: "no_model", detail: "vscode.lm API недоступен" };
+  }
+  const cts = new vscode.CancellationTokenSource();
+  let responseText = "";
+  try {
+    const response = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, cts.token);
+    for await (const chunk of response.text) responseText += chunk;
+  } catch (e: unknown) {
+    return { ok: false, reason: "error", detail: e instanceof Error ? e.message : String(e) };
+  } finally {
+    cts.dispose();
+  }
+  return { ok: true, text: responseText };
+}
+
+async function callHttpEndpoint(
+  kind: "ollama" | "lm-studio" | "custom",
+  url: string,
+  bodyShape: "ollama" | "openai-chat" | "vscode-lm",
+  prompt: string,
+  cfg: vscode.WorkspaceConfiguration,
+): Promise<LmCallResult> {
+  const model = cfg.get<string>("aiMerge.endpointModel", LOCAL_LLM_DEFAULT_MODEL);
+  const body =
+    bodyShape === "ollama"
+      ? JSON.stringify(buildOllamaBody(model, prompt))
+      : JSON.stringify(buildOpenAiChatBody(model, "You are a precise code merge assistant.", prompt));
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  } catch (e) {
+    return { ok: false, reason: "error", detail: `${kind} request failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: "error", detail: `${kind} returned ${String(res.status)}` };
+  }
+  const json = (await res.json()) as Record<string, unknown>;
+  // Ollama: { response: string }; OpenAI-chat: { choices: [{ message: { content } }] }
+  if (typeof json.response === "string") return { ok: true, text: json.response };
+  if (Array.isArray(json.choices) && json.choices[0] && typeof json.choices[0] === "object") {
+    const choice = json.choices[0] as { message?: { content?: unknown } };
+    if (typeof choice.message?.content === "string") return { ok: true, text: choice.message.content };
+  }
+  return { ok: false, reason: "error", detail: `${kind} response missing text` };
+}
+
 function extractMergedContent(response: string): string | null {
   const match = /<merged>([\s\S]*?)<\/merged>/.exec(response);
   if (!match) return null;
@@ -161,9 +202,9 @@ function extractMergedContent(response: string): string | null {
  */
 export async function isAiMergeAvailable(): Promise<boolean> {
   const cfg = vscode.workspace.getConfiguration(CFG);
-  if (!cfg.get<boolean>("aiMerge", false)) {
-    return false;
-  }
+  if (!cfg.get<boolean>("aiMerge", false)) return false;
+  const endpoint = resolveAiMergeEndpoint(cfg.get<string>("aiMerge.endpoint"));
+  if (endpoint.kind !== "vscode-lm") return true; // local endpoint reachability is checked at call time
   const lm = getLm();
   if (!lm) return false;
   try {
