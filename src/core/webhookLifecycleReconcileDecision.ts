@@ -20,8 +20,8 @@
  *   - `start_renew_loop`          → `setInterval(...)`.
  *
  * No `vscode`, no IO. The caller resolves the notification URL (incl.
- * smee.io / cloudflared tunnel) BEFORE calling the planner — the planner
- * works on a fully-resolved URL or empty string.
+ * smee.io tunnel) BEFORE calling the planner — the planner works on a
+ * fully-resolved URL or empty string.
  */
 
 export interface PersistedSubscriptionState {

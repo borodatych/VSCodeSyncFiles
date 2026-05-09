@@ -9,6 +9,10 @@ import {
   planBlake3MigrationTasks,
   runHashAlgoMigrationCheck,
 } from "../../src/core/hashMigrationCheck.js";
+import {
+  hashCanonicalBuffer,
+  hashCanonicalBufferDual,
+} from "../../src/utils/hash.js";
 
 const buf = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -36,6 +40,33 @@ describe("computeHashDual", () => {
       // Backend missing — fallback returns sha256 in both fields.
       expect(dual.blake3).toBe(dual.sha256);
     }
+  });
+});
+
+describe("hashCanonicalBufferDual", () => {
+  const cfg = { lineEnding: "lf" as const };
+
+  it("SHA-256 matches single-hash hashCanonicalBuffer for the same canonical input", () => {
+    const text = Buffer.from("alpha\nbeta\n", "utf8");
+    const single = hashCanonicalBuffer(text, "file.txt", cfg);
+    const dual = hashCanonicalBufferDual(text, "file.txt", cfg);
+    expect(dual.sha256).toBe(single);
+  });
+
+  it("normalises CRLF → LF before hashing (both algorithms)", () => {
+    const crlf = Buffer.from("alpha\r\nbeta\r\n", "utf8");
+    const lf = Buffer.from("alpha\nbeta\n", "utf8");
+    const dCrlf = hashCanonicalBufferDual(crlf, "file.txt", cfg);
+    const dLf = hashCanonicalBufferDual(lf, "file.txt", cfg);
+    expect(dCrlf.sha256).toBe(dLf.sha256);
+    expect(dCrlf.blake3).toBe(dLf.blake3);
+  });
+
+  it("hashes binary buffers as-is (no canonicalisation)", () => {
+    const bin = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe]);
+    const dual = hashCanonicalBufferDual(bin, "file.bin", cfg);
+    expect(dual.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(dual.blake3).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

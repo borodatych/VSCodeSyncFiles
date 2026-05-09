@@ -45,6 +45,36 @@ describe("upsertMachineAndPrune", () => {
     expect(ids).toEqual(["self"]);
     expect(merged.find((e) => e.machineId === "self")?.machineName).toBe("new");
   });
+
+  it("writes currentEditing onto self when frame is provided", () => {
+    const nowMs = Date.now();
+    const merged = upsertMachineAndPrune(
+      [],
+      "self",
+      "n",
+      new Date(nowMs).toISOString(),
+      90,
+      nowMs,
+      { workspaceId: "ws-1", relPath: "src/a.ts", sinceMs: nowMs },
+    );
+    expect(merged[0]?.currentEditing).toEqual({
+      workspaceId: "ws-1",
+      relPath: "src/a.ts",
+      sinceMs: nowMs,
+    });
+  });
+
+  it("clears currentEditing when frame is null (idle)", () => {
+    const nowMs = Date.now();
+    const merged = upsertMachineAndPrune([], "self", "n", new Date(nowMs).toISOString(), 90, nowMs, null);
+    expect(merged[0]?.currentEditing).toBeNull();
+  });
+
+  it("omits currentEditing field when undefined (legacy callers)", () => {
+    const nowMs = Date.now();
+    const merged = upsertMachineAndPrune([], "self", "n", new Date(nowMs).toISOString(), 90, nowMs);
+    expect(merged[0]).not.toHaveProperty("currentEditing");
+  });
 });
 
 describe("parseMachinesRegistry", () => {
@@ -58,6 +88,51 @@ describe("parseMachinesRegistry", () => {
     const p = parseMachinesRegistry(buf);
     expect(p.length).toBe(1);
     expect(p[0]?.machineId).toBe("ok");
+  });
+
+  it("preserves currentEditing when shape is valid", () => {
+    const buf = Buffer.from(
+      JSON.stringify([
+        {
+          machineId: "ok",
+          machineName: "n",
+          lastSeen: "2021-01-01T00:00:00.000Z",
+          currentEditing: { workspaceId: "w", relPath: "src/a.ts", sinceMs: 1700000000000 },
+        },
+      ]),
+    );
+    const p = parseMachinesRegistry(buf);
+    expect(p[0]?.currentEditing).toEqual({
+      workspaceId: "w",
+      relPath: "src/a.ts",
+      sinceMs: 1700000000000,
+    });
+  });
+
+  it("preserves currentEditing=null (idle marker)", () => {
+    const buf = Buffer.from(
+      JSON.stringify([
+        { machineId: "ok", machineName: "n", lastSeen: "2021-01-01T00:00:00.000Z", currentEditing: null },
+      ]),
+    );
+    const p = parseMachinesRegistry(buf);
+    expect(p[0]?.currentEditing).toBeNull();
+  });
+
+  it("drops malformed currentEditing rather than rejecting the whole row", () => {
+    const buf = Buffer.from(
+      JSON.stringify([
+        {
+          machineId: "ok",
+          machineName: "n",
+          lastSeen: "2021-01-01T00:00:00.000Z",
+          currentEditing: { workspaceId: "", relPath: "src/a.ts", sinceMs: "not-a-number" },
+        },
+      ]),
+    );
+    const p = parseMachinesRegistry(buf);
+    expect(p[0]?.machineId).toBe("ok");
+    expect(p[0]?.currentEditing).toBeUndefined();
   });
 });
 

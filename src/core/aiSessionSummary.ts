@@ -44,6 +44,7 @@ export type SessionSummaryResult =
 export async function summariseActivity(
   events: readonly ActivityEvent[],
   windowLabel: string,
+  cancellationToken?: vscode.CancellationToken,
 ): Promise<SessionSummaryResult> {
   if (events.length === 0) {
     return { ok: false, reason: "no_events" };
@@ -86,17 +87,18 @@ Produce a short bullet-list summary in Russian (2–6 bullets) of what the user 
 
 Format: each bullet starts with "• ". No headers, no preamble, no closing remarks. Just bullets.`;
 
-  const cts = new vscode.CancellationTokenSource();
+  const cts = cancellationToken ? null : new vscode.CancellationTokenSource();
+  const token = cancellationToken ?? cts!.token;
   let response = "";
   try {
-    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, cts.token);
+    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, token);
     for await (const chunk of reply.text) {
       response += chunk;
     }
   } catch (e: unknown) {
     return { ok: false, reason: "error", detail: e instanceof Error ? e.message : String(e) };
   } finally {
-    cts.dispose();
+    cts?.dispose();
   }
 
   const cleaned = response.trim();
@@ -108,6 +110,7 @@ Format: each bullet starts with "• ". No headers, no preamble, no closing rema
 
 export async function suggestWorkspaceTags(
   files: readonly string[],
+  cancellationToken?: vscode.CancellationToken,
 ): Promise<{ ok: true; tags: string[] } | { ok: false }> {
   if (files.length === 0) return { ok: false };
   const lm = getLm();
@@ -129,17 +132,18 @@ ${previewFiles.join("\n")}
 
 Output ONLY a comma-separated list of tags (no preamble, no quotes). Examples of good tags: auth, frontend, migration, testing, infra, docs.`;
 
-  const cts = new vscode.CancellationTokenSource();
+  const cts = cancellationToken ? null : new vscode.CancellationTokenSource();
+  const token = cancellationToken ?? cts!.token;
   let response = "";
   try {
-    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, cts.token);
+    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, token);
     for await (const chunk of reply.text) {
       response += chunk;
     }
   } catch {
     return { ok: false };
   } finally {
-    cts.dispose();
+    cts?.dispose();
   }
 
   const tags = response

@@ -42,13 +42,8 @@ import { registerProviderSetupGuide } from "./ui/providerSetupGuide.js";
 import { registerCommandCenter } from "./ui/commandCenter.js";
 import { registerSettingsPanel } from "./ui/settingsPanel.js";
 import { registerScheduledSnapshots } from "./ui/scheduledSnapshots.js";
-import { registerTunnelBackend } from "./ui/tunnelProviderRegistry.js";
-import { cloudflaredTunnelBackend } from "./ui/tunnelBackendCloudflared.js";
-import { tailscaleFunnelTunnelBackend } from "./ui/tunnelBackendTailscale.js";
-import { createTunnelStatusBarItem } from "./ui/tunnelStatusBar.js";
 import { scheduleAchievementsWarmup } from "./ui/achievementsService.js";
 import { registerSmartFeaturesCommands } from "./commands/registerSmartFeatures.js";
-import { registerTunnelStatusCommand } from "./commands/registerTunnelStatusCommand.js";
 import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
 import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
@@ -130,14 +125,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);
   const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
   const offlineQueueStore = new SyncOfflineQueueStore(globalConfig.getStorageDir());
-
-  // Tunnel backends — register cloudflared and tailscale-funnel real-spawn
-  // implementations. Each runs its `--version` probe before spawning the
-  // actual tunnel, so the dispatcher cleanly falls back to smee when the
-  // binary is not installed.
-  registerTunnelBackend(cloudflaredTunnelBackend);
-  registerTunnelBackend(tailscaleFunnelTunnelBackend);
-  createTunnelStatusBarItem(context);
 
   const p2pSessionRegistry = createP2PSessionRegistry();
   createP2PStatusBarItem(context, p2pSessionRegistry);
@@ -252,7 +239,6 @@ export function activate(context: vscode.ExtensionContext): void {
       context,
       storageDir: globalConfig.getStorageDir(),
     }),
-    ...registerTunnelStatusCommand(),
   );
 
   // Smart Conflict Prediction — status-bar warning when another machine has

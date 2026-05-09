@@ -4,6 +4,7 @@ import type { LineEndingMode } from "./normalize.js";
 import { normalizeLineEndings } from "./normalize.js";
 import { stripSyncignoreBlocks } from "./syncignore.js";
 import { bufferLooksBinary, isProbablyBinaryPath } from "./binary.js";
+import { computeHashDual, type DualHash } from "../core/hashProviders.js";
 
 export interface HashConfig {
   lineEnding: LineEndingMode;
@@ -54,11 +55,21 @@ function utf8StrictValid(buf: Buffer): boolean {
   }
 }
 
-export function hashCanonicalBuffer(buf: Buffer, posixPath: string, config: HashConfig): string {
+/**
+ * Apply canonical pipeline (binary detect → BOM strip → UTF-8 line-ending
+ * normalisation → syncignore strip) and return the bytes that should be
+ * hashed. Both `hashCanonicalBuffer` and `hashCanonicalBufferDual` go through
+ * this so SHA-256 and BLAKE3 are guaranteed to digest the exact same input.
+ */
+function canonicaliseToHashableBytes(
+  buf: Buffer,
+  posixPath: string,
+  config: HashConfig,
+): Buffer {
   const extBinary = isProbablyBinaryPath(posixPath);
   const sniffBinary = bufferLooksBinary(buf);
   if (extBinary || sniffBinary) {
-    return hashBuffer(buf);
+    return buf;
   }
 
   const { data: rawBuf, hadBom } = stripLeadingUtf8Bom(buf);
@@ -75,10 +86,32 @@ export function hashCanonicalBuffer(buf: Buffer, posixPath: string, config: Hash
   let text = rawBuf.toString("utf8");
   text = normalizeLineEndings(text, config.lineEnding);
   text = stripSyncignoreBlocks(text);
-  return hashUtf8(text);
+  return Buffer.from(text, "utf8");
+}
+
+export function hashCanonicalBuffer(buf: Buffer, posixPath: string, config: HashConfig): string {
+  const canonical = canonicaliseToHashableBytes(buf, posixPath, config);
+  return canonical === buf ? hashBuffer(buf) : hashUtf8(canonical.toString("utf8"));
+}
+
+export function hashCanonicalBufferDual(
+  buf: Buffer,
+  posixPath: string,
+  config: HashConfig,
+): DualHash {
+  const canonical = canonicaliseToHashableBytes(buf, posixPath, config);
+  return computeHashDual(new Uint8Array(canonical));
 }
 
 export async function computeHash(filePath: string, config: HashConfig): Promise<string> {
   const buf = await readFile(filePath);
   return hashCanonicalBuffer(buf, filePath, config);
+}
+
+export async function computeHashDualCanonical(
+  filePath: string,
+  config: HashConfig,
+): Promise<DualHash> {
+  const buf = await readFile(filePath);
+  return hashCanonicalBufferDual(buf, filePath, config);
 }

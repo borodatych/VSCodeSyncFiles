@@ -7,16 +7,44 @@
  * 5 (responsive, ~12 req/h), 15 (lightweight). Below 1 minute is rejected.
  */
 import * as vscode from "vscode";
+import * as path from "node:path";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import { warnLog, verboseLog } from "../utils/log.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import {
+  buildCurrentEditingFrame,
+  shouldBroadcastCurrentEditing,
+  type CurrentEditingFrame,
+  type CurrentEditingMode,
+} from "../core/presenceCurrentEditing.js";
 
 export interface PresenceHeartbeatDeps {
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
+}
+
+/**
+ * v2.9.2 — resolve the active editor's `(workspaceId, relPath)` against the
+ * loaded `WorkspaceConfigManager`. Returns `null` when no editor is focused,
+ * the editor is not file-scheme, the file is not within a workspace folder,
+ * or the file is not tracked by VSCodeSync.
+ */
+async function resolveActiveTrackedFile(): Promise<{ workspaceId: string; relPath: string } | null> {
+  const editor = vscode.window.activeTextEditor;
+  if (editor?.document.uri.scheme !== "file") return null;
+  const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+  if (!folder) return null;
+  const rel = path.relative(folder.uri.fsPath, editor.document.uri.fsPath).split(path.sep).join("/");
+  if (!rel || rel.startsWith("..")) return null;
+  const wc = await WorkspaceConfigManager.load(folder.uri.fsPath).catch(() => null);
+  if (!wc) return null;
+  const tracked = wc.files.find((f) => f.localPath === rel);
+  if (!tracked) return null;
+  return { workspaceId: tracked.workspaceId, relPath: rel };
 }
 
 export function registerPresenceHeartbeat(
@@ -28,6 +56,9 @@ export function registerPresenceHeartbeat(
   // than the configured interval. Without it, two parallel ticks can both
   // bump `_machines.json` and create a duplicate registry entry.
   let running = false;
+  // v2.9.2 — last frame we broadcast, used by `shouldBroadcastCurrentEditing`
+  // to throttle re-writes when the user keeps the same file focused.
+  let lastBroadcastFrame: CurrentEditingFrame | null = null;
 
   const reschedule = (): void => {
     if (timer !== undefined) {
@@ -62,7 +93,35 @@ export function registerPresenceHeartbeat(
       const provider = await deps.tryAuthenticatedProvider();
       if (!provider) return;
       const gc = await deps.globalConfig.load();
-      await syncMachinesRegistrySelf(provider, gc.machineId, gc.machineName);
+
+      const mode = vscode.workspace
+        .getConfiguration("vscodesync")
+        .get<string>("smartConflictPrediction.broadcastCurrentEditing", "full");
+      const broadcastMode: CurrentEditingMode =
+        mode === "anonymised" || mode === "off" ? mode : "full";
+      const nowMs = Date.now();
+      const tracked = broadcastMode === "off" ? null : await resolveActiveTrackedFile();
+      const next = tracked
+        ? buildCurrentEditingFrame({
+            workspaceId: tracked.workspaceId,
+            relPath: tracked.relPath,
+            nowMs,
+            mode: broadcastMode,
+          })
+        : null;
+      const broadcast = shouldBroadcastCurrentEditing({
+        last: lastBroadcastFrame,
+        next,
+        nowMs,
+      });
+      if (broadcast) {
+        await syncMachinesRegistrySelf(provider, gc.machineId, gc.machineName, {
+          currentEditing: next,
+        });
+        lastBroadcastFrame = next;
+      } else {
+        await syncMachinesRegistrySelf(provider, gc.machineId, gc.machineName);
+      }
       verboseLog("presence", "heartbeat ok");
     } catch (e: unknown) {
       warnLog("presence", `heartbeat failed: ${e instanceof Error ? e.message : String(e)}`);

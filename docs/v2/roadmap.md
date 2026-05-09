@@ -56,21 +56,6 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 - Десктоп: 5–15× ускорение delta-sync; web: единый рантайм.
 - `ICompression` уже абстрактен — реализация добавится через ту же абстракцию.
 
-## 4. Cloudflare / Tailscale tunnel-провайдер — M · skeleton
-
-**Прогресс ночной волны:** tunnel-dispatcher contract готов — `src/ui/tunnelProviderRegistry.ts` (`TunnelBackend` interface + `openTunnel` / `registerTunnelBackend` / `resolveTunnelType`), 5 unit-тестов. Backend `cloudflaredTunnelBackend` есть в skeleton-режиме (probes `cloudflared --version` на PATH; не spawn-ит долгоживущий процесс). Setting `vscodesync.webhooks.tunnelProvider` (smee | cloudflared | tailscale-funnel) объявлен. Полная реализация spawn + URL-scrape — отдельная итерация.
-
-**Symmetric Tailscale skeleton:** `src/ui/tunnelBackendTailscale.ts` (`tailscaleFunnelTunnelBackend`) — параллельный backend с `tailscale --version` probe, fail-soft с подсказкой про Funnel ACL. 4 unit-теста на shape + config_invalid пути (probe не запускается, чтобы тест не блокировался на spawn timeout).
-
-**Backends зарегистрированы:** оба backend'а регистрируются в registry в `extension.ts:activate()` (sync, top-level imports). Теперь `openTunnel("cloudflared", port)` / `openTunnel("tailscale-funnel", port)` возвращают полезный `not_available` detail (probe + TODO) вместо «backend not registered». Миграция `webhookTunnel.ts` на `openTunnel(resolveTunnelType(setting), port)` с smee fallback — отдельная итерация.
-
-**Зачем:** smee.io — публичный relay без SLA; для серьёзных пользователей deal-breaker.
-
-**Что:**
-- Setting `vscodesync.webhooks.tunnelProvider`: `smee` (default) | `cloudflared` | `tailscale-funnel`.
-- Cloudflare Quick Tunnel — pinned subdomain, TLS, один бинарник; запуск через `child_process.spawn`.
-- Tailscale Funnel — для пользователей в tailnet. Нужен `tailscale` CLI на машине.
-
 ## 5. Cross-cloud backup mirror — DONE (ночная волна, минимально + snapshots)
 
 - `src/ui/crossCloudBackup.ts` — фоновый job, polling 30 мин, читает `vscodesync.backup.secondaryProvider` и `backup.intervalDays`. На каждом due-моменте: для каждого active workspace зеркалит manifest + `_meta.json` + `.snapshots/` (recursive listFolder с heuristic `size === undefined → folder`).
@@ -121,5 +106,6 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 - **Полный CRDT real-time editing (a-la Live Share)** — это другой продукт; Live Share уже делает. VSCodeSync — про устойчивые файловые состояния.
 - **Поддержка third-party serverless KV (Vercel/Supabase) для метаданных** — ломает обещание «только ваше облако».
 - **Дополнительные облачные провайдеры (S3, MEGA, Box) сейчас** — пятеро уже есть; шестой принесёт <5% аудитории, но удвоит test-matrix.
+- **Cloudflared / Tailscale Funnel tunnel-backend'ы для webhooks** — позиционирование «indie tool»: smee.io признан достаточным; spawn-обвязка внешних бинарников удваивает test-matrix без видимого ROI. Скелеты удалены 2026-05-09.
 - **Mobile companion (iOS/Android sync viewer)** — out-of-scope для VSCode-расширения; сила VSCodeSync именно в IDE-первости.
 - **Дополнительные эмодзи в notifications** — текущий перебор уже мешает корп-юзерам; чистить, а не добавлять (см. Phase 11 → Emoji-free режим).

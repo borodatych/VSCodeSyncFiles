@@ -49,7 +49,7 @@ const CANDIDATE_FILES = [
   ".env.local",
 ];
 
-export async function runAiPathMapper(): Promise<void> {
+export async function runAiPathMapper(cancellationToken?: vscode.CancellationToken): Promise<void> {
   const folders = vscode.workspace.workspaceFolders ?? [];
   if (folders.length === 0) {
     await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
@@ -107,10 +107,11 @@ export async function runAiPathMapper(): Promise<void> {
     return;
   }
 
-  const cts = new vscode.CancellationTokenSource();
+  const cts = cancellationToken ? null : new vscode.CancellationTokenSource();
+  const token = cancellationToken ?? cts!.token;
   let response = "";
   try {
-    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, cts.token);
+    const reply = await model.sendRequest([lm.ChatMessage.User(prompt)], {}, token);
     for await (const chunk of reply.text) response += chunk;
   } catch (e) {
     await vscode.window.showErrorMessage(
@@ -118,7 +119,7 @@ export async function runAiPathMapper(): Promise<void> {
     );
     return;
   } finally {
-    cts.dispose();
+    cts?.dispose();
   }
 
   const edits = parseRemapEdits(response);

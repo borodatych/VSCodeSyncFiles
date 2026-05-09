@@ -102,7 +102,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.3.2. Dual-hash writer
 
 - [x] **`computeHashDual`** — pure helper в `hashProviders.ts`: возвращает `{ sha256: string; blake3: string }`. При отсутствии BLAKE3 backend'а fallback к sha256 в обоих полях.
-- [~] **`pushFile` writes both** — pure helper готов; обвязка в `syncEngine.pushFile` для записи обоих в meta остаётся следующей итерации (требует чтения текущего setting'а через `runWithEngine` deps).
+- [x] **`pushFile` writes both** — `hashCanonicalBufferDual` подключён в `syncEngine.pushFile` через новый `SyncEngineDeps.canonicalHashAlgo: () => "sha256" | "blake3" | "dual"` getter; `_engineFactory.ts` читает setting `vscodesync.canonicalHashAlgo`. При `algo !== "sha256"` в `MetaEntry` пишется `hashBlake3`. SHA-256 канал не меняется (legacy compat).
 
 ### v2.3.3. Reader compatibility
 
@@ -121,42 +121,10 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ---
 
-## v2.4. Cloudflare / Tailscale tunnel — full spawn + webhookTunnel migration
+## v2.4. ~~Cloudflare / Tailscale tunnel~~ — DROPPED (2026-05-09)
 
-**Текущее состояние:** оба backend'а — skeleton'ы (probe binary, return `not_available`).
-Зарегистрированы в registry. `webhookTunnel.ts` всё ещё вызывает `createAndStartSmeeRelay` напрямую.
-
-### v2.4.1. Local HTTP server абстракция
-
-- [x] **`src/ui/webhookLocalServer.ts`** — provider-agnostic abstraction. `startLocalWebhookServer({ port?, host?, maxBodyBytes?, handler })` → `{ port, dispose() }`. Handler receives `{ method, url, headers (lowercase keys), body: Buffer }` и возвращает `{ status, body?, contentType?, headers? }`. Идемпотентный dispose, 64 KB DoS-cap по-умолчанию, 413 на превышение, 500 при throw из handler.
-- [x] Тесты: ephemeral port allocation, dispose-then-start cycle, max body size, 413 на oversized, 500 на handler throw, header lowercasing, body echo. 7 unit-тестов.
-
-### v2.4.2. Cloudflared spawn
-
-- [~] **`tunnelBackendCloudflared.open` real impl:** pure URL-scrape ready (`src/core/tunnelUrlScrape.ts:scrapeTunnelUrl(buf, "cloudflared")` + `isValidTunnelUrl`); pure spawn watchdog state machine ready (`src/core/tunnelSpawnWatchdog.ts:createTunnelSpawnWatchdog`); spawn-обвязка остаётся (нет binary на dev-машине).
-  - Spawn `cloudflared tunnel --url http://localhost:<port> --no-autoupdate --metrics 127.0.0.1:0`.
-  - Scrape stderr на regex `https://[a-z0-9-]+\.trycloudflare\.com`. Timeout 30 с.
-  - Watchdog: discriminated-union state machine `idle → spawning → up → respawning → giveup`, exponential backoff (1 s / 2 s / 4 s … cap 30 s, max 3 attempts по-умолчанию), failure reasons `process_exit | url_timeout | spawn_failed`. 15 unit-тестов. Реальная обвязка `child_process.spawn` остаётся.
-- [x] Тесты на pure scrape логику (`tests/unit/tunnelUrlScrape.test.ts`, 9 тестов с real-world stderr/stdout fixtures без spawn). Полный smoke с fake spawn остаётся (нужен mock `child_process.spawn` который завершит через event-loop tick).
-
-### v2.4.3. Tailscale spawn
-
-- [~] **`tunnelBackendTailscale.open` real impl:** pure URL-scrape ready (`scrapeTunnelUrl(buf, "tailscale-funnel")` + `isValidTunnelUrl` принимает `https://*.ts.net` с/без trailing slash); `tailscale funnel <port>` spawn + polling `tailscale funnel status` остаётся.
-  - Spawn `tailscale funnel --bg <port>`.
-  - Polling `tailscale funnel status` каждые 2 с до URL `https://<machine>.<tailnet>.ts.net/`. Timeout 15 с.
-  - Cleanup: `tailscale funnel reset` на dispose.
-- [~] Pre-flight: проверить что Funnel включён в ACL (`tailscale funnel status` выдаёт ошибку если нет). Pure parser `parseTailscaleFunnelStatus(text)` готов в `src/core/tailscaleFunnelAclParser.ts`. Возвращает `{ ok:true, enabled, listeningUrls? }` или `{ ok:false, reason: 'acl_denied' | 'not_logged_in' | 'daemon_unavailable' | 'unknown', hint }`. Distinct rejection paths (ACL, not-logged-in, daemonless, empty/gibberish), URL dedup, multi-host extraction. 13 unit-тестов. Spawn-обвязка остаётся.
-
-### v2.4.4. webhookTunnel migration
-
-- [x] **`createAndStartTunnelRelay(options): Promise<TunnelRelayHandle | undefined>`** — `src/ui/tunnelRelayDispatcher.ts`. Setting `"smee"` → дефолтный SSE-relay; иначе → `startLocalWebhookServer` + `openTunnel`. Fallback на smee при `not_available` / `config_invalid` / `spawn_failed` / local-server bind failure (если `noFallback: true` — возвращает `undefined`). Lazy-import smee модуля чтобы юнит-тесты не тянули vscode. Тесты с overrides на `openTunnel` / `localServerFactory` / `smeeRelayOverride`. 9 unit-тестов.
-- [ ] **Replace direct calls** в `oneDriveWebhookLifecycle.ts`, `googleDriveWebhookLifecycle.ts`: миграция на `createAndStartTunnelRelay` остаётся следующей итерацией (требует обвязки и обновления интеграционных тестов).
-
-### v2.4.5. UI + observability
-
-- [~] **Status-bar:** widget pure formatter `formatTunnelStatusBar(snapshot, { commandId?, now? })` готов в `src/core/tunnelStatusBarFormatter.ts`. Возвращает `{ text, tooltip, severity, commandId }`. Severity ladder: `ok` ($(plug), no fallback) / `warn` ($(warning), requested ≠ effective OR lastFallbackReason set) / `error` ($(error), restartCount ≥ 3). Tooltip — markdown с public URL, requested/active providers, uptime, restart count, last fallback (omitted when undefined). Inactive snapshot → "Tunnel: off". 12 unit-тестов. `vscode.window.createStatusBarItem` обвязка остаётся.
-- [x] **Команда `vscodesync.showTunnelStatus`** → OutputChannel `VSCodeSync · Tunnel` с rendered `formatTunnelStatusReport(getTunnelStatus())`. Backend `tunnelStatusRegistry.ts` (pure module) обновляется dispatcher'ом на каждый relay open / fallback / dispose. Уптайм формата `1h 2m 3s`. 9 unit-тестов на registry + format.
-- [x] Pure decision helper `src/core/tunnelConfigWatcher.ts` — `compareTunnelConfig(prev, next)` возвращает `{ action: 'no_change' | 'start' | 'stop' | 'restart', reason }`. Триггеры: tunnel enabled/disabled, provider change, URL change. 8 unit-тестов. Engine-side подписка на `onDidChangeConfiguration` остаётся следующей итерацией (pure decision готов).
+Удалено: позиционирование «indie tool», smee.io признан достаточным.
+См. `docs/v2/roadmap.md` → Anti-recommendations.
 
 ---
 
@@ -218,7 +186,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 
 ### v2.9.2. Heartbeat propagation
 
-- [x] Pure helpers в `src/core/presenceCurrentEditing.ts`: `buildCurrentEditingFrame({ workspaceId, relPath, nowMs, mode })`, `shouldBroadcastCurrentEditing({ last, next, nowMs, throttleMs? })` (throttle 30 s по-умолчанию). Обвязка к `presenceHeartbeat.ts` (read activeTextEditor) — следующая итерация.
+- [x] Pure helpers в `src/core/presenceCurrentEditing.ts`: `buildCurrentEditingFrame({ workspaceId, relPath, nowMs, mode })`, `shouldBroadcastCurrentEditing({ last, next, nowMs, throttleMs? })` (throttle 30 s по-умолчанию). Wired в `presenceHeartbeat.ts`: каждый tick резолвит `activeTextEditor` → `WorkspaceConfigManager.load(folder)` → tracked file → `buildCurrentEditingFrame` (mode из setting `smartConflictPrediction.broadcastCurrentEditing`). Throttle через mutable `lastBroadcastFrame` + `shouldBroadcastCurrentEditing`. `parseMachinesRegistry` / `upsertMachineAndPrune` / `syncMachinesRegistrySelf` расширены опциональным `currentEditing` (forward-compat).
 
 ### v2.9.3. Reader
 
@@ -281,7 +249,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.11.4. extension.ts target
 
 - [x] **`extension.ts → 806 LoC`** (target was ≤ 700; -54% achieved, additional -106 LoC requires extracting `runAfterSessionResume` closure (~75 LoC) and provider migration block (~45 LoC) — separate pass).
-- [ ] CI assert: `tests/unit/extensionTsLoc.test.ts` падает если LoC > 850 (regression guard for current state, lowered later).
+- [x] CI assert: `tests/unit/extensionTsLoc.test.ts` enforces `LOC_CEILING = 820` (current ~812 после удаления tunnel imports). Soft target 500. Понижается каждый раз когда новая extraction.
 
 ---
 
@@ -323,37 +291,11 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 ---
 
-## v2.13. Tunnel wiring — visible Phase 1.B
+## v2.13. ~~Tunnel wiring~~ — DROPPED (2026-05-09)
 
-**Текущее состояние:** оба backend'а — skeleton'ы. URL-scrape, watchdog, ACL parser — pure helpers готовы и протестированы. Real spawn + lifecycle migration — pending.
-
-### v2.13.1. Cloudflared spawn
-
-- [x] **`src/ui/tunnelBackendCloudflared.ts`** — `child_process.spawn("cloudflared", ["tunnel", "--url", ...])` directly upgraded from skeleton (commit `84ce6a6`). Lazy probe + 30 s URL-scrape timeout + SIGTERM → SIGKILL dispose.
-- [x] Process lifecycle implemented; reconnect/respawn watchdog deferred to v2.13.x — current implementation is single-attempt open + dispatcher-level fallback to smee.
-- [ ] Тесты: mock `child_process.spawn` через `events.EventEmitter` + `Readable.from(...)`. _(roadmap-max 2026-05-09: deferred — pure URL-scrape and watchdog state machine already covered in `tunnelUrlScrape.test.ts` + `tunnelSpawnWatchdog.test.ts`; full spawn-mock requires DI refactor or `vi.mock("node:child_process")`.)_
-
-### v2.13.2. Tailscale spawn
-
-- [x] **`src/ui/tunnelBackendTailscale.ts`** — direct upgrade (commit `84ce6a6`):
-  - Pre-flight `tailscale funnel status` via `parseTailscaleFunnelStatus` (acl_denied / not_logged_in / daemon_unavailable surface to dispatcher).
-  - `tailscale funnel --bg <port>` + 2 s status polling, 15 s timeout.
-  - `tailscale funnel reset` on dispose.
-- [ ] Тесты с mock spawn. _(roadmap-max 2026-05-09: deferred — same reasoning as v2.13.1.)_
-
-### v2.13.3. Status bar
-
-- [x] **`src/ui/tunnelStatusBar.ts`** — `createTunnelStatusBarItem(context)` driven by `formatTunnelStatusBar(getTunnelStatus())`; 5 s polling refresh; warn / error backgroundColor on fallback / restart>=3 (commit `84ce6a6`).
-
-### v2.13.4. Config watcher wiring
-
-- [x] OneDrive webhook lifecycle subscribes to `webhooks.tunnelProvider` change → triggers `refresh()` (commit `84ce6a6`). Future iteration: dedicated dispatcher-level `compareTunnelConfig` watcher (separate module) with verbose OutputChannel logging.
-
-### v2.13.5. Lifecycle migration (v2.4.4 final close)
-
-- [x] **`src/ui/oneDriveWebhookLifecycle.ts`** — replace `createAndStartSmeeRelay(notificationUrl)` → `createAndStartTunnelRelay({ rawProviderSetting, handler })` (commit `84ce6a6`). `tunnelProvider` setting added to onDidChangeConfiguration watch list.
-- [x] **`src/ui/googleDriveWebhookLifecycle.ts`** — N/A: no smee path exists; GDrive webhooks read `vscodesync.webhooks.url` directly (static URL only).
-- [ ] Update integration tests — mock `openTunnel` registry instead of mock smee. Existing 412 / EPERM / smee-reconnect test fixtures — портировать на `createAndStartTunnelRelay` mock.
+Удалено вместе с v2.4. `oneDriveWebhookLifecycle.ts` откачен на прямой
+`createAndStartSmeeRelay`. Все pure helpers (URL scrape / spawn watchdog /
+ACL parser / status registry / config watcher) и backends удалены.
 
 ---
 
@@ -377,8 +319,8 @@ Pure-helpers полностью готовы; команда + status bar + regi
 
 ### v2.14.2. AI cancellation + privacy
 
-- [ ] Все AI-команды используют `vscode.CancellationTokenSource` — cancellable из палитры команд.
-- [ ] Per-command privacy gate: setting `vscodesync.ai.<command>.enabled`. Default — `false` для commands, отправляющих контент в LM. User opt-in только через Settings.
+- [x] Все AI-команды (sessionSummary / suggestWorkspaceTags / pathMapper) используют `vscode.CancellationToken` — `withProgress({ cancellable: true })` в `plannedPaletteCommands.ts`, token прокинут в helper-сигнатуры (`summariseActivity` / `suggestWorkspaceTags` / `runAiPathMapper`). Internal `CancellationTokenSource` остаётся как fallback при отсутствии external token (back-compat).
+- [x] Per-command privacy gate: settings `vscodesync.ai.sessionSummary.enabled` / `vscodesync.ai.suggestWorkspaceTags.enabled` / `vscodesync.ai.pathMapper.enabled`. Default — `false`. Helper `ensureAiCommandEnabled(key, title)` показывает toast «отключена в целях приватности; включите в Settings» с действием `"Open Settings"`. `aiMerge` уже имеет существующий setting `vscodesync.aiMerge: boolean` (не дублируем).
 
 ---
 

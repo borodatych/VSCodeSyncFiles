@@ -8,6 +8,18 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+### Added
+- **Smart Conflict Prediction — currentEditing presence wire** (v2.9.2) — `presenceHeartbeat` теперь публикует поле `currentEditing` в `_machines.json` для self-entry: каждый tick резолвит `vscode.window.activeTextEditor` через `WorkspaceConfigManager` и пишет `{ workspaceId, relPath, sinceMs }` (или `null` при idle) с throttle 30 s через `shouldBroadcastCurrentEditing`. Mode (`full`/`anonymised`/`off`) читается из существующего setting `vscodesync.smartConflictPrediction.broadcastCurrentEditing`. `parseMachinesRegistry` / `upsertMachineAndPrune` / `syncMachinesRegistrySelf` расширены опциональным параметром (forward-compat).
+- **AI privacy gate** (v2.14.2) — 3 новых setting'а `vscodesync.ai.{sessionSummary,suggestWorkspaceTags,pathMapper}.enabled` (default `false`). Команды `aiSessionSummary`, `aiSuggestWorkspaceTags`, `aiPathMapper` показывают opt-in toast с кнопкой `Open Settings` перед первой отправкой данных в LM. Описания указывают что покидает машину (paths only, never contents). `aiMerge` уже имел свой setting `vscodesync.aiMerge: boolean`.
+- **AI cancellation** (v2.14.2) — все 3 AI-команды используют `withProgress({ cancellable: true })`; token прокинут в `summariseActivity` / `suggestWorkspaceTags` / `runAiPathMapper` для прерывания LM-запроса.
+- **BLAKE3 dual-hash writer** (v2.3.2) — `pushFile` пишет `MetaEntry.hashBlake3` рядом с `hash` (sha256) когда setting `vscodesync.canonicalHashAlgo` = `"blake3"` или `"dual"`. Канонический pipeline (binary detect / BOM strip / line-ending normalise / strip syncignore) единый для обоих алгоритмов через extracted `canonicaliseToHashableBytes`.
+
+### Changed
+- **LoC guard tightened** (v2.6.7 / v2.11.4) — `tests/unit/extensionTsLoc.test.ts:LOC_CEILING` понижен с 850 до 820 после удаления tunnel imports.
+
+### Internal
+- **Tunnel-backend'ы cloudflared / tailscale-funnel удалены** — позиционирование «indie tool»; `smee.io` признан достаточным. Удалено 13 production-модулей + 9 unit-тестов (~2620 LoC). `oneDriveWebhookLifecycle.ts` откачен на прямой `createAndStartSmeeRelay`. Setting `vscodesync.webhooks.tunnelProvider` и команда `vscodesync.showTunnelStatus` убраны из `package.json`. v2.4 / v2.13 в roadmap помечены как DROPPED.
+
 ## [0.5.1] — 2026-05-08
 
 Maintenance-релиз: wiring двух уже-готовых pure helper'ов в реальные UI-точки + накопленные за итерации `/roadmap-max` рефакторинги.

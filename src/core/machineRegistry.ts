@@ -3,6 +3,7 @@ import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "./syncWorkspaceInstanceReadOnly.js";
 import type { MachineEntry } from "./cloudLayout.js";
 import { machinesRegistryCloudPath } from "./cloudLayout.js";
+import type { CurrentEditingFrame } from "./presenceCurrentEditing.js";
 
 const REGISTRY_WRITE_RETRIES = 5;
 const DEFAULT_PRUNE_DAYS = 90;
@@ -37,6 +38,23 @@ export function parseMachinesRegistry(buf: Buffer): MachineEntry[] {
     };
     if (o.status === "active" || o.status === "pending" || o.status === "blocked") {
       e.status = o.status;
+    }
+    if (o.currentEditing === null) {
+      e.currentEditing = null;
+    } else if (o.currentEditing && typeof o.currentEditing === "object") {
+      const ce = o.currentEditing as Record<string, unknown>;
+      if (
+        isNonEmptyString(ce.workspaceId) &&
+        isNonEmptyString(ce.relPath) &&
+        typeof ce.sinceMs === "number" &&
+        Number.isFinite(ce.sinceMs)
+      ) {
+        e.currentEditing = {
+          workspaceId: ce.workspaceId,
+          relPath: ce.relPath,
+          sinceMs: ce.sinceMs,
+        };
+      }
     }
     out.push(e);
   }
@@ -94,17 +112,21 @@ export function upsertMachineAndPrune(
   nowIso: string,
   pruneDays: number,
   nowMs: number,
+  currentEditing?: CurrentEditingFrame | null,
 ): MachineEntry[] {
   const withoutSelf = entries.filter((e) => e.machineId !== machineId);
   const pruned = pruneStaleEntries(withoutSelf, machineId, nowMs, pruneDays);
-  return [
-    ...pruned,
-    {
-      machineId,
-      machineName: machineName.trim(),
-      lastSeen: nowIso,
-    },
-  ];
+  const self: MachineEntry = {
+    machineId,
+    machineName: machineName.trim(),
+    lastSeen: nowIso,
+  };
+  if (currentEditing === null) {
+    self.currentEditing = null;
+  } else if (currentEditing !== undefined) {
+    self.currentEditing = currentEditing;
+  }
+  return [...pruned, self];
 }
 
 /**
@@ -133,7 +155,7 @@ export async function syncMachinesRegistrySelf(
   provider: ICloudProvider,
   machineId: string,
   machineName: string,
-  opts?: { pruneDays?: number; nowMs?: number },
+  opts?: { pruneDays?: number; nowMs?: number; currentEditing?: CurrentEditingFrame | null },
 ): Promise<void> {
   if (isSecondaryWorkspaceInstanceReadOnly()) {
     return;
@@ -160,7 +182,15 @@ export async function syncMachinesRegistrySelf(
       etag = undefined;
     }
 
-    const merged = upsertMachineAndPrune(entries, machineId, machineName, nowIso, pruneDays, nowMs);
+    const merged = upsertMachineAndPrune(
+      entries,
+      machineId,
+      machineName,
+      nowIso,
+      pruneDays,
+      nowMs,
+      opts?.currentEditing,
+    );
     const body = serializeMachinesRegistry(merged);
     try {
       await provider.uploadFile(cloudPath, body, etag ? { ifMatch: etag } : {});

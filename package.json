@@ -120,6 +120,21 @@
           "default": "sha256",
           "description": "%cfg.canonicalHashAlgo.description%"
         },
+        "vscodesync.ai.sessionSummary.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.ai.sessionSummary.enabled.description%"
+        },
+        "vscodesync.ai.suggestWorkspaceTags.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.ai.suggestWorkspaceTags.enabled.description%"
+        },
+        "vscodesync.ai.pathMapper.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.ai.pathMapper.enabled.description%"
+        },
         "vscodesync.massChangeGuard": {
           "type": "boolean",
           "default": true,
@@ -150,16 +165,6 @@
           "minimum": 1,
           "maximum": 90,
           "description": "%cfg.backup.intervalDays.description%"
-        },
-        "vscodesync.webhooks.tunnelProvider": {
-          "type": "string",
-          "default": "smee",
-          "enum": [
-            "smee",
-            "cloudflared",
-            "tailscale-funnel"
-          ],
-          "description": "%cfg.webhooks.tunnelProvider.description%"
         },
         "vscodesync.showFileDecorations": {
           "type": "boolean",
@@ -1173,10 +1178,6 @@
       {
         "command": "vscodesync.mergeWorkspaces",
         "title": "%cmd.mergeWorkspaces.title%"
-      },
-      {
-        "command": "vscodesync.showTunnelStatus",
-        "title": "%cmd.showTunnelStatus.title%"
       },
       {
         "command": "vscodesync.startP2PSession",

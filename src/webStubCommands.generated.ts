@@ -132,5 +132,12 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.purgeEncryptedWorkspace",
   "vscodesync.healthCheck",
   "vscodesync.mergeWorkspaces",
-  "vscodesync.showTunnelStatus"
+  "vscodesync.startP2PSession",
+  "vscodesync.disconnectP2PSession",
+  "vscodesync.showPasskeySettings",
+  "vscodesync.removePasskey",
+  "vscodesync.passkeyFallback",
+  "vscodesync.exportConflictsToSarif",
+  "vscodesync.showWorkspaceReadme",
+  "vscodesync.exportEncryptedBundle"
 ];

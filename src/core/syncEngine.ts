@@ -32,7 +32,12 @@ import { detectChange, type ChangeAction } from "./changeDetection.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import type { LineEndingMode } from "../utils/normalize.js";
-import { computeHash, hashCanonicalBuffer, type HashConfig } from "../utils/hash.js";
+import {
+  computeHash,
+  hashCanonicalBuffer,
+  hashCanonicalBufferDual,
+  type HashConfig,
+} from "../utils/hash.js";
 import { verboseLog, warnLog } from "../utils/log.js";
 import { validateManifestShape } from "./manifestValidate.js";
 import { detectMassChange } from "./massChangeGuard.js";
@@ -242,6 +247,13 @@ export interface SyncEngineDeps {
     workspaceId: string,
     report: import("./massChangeGuard.js").MassChangeReport,
   ) => Promise<boolean>;
+  /**
+   * Returns the current `vscodesync.canonicalHashAlgo` setting. When the
+   * caller resolves `"blake3"` or `"dual"`, `pushFile` writes both `hash`
+   * (SHA-256, wire-compat) and `hashBlake3` into the meta entry. Default
+   * `"sha256"` keeps legacy behaviour (no BLAKE3 column).
+   */
+  canonicalHashAlgo?: () => "sha256" | "blake3" | "dual";
 }
 
 export class SyncEngine {
@@ -3002,6 +3014,11 @@ export class SyncEngine {
         };
         if (wireGzip) {
           row.wireGzip = true;
+        }
+        const algo = this.deps.canonicalHashAlgo?.() ?? "sha256";
+        if (algo !== "sha256") {
+          const dual = hashCanonicalBufferDual(plaintextBufLocked, posixRel, this.hashCfg(posixRel));
+          row.hashBlake3 = dual.blake3;
         }
         const nextMeta: MetaJson = {
           ...metaLocked,

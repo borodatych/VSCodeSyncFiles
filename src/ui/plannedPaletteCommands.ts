@@ -32,6 +32,24 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 
 const CFG = "vscodesync";
 
+/** v2.14.2 — privacy gate. Returns `true` when the AI command is allowed to
+ * dispatch payload to a language model. When the per-command setting is off
+ * (default), shows an info toast with an "Open Settings" action that scrolls
+ * the user to the relevant key. */
+async function ensureAiCommandEnabled(settingKey: string, commandTitle: string): Promise<boolean> {
+  const enabled = vscode.workspace.getConfiguration(CFG).get<boolean>(settingKey, false);
+  if (enabled) return true;
+  const fullKey = `${CFG}.${settingKey}`;
+  const choice = await vscode.window.showInformationMessage(
+    `VSCodeSync: ${commandTitle} отключена в целях приватности. Включите в Settings → ${fullKey}.`,
+    "Open Settings",
+  );
+  if (choice === "Open Settings") {
+    await vscode.commands.executeCommand("workbench.action.openSettings", fullKey);
+  }
+  return false;
+}
+
 
 /** Расширение для `registerPlannedPaletteCommands`: глобальный конфиг + обновление UI после локальных изменений. */
 export interface PlannedPaletteExtras {
@@ -303,6 +321,7 @@ export function registerPlannedPaletteCommands(
     }),
 
     vscode.commands.registerCommand("vscodesync.aiSessionSummary", async () => {
+      if (!(await ensureAiCommandEnabled("ai.sessionSummary.enabled", "AI session summary"))) return;
       const { loadActivityFile } = await import("../core/activityLog.js");
       const { summariseActivity } = await import("../core/aiSessionSummary.js");
       const dir = extras.globalConfig.getStorageDir();
@@ -319,9 +338,9 @@ export function registerPlannedPaletteCommands(
       const cutoff = Date.now() - pick.windowMs;
       const filtered = data.events.filter((e) => Date.parse(e.at) >= cutoff);
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI summary…" },
-        async () => {
-          const result = await summariseActivity(filtered, pick.label);
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI summary…", cancellable: true },
+        async (_p, token) => {
+          const result = await summariseActivity(filtered, pick.label, token);
           if (!result.ok) {
             const msg =
               result.reason === "no_events"
@@ -342,6 +361,7 @@ export function registerPlannedPaletteCommands(
     }),
 
     vscode.commands.registerCommand("vscodesync.aiSuggestWorkspaceTags", async () => {
+      if (!(await ensureAiCommandEnabled("ai.suggestWorkspaceTags.enabled", "AI suggest workspace tags"))) return;
       const root = await resolveWorkspaceRootForPaletteCommand();
       if (!root) {
         await vscode.window.showWarningMessage("VSCodeSync: откройте папку проекта.");
@@ -372,9 +392,9 @@ export function registerPlannedPaletteCommands(
       }
       const { suggestWorkspaceTags } = await import("../core/aiSessionSummary.js");
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI tagger…" },
-        async () => {
-          const result = await suggestWorkspaceTags(files);
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI tagger…", cancellable: true },
+        async (_p, token) => {
+          const result = await suggestWorkspaceTags(files, token);
           if (!result.ok) {
             await vscode.window.showWarningMessage(
               "VSCodeSync: AI tagger недоступен или не дал валидных тегов.",
@@ -779,8 +799,14 @@ export function registerPlannedPaletteCommands(
       });
     }),
     vscode.commands.registerCommand("vscodesync.aiPathMapper", async () => {
+      if (!(await ensureAiCommandEnabled("ai.pathMapper.enabled", "AI path mapper"))) return;
       const { runAiPathMapper } = await import("./aiPathMapperCommand.js");
-      await runAiPathMapper();
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI path mapper…", cancellable: true },
+        async (_p, token) => {
+          await runAiPathMapper(token);
+        },
+      );
     }),
     vscode.commands.registerCommand("vscodesync.startSyncRecording", async () => {
       const { startRecording, isRecording } = await import("./syncReplayRecorderState.js");
