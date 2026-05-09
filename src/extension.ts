@@ -10,6 +10,11 @@ import { YandexDiskProvider } from "./providers/yandex/yandexDiskProvider.js";
 import { appendActivityEvent } from "./core/activityLog.js";
 import { recordCompressionSaving, recordTransferBytes } from "./core/syncStatsStore.js";
 import { SyncEngine } from "./core/syncEngine.js";
+import {
+  decideResumeAction,
+  formatResumeSummaryMessage,
+  summariseResumePlans,
+} from "./core/sessionResumeSummary.js";
 import { readEncryptionKey, ensureEncryptionKey } from "./core/encryptionKey.js";
 import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
@@ -635,7 +640,8 @@ export function activate(context: vscode.ExtensionContext): void {
     runAfterSessionResume: async () => {
       const folders = vscode.workspace.workspaceFolders ?? [];
       const providerOrNull = await tryAuthenticatedProvider(registry);
-      if (!providerOrNull) {
+      const action = decideResumeAction({ hasProvider: providerOrNull !== null, hasActiveRoot: false });
+      if (action === "abort_no_provider") {
         await vscode.window.showWarningMessage(
           "VSCodeSync: провайдер не авторизован — выполните Pull/Push вручную после снятия паузы.",
         );
@@ -643,7 +649,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await statusBar.refresh();
         return;
       }
-      const provider = providerOrNull;
+      const provider = providerOrNull!;
       const gcfg = await globalConfig.load();
       const allPlans: Awaited<ReturnType<SyncEngine["previewSyncPlan"]>> = [];
       let anyRoot = false;
@@ -670,19 +676,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       writeSyncPreviewOutput(syncPreviewChannel, allPlans);
       syncPreviewChannel.show(true);
-      const nPush = allPlans.reduce((acc, w) => acc + w.files.filter((f) => f.action === "push").length, 0);
-      const nPull = allPlans.reduce((acc, w) => acc + w.files.filter((f) => f.action === "pull").length, 0);
-      const nConf = allPlans.reduce(
-        (acc, w) =>
-          acc + w.files.filter((f) => f.action === "conflict" || f.action === "conflict_pending").length,
-        0,
-      );
+      const totals = summariseResumePlans(allPlans);
       const choice = await vscode.window.showWarningMessage(
-        [
-          "VSCodeSync: пауза снята.",
-          `План: ↑ push ${String(nPush)} · ↓ pull ${String(nPull)} · конфликты ${String(nConf)}.`,
-          "Детали — Output «VSCodeSync · Preview».",
-        ].join("\n"),
+        formatResumeSummaryMessage(totals),
         { modal: true },
         "Синхронизировать",
         "Позже",

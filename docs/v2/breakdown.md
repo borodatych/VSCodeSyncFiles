@@ -250,7 +250,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.11.4. extension.ts target
 
 - [x] **`extension.ts → 806 LoC`** (target was ≤ 700; -54% achieved, additional -106 LoC requires extracting `runAfterSessionResume` closure (~75 LoC) and provider migration block (~45 LoC) — separate pass).
-- [x] CI assert: `tests/unit/extensionTsLoc.test.ts` enforces `LOC_CEILING = 820` (current ~812 после удаления tunnel imports). Soft target 500. Понижается каждый раз когда новая extraction.
+- [x] CI assert: `tests/unit/extensionTsLoc.test.ts` enforces `LOC_CEILING = 816` (current 815 после v2.6.7 run). Pure helper `src/core/sessionResumeSummary.ts` (`summariseResumePlans` + `formatResumeSummaryMessage` + `decideResumeAction`) вынес inline plan totals и modal body из `runAfterSessionResume` closure; 7 unit-тестов. Soft target 500.
 
 ---
 
