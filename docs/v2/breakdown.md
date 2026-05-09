@@ -335,7 +335,7 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 - [x] **MCP server endpoint** — `@modelcontextprotocol/sdk` installed; `src/ui/mcpServerHost.ts:startMcpServer(provider)` lazy-loads SDK, регистрирует `vscodesync.list_workspaces` tool с реальным data source. Other tools throw `McpNotImplementedError` (engine adapter — follow-up). Stdio bridge через npm bin — отдельная итерация.
 - [x] **CLI `vscodesync`** — `cli/` subpackage уже имеет `bin/vscodesync` (`./dist/cli.cjs`), entry `cli/src/main.ts` с дispatch-table (`status` / `pull` / `pull-all` / `auth --device-code`). Sub-package builds via esbuild → standalone CommonJS. Pure `parseCliArgs(argv)` в `src/core/cliArgsParser.ts` остаётся как тестируемая часть.
-- [~] **Settings Sync integration** — pure split planner `src/core/settingsSyncIntegration.ts` (`SETTINGS_SYNC_RULES` + `splitSettingsForSync` + `SettingsSyncNotImplementedError`); 7 unit-тестов. Decides per-key whether VSCodeSync setting is `preference` (sync) / `secret` (never) / `machine_local`. Live `vscode.authentication.getSession("vscode-settings-sync")` wiring blocked on stable provider id.
+- [x] **Settings Sync integration** — pure split planner `src/core/settingsSyncIntegration.ts` (`SETTINGS_SYNC_RULES` + `splitSettingsForSync` + `SettingsSyncNotImplementedError`); 7 unit-тестов. Defensive live probe `src/ui/settingsSyncProbe.ts:probeSettingsSyncSession` оборачивает `vscode.authentication.getSession("vscode-settings-sync", scopes)` в discriminated result (`provider_missing` / `user_rejected` / `unknown_error` / available); 7 unit-тестов на каждый rejection branch + happy path.
 
 ### v2.20.2. Performance / scale (4–6)
 
