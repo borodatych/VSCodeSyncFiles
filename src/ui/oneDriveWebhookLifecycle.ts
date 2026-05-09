@@ -23,6 +23,7 @@ import {
   reconcileSubscription,
 } from "./webhookExpirationMath.js";
 import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
+import { createWebhookRenewalLoop, type RenewalLoopHandle } from "../core/webhookRenewalLoop.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "onedrive-graph-subscription.json";
@@ -36,6 +37,7 @@ interface PersistedState {
 
 let serverHandle: GraphWebhookLocalServer | undefined;
 let renewLoop: ReturnType<typeof setInterval> | undefined;
+let renewalDriver: RenewalLoopHandle | undefined;
 let tunnelRelay: SmeeRelay | undefined;
 
 function statePath(globalConfig: GlobalConfigManager): string {
@@ -105,6 +107,10 @@ export function registerOneDriveWebhookLifecycle(
     if (renewLoop !== undefined) {
       clearInterval(renewLoop);
       renewLoop = undefined;
+    }
+    if (renewalDriver !== undefined) {
+      renewalDriver.dispose();
+      renewalDriver = undefined;
     }
   };
 
@@ -243,36 +249,46 @@ export function registerOneDriveWebhookLifecycle(
 
     activateWebhookPushFor("onedrive");
 
-    const renewTick = async (): Promise<void> => {
-      const s = await readState(globalConfig);
-      const cfgInner = vscode.workspace.getConfiguration(CFG);
-      const gci = await globalConfig.load();
-      const b = await readOneDriveTokenBundle(secrets);
-      const decision = decideWebhookRenewTick({
-        state: s ? { subscriptionId: s.subscriptionId, expirationDateTime: s.expirationDateTime } : null,
-        webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
-        activeProviderMatches: gci.activeProvider === "onedrive",
-        hasToken: Boolean(b?.accessToken),
-      });
-      if (decision.kind !== "renew_now") {
-        return;
-      }
-      if (!s || !b?.accessToken) {
-        return;
-      }
-      try {
-        const newExp = await graphRenewSubscription(b.accessToken, decision.subscriptionId);
-        await writeState(globalConfig, { ...s, expirationDateTime: newExp });
-        log(out, `Subscription renewed until ${newExp}.`);
-      } catch (e) {
-        log(out, `Renew failed: ${e instanceof Error ? e.message : String(e)}`);
-        deactivateWebhookPushIfProvider("onedrive");
-      }
-    };
-
-    renewLoop = setInterval(() => {
-      void renewTick();
-    }, 4 * 60_000);
+    // v2.10.2 — adaptive renewal driver. fetchSubscriptions checks the
+    // decideWebhookRenewTick guard first, so a disabled / mismatched / token-
+    // less state yields an empty list and the loop just waits.
+    renewalDriver = createWebhookRenewalLoop({
+      fetchSubscriptions: async () => {
+        const s = await readState(globalConfig);
+        const cfgInner = vscode.workspace.getConfiguration(CFG);
+        const gci = await globalConfig.load();
+        const b = await readOneDriveTokenBundle(secrets);
+        const decision = decideWebhookRenewTick({
+          state: s ? { subscriptionId: s.subscriptionId, expirationDateTime: s.expirationDateTime } : null,
+          webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
+          activeProviderMatches: gci.activeProvider === "onedrive",
+          hasToken: Boolean(b?.accessToken),
+        });
+        if (decision.kind !== "renew_now" || !s || !b?.accessToken) return [];
+        return [{ id: s.subscriptionId, expiresAtIso: s.expirationDateTime }];
+      },
+      onRenew: async (sub) => {
+        const s = await readState(globalConfig);
+        const b = await readOneDriveTokenBundle(secrets);
+        if (!s || !b?.accessToken) return;
+        try {
+          const newExp = await graphRenewSubscription(b.accessToken, sub.id);
+          await writeState(globalConfig, { ...s, expirationDateTime: newExp });
+          log(out, `Subscription renewed until ${newExp}.`);
+        } catch (e) {
+          log(out, `Renew failed: ${e instanceof Error ? e.message : String(e)}`);
+          deactivateWebhookPushIfProvider("onedrive");
+        }
+      },
+      onRecreate: (sub) => {
+        // Trigger a full reconcile — the existing branch handles delete +
+        // re-create + writeState atomically.
+        log(out, `Subscription ${sub.id} expired — re-running reconcile.`);
+        void refresh();
+      },
+      onLog: (line) => { log(out, line); },
+    });
+    renewalDriver.start();
   };
 
   const refresh = (): Promise<void> => {

@@ -217,7 +217,7 @@ warning над soft-lock signal. Это **post-fact** — pred. событий �
 ### v2.10.2. Auto-renewal
 
 - [x] Pure planner `src/core/webhookAutoRenewal.ts` — `planWebhookRenewal(subscriptions, now?, slackMs?)` возвращает `actions[]` (`renew_now` / `expired_recreate` / `wait_until` с `nextDueMs`) + `nextWakeMs` (раннее время для `setTimeout`). Использует существующий `isNearOrPastExpiration` (slack 20 мин). 6 unit-тестов.
-- [x] Pure loop driver `src/core/webhookRenewalLoop.ts` — `createWebhookRenewalLoop({ fetchSubscriptions, onRenew, onRecreate, onLog?, scheduler? })`. Использует `planWebhookRenewal` для решения, на каждый `renew_now` / `expired_recreate` вызывает callback, на `wait_until` — `setTimer(nextDueMs - now)` с min 60 s / max 1 hour bounds. Inject-able scheduler для тестов. 6 unit-тестов с manual scheduler. Engine-side wiring (`fetchSubscriptions` из oneDriveLifecycle/googleDriveLifecycle, OutputChannel `VSCodeSync · webhooks`) — следующая итерация (loop driver ready).
+- [x] Pure loop driver `src/core/webhookRenewalLoop.ts` подключён в `oneDriveWebhookLifecycle.ts`: вместо fixed `setInterval(4 min)` теперь adaptive scheduling через `planWebhookRenewal`. `fetchSubscriptions` гардит `decideWebhookRenewTick` (skip-on-disabled / no-token / not-yet-due возвращают пустой список — driver спит до nextWakeMs); `onRenew` вызывает `graphRenewSubscription`; `onRecreate` тригерит `refresh()` (existing reconcile branch). Logs идут в существующий OutputChannel.
 
 ---
 
