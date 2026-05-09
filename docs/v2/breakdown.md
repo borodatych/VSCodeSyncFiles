@@ -339,9 +339,9 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ### v2.20.2. Performance / scale (4–6)
 
-- [~] **WebRTC SCTP multiplexing** — pure planner `src/core/p2pSctpMultiplex.ts` (`planSctpLane` / `createSctpPlanner`); 6 unit-тестов. Lane 0 reserved for manifest/control/heartbeat; bulk file chunks round-robin'ят на `[1, lanes-1]` по hash(stableKey) — same file → same lane (chunk-ordering invariant). RTCPeerConnection / multiple-DataChannel wiring остаётся в `p2pSessionRuntime`.
-- [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle, `runReadOnlyQuery` валидирует через `validateReadOnlySql` и возвращает explicit `tables_not_mounted` sentinel. Virtual-table mount (activity.json + stats.json) — webview-side follow-up (DuckDB-WASM работает лучше из Worker).
-- [~] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (`planPrefetchHints` + `PrefetchApiNotAvailableError`); 7 unit-тестов. Recency-weighted (lastOpened > lastModified), maxCount cap, sizeBytes cap, cold-and-unused dropping. Live `vscode.workspace.fs.prefetch` wiring blocked on proposed-API stabilisation.
+- [~] **WebRTC SCTP multiplexing** — pure planner `src/core/p2pSctpMultiplex.ts` (6 тестов). Runtime adapter `src/core/sctpRuntimeHook.ts:SctpRuntimeAdapter` typed surface + `makeSkeletonSctpRuntime` + `SctpRuntimeNotImplementedError`; 2 теста. Multi-DataChannel wiring (одна `RTCPeerConnection` с N stable channels) остаётся.
+- [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle. Mount planner `src/core/duckdbVirtualTables.ts:planVirtualTableMount` эмитит `INSTALL json; LOAD json;` + `CREATE OR REPLACE VIEW <table> AS read_json_auto(...)` per source; SQL identifier validation + `DuckDbHostNotAvailableError`; 4 теста. Worker host остаётся (нужен webview-side bundle).
+- [~] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (7 тестов). Defensive adapter `src/ui/workspaceFsPrefetchAdapter.ts:tryPrefetchUris` пробит на `surface.fs.prefetch` runtime check + discriminated result (`api_not_available` / `no_uris` / `error`); 4 теста. Команда `vscodesync.prefetchActiveWorkspace` wiring остаётся.
 
 ### v2.20.3. Security / privacy (7–9)
 
