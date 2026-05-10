@@ -1,0 +1,110 @@
+/**
+ * v2.6.7 — sync monitors bundle, extracted from `extension.ts`.
+ *
+ * Composes 5 passive monitors that share the same `(globalConfig,
+ * tryAuthenticatedProvider, makeEngine, statusBar, refreshUi)` shape:
+ *   - sync trigger manager (file-save → push)
+ *   - watch-mode poller (interval → pull)
+ *   - sync-schedule transition (window enter/exit → flush deferred)
+ *   - auto-pause monitor (battery / metered / focus → pause hint)
+ *   - offline recovery monitor (network online → drain queue)
+ */
+import * as vscode from "vscode";
+import type { GlobalConfigManager } from "../core/globalConfigManager.js";
+import type { ProviderRegistry } from "../providers/registry.js";
+import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
+import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncStatusBarController } from "../ui/statusBar.js";
+import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
+import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
+import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
+import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
+import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
+import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
+import { registerSyncTriggerManager } from "../ui/syncTriggerManager.js";
+import { registerWatchModePoller } from "../ui/watchModePoller.js";
+import { registerSyncScheduleTransition } from "../ui/syncScheduleTransition.js";
+import { registerAutoPauseMonitor } from "../ui/syncAutoPauseMonitor.js";
+import { registerOfflineRecoveryMonitor } from "../ui/syncOfflineRecoveryMonitor.js";
+
+export interface SyncMonitorsDeps {
+  context: vscode.ExtensionContext;
+  globalConfig: GlobalConfigManager;
+  registry: ProviderRegistry;
+  statusBar: SyncStatusBarController;
+  workspacesTree: WorkspacesTreeProvider;
+  fileDecorations: SyncFileDecorationController;
+  scheduleDeferredStore: SyncScheduleDeferredStore;
+  offlineQueueStore: SyncOfflineQueueStore;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+}
+
+export function registerSyncMonitors(deps: SyncMonitorsDeps): void {
+  const {
+    context,
+    globalConfig,
+    registry,
+    statusBar,
+    workspacesTree,
+    fileDecorations,
+    scheduleDeferredStore,
+    offlineQueueStore,
+    makeEngine,
+  } = deps;
+
+  const tap = (): Promise<ICloudProvider | null> => tryAuthenticatedProvider(registry);
+  const refreshUiWithStatus = (): void => {
+    workspacesTree.refresh();
+    fileDecorations.refresh();
+    void refreshActiveEditorSyncContext();
+    void statusBar.refresh();
+  };
+  const refreshUiPlain = (): void => {
+    workspacesTree.refresh();
+    fileDecorations.refresh();
+    void refreshActiveEditorSyncContext();
+  };
+
+  registerSyncTriggerManager(context, {
+    globalConfig,
+    tryAuthenticatedProvider: tap,
+    makeEngine,
+    statusBar,
+    scheduleDeferred: scheduleDeferredStore,
+    offlineQueue: offlineQueueStore,
+    refreshUi: refreshUiWithStatus,
+  });
+
+  registerWatchModePoller(context, {
+    globalConfig,
+    tryAuthenticatedProvider: tap,
+    makeEngine,
+    statusBar,
+    offlineQueue: offlineQueueStore,
+    refreshUi: refreshUiPlain,
+  });
+
+  registerSyncScheduleTransition(context, {
+    store: scheduleDeferredStore,
+    flushDeps: {
+      globalConfig,
+      tryAuthenticatedProvider: tap,
+      makeEngine,
+      statusBar,
+      offlineQueue: offlineQueueStore,
+      refreshUi: refreshUiWithStatus,
+    },
+    statusBar,
+  });
+
+  registerAutoPauseMonitor(context);
+
+  registerOfflineRecoveryMonitor(context, {
+    offlineQueue: offlineQueueStore,
+    globalConfig,
+    tryAuthenticatedProvider: tap,
+    makeEngine,
+    statusBar,
+    refreshUi: refreshUiWithStatus,
+  });
+}

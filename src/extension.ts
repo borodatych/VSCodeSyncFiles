@@ -15,12 +15,7 @@ import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
 import { SyncScheduleDeferredStore } from "./core/syncScheduleDeferredStore.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
-import { registerAutoPauseMonitor } from "./ui/syncAutoPauseMonitor.js";
-import { registerSyncScheduleTransition } from "./ui/syncScheduleTransition.js";
-import { registerSyncTriggerManager } from "./ui/syncTriggerManager.js";
 import { startDigestTimer } from "./ui/notificationService.js";
-import { registerOfflineRecoveryMonitor } from "./ui/syncOfflineRecoveryMonitor.js";
-import { registerWatchModePoller } from "./ui/watchModePoller.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
 import { syncSessionPause } from "./core/syncSessionPause.js";
 import { disposeWorkspaceInstanceLock } from "./core/workspaceInstanceLock.js";
@@ -64,6 +59,7 @@ import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSna
 import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
 import { registerObservers } from "./startup/registerObservers.js";
 import { registerProviderAuthBundle } from "./startup/registerProviderAuthBundle.js";
+import { registerSyncMonitors } from "./startup/registerSyncMonitors.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -246,36 +242,6 @@ export function activate(context: vscode.ExtensionContext): void {
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
 
-  registerSyncTriggerManager(context, {
-    globalConfig,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    makeEngine: (root, provider, machineId, machineName) =>
-      makeEngine(root, provider, machineId, machineName),
-    statusBar,
-    scheduleDeferred: scheduleDeferredStore,
-    offlineQueue: offlineQueueStore,
-    refreshUi: () => {
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
-      void statusBar.refresh();
-    },
-  });
-
-  registerWatchModePoller(context, {
-    globalConfig,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    makeEngine: (root, provider, machineId, machineName) =>
-      makeEngine(root, provider, machineId, machineName),
-    statusBar,
-    offlineQueue: offlineQueueStore,
-    refreshUi: () => {
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
-    },
-  });
-
   const webhookLifecycles = registerWebhookLifecycles({
     context,
     globalConfig,
@@ -304,40 +270,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerGitBranchWorkspaceActivation(context, gitBranchActivationDeps);
 
-  registerSyncScheduleTransition(context, {
-    store: scheduleDeferredStore,
-    flushDeps: {
-      globalConfig,
-      tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-      makeEngine: (root, provider, machineId, machineName) =>
-        makeEngine(root, provider, machineId, machineName),
-      statusBar,
-      offlineQueue: offlineQueueStore,
-      refreshUi: () => {
-        workspacesTree.refresh();
-        fileDecorations.refresh();
-        void refreshActiveEditorSyncContext();
-        void statusBar.refresh();
-      },
-    },
-    statusBar,
-  });
-
-  registerAutoPauseMonitor(context);
-
-  registerOfflineRecoveryMonitor(context, {
-    offlineQueue: offlineQueueStore,
+  registerSyncMonitors({
+    context,
     globalConfig,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    makeEngine: (root, provider, machineId, machineName) =>
-      makeEngine(root, provider, machineId, machineName),
+    registry,
     statusBar,
-    refreshUi: () => {
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
-      void statusBar.refresh();
-    },
+    workspacesTree,
+    fileDecorations,
+    scheduleDeferredStore,
+    offlineQueueStore,
+    makeEngine,
   });
 
   const { treeView } = registerWorkspaceTreeWiring({
