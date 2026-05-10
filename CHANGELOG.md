@@ -8,7 +8,19 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
-### Added
+## [0.6.0] — 2026-05-10
+
+Большая функциональная волна за проходы `/roadmap-max` 26-34: 75 коммитов.
+Закрыты все actionable пункты v2 roadmap (включая webhook lifecycle adapter,
+extension.ts <500 LoC, DuckDB analytics panel с реальной WASM runtime).
+Оставшиеся `[~]` пункты — environment / human-blocked (auto-unblock путь
+зафиксирован в `docs/v2/breakdown.md`).
+
+### Added (v2.20.2 DuckDB analytics — runtime closure)
+- **DuckDB-WASM analytics panel** (v2.20.2) — `vscodesync.openAnalyticsPanel` открывает webview, bootstrap'ит `dist/media/duckdb-bridge.js` (426 KB self-contained ESM с inlined `@duckdb/duckdb-wasm` + `apache-arrow`). Bridge инстанциирует `AsyncDuckDB(ConsoleLogger, Worker(blob+importScripts(workerUrl)))`, выполняет `register_file` / `exec_sql` контракт. `createWebviewWorkerAdapter(panel.webview, dispose)` оборачивает webview под `DuckDbWorkerLike` для existing `createDuckDbHost`. `localResourceRoots` включает `dist/media/` + `node_modules/@duckdb/duckdb-wasm/dist/`; CSP `worker-src ${cspSource} blob:`.
+- **DuckDB webview bootstrap planner** (v2.20.2) — `src/core/duckdbWebviewBootstrap.ts:buildDuckDbBootstrapHtml` + `selectDuckDbVariant` (mvp/eh/coi capability fallback) + `DuckDbBootstrapNoBundlesError` sentinel; 8 unit-тестов.
+
+### Added (Cross-cutting features)
 - **P2P file-transfer receiver** (v2.12.4) — `attachFileReceiver` подписывается на manifest+file_chunk frames на сессионном channel, собирает файл через `createChunkAssembler`, проверяет hash и пишет атомарно через tmp-rename. Conflict-vs-cloud-pull: P2P deliveries advisory, manifest authoritative.
 - **OAuth Device Code flow UI** (v2.20.3) — `vscodesync.signInDeviceCode` walks user через POST device-auth → user-code modal → polling token endpoint via `planDeviceCodePoll`. OneDrive provider entry готов; GDrive — отдельная итерация.
 - **Local LLM endpoint в aiMerge** (v2.20.3) — `runAiMerge` теперь dispatch'ит через `resolveAiMergeEndpoint`: `vscode-lm` / `ollama` / `lm-studio` / custom URL. Новая setting `vscodesync.aiMerge.endpointModel`.
@@ -46,6 +58,12 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ### Internal
 - **Tunnel-backend'ы cloudflared / tailscale-funnel удалены** — позиционирование «indie tool»; `smee.io` признан достаточным. Удалено 13 production-модулей + 9 unit-тестов (~2620 LoC). `oneDriveWebhookLifecycle.ts` откачен на прямой `createAndStartSmeeRelay`. Setting `vscodesync.webhooks.tunnelProvider` и команда `vscodesync.showTunnelStatus` убраны из `package.json`. v2.4 / v2.13 в roadmap помечены как DROPPED.
+
+### Internal (run 32-34 — architectural closure)
+- **Webhook lifecycle planner adapter** (v2.10.1) — оба `oneDriveWebhookLifecycle.ts:reconcileBody` + `googleDriveWebhookLifecycle.ts:reconcileBody` переписаны на `planWebhookLifecycleReconcile`. Wrapper становится thin imperative shell поверх ordered action list (`delete_stale_subscription` / `clear_local_state` / `start_local_server` / `create_subscription` / `keep_subscription` / `register_webhook_push` / `start_renew_loop`). GDrive получил pre-pass для expiration validation (planner has no TTL notion).
+- **`extension.ts` decomposition fully shipped** (v2.6.7) — 5085 → 494 LoC (-90%), soft target 500 reached. CI guard `LOC_CEILING=495`. Run 32-33 extracted: `createRunAfterSessionResume.ts` / `registerScheduledSnapshotsWiring.ts` / `createEngineLogRefs.ts` / `registerObservers.ts` / `registerProviderAuthBundle.ts` / `registerSyncMonitors.ts` (5 monitors).
+- **`media/duckdb-bridge.src.js` esbuild target** — 5-я цель в `esbuild.mjs` бандлит webview bridge с inlined `@duckdb/duckdb-wasm` + `apache-arrow` (~426 KB self-contained ESM). Output → `dist/media/`, ships in .vsix.
+- **eslint config: `media/**` ignore** — webview asset JS не индексируется TypeScript projectService.
 
 ## [0.5.1] — 2026-05-08
 
