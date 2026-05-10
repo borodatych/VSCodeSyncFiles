@@ -31,7 +31,6 @@ import { registerVsCodeSyncTelemetry } from "./telemetry/extensionTelemetry.js";
 import { registerProviderSetupGuide } from "./ui/providerSetupGuide.js";
 import { registerCommandCenter } from "./ui/commandCenter.js";
 import { registerSettingsPanel } from "./ui/settingsPanel.js";
-import { registerScheduledSnapshots } from "./ui/scheduledSnapshots.js";
 import { scheduleAchievementsWarmup } from "./ui/achievementsService.js";
 import { registerSmartFeaturesCommands } from "./commands/registerSmartFeatures.js";
 import { registerSmartFeaturesEngineCommands } from "./commands/registerSmartFeaturesEngine.js";
@@ -68,6 +67,7 @@ import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
+import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -603,41 +603,7 @@ export function activate(context: vscode.ExtensionContext): void {
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
 
-  // Scheduled snapshots (daily / weekly via vscodesync.snapshotSchedule).
-  registerScheduledSnapshots(context, {
-    getCandidateFolders: () => vscode.workspace.workspaceFolders ?? [],
-    snapshotFolder: async (folderRoot) => {
-      const wc = await WorkspaceConfigManager.load(folderRoot);
-      if (wc.activeWorkspaces.length === 0) return;
-      const provider = await tryAuthenticatedProvider(registry);
-      if (!provider) return;
-      const gc = await globalConfig.load();
-      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
-      const retentionDays = cfg.get<number>("snapshotRetentionDays", 180);
-      const maxPerWorkspace = cfg.get<number>("maxSnapshotsPerWorkspace", 20);
-      const { createWorkspaceSnapshot, listWorkspaceSnapshots, deleteWorkspaceSnapshot } =
-        await import("./core/snapshotsEngine.js");
-      const { planSnapshotRetention } = await import("./core/snapshotRetentionPlan.js");
-      for (const aw of wc.activeWorkspaces) {
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        try {
-          await createWorkspaceSnapshot(provider, folderRoot, aw.workspaceId, `auto-${stamp}`, gc.machineName);
-        } catch {
-          /* non-fatal — surfaces in next manual snapshot */
-          continue;
-        }
-        try {
-          const snapshots = await listWorkspaceSnapshots(provider, aw.workspaceId);
-          const plan = planSnapshotRetention({ snapshots, retentionDays, maxPerWorkspace });
-          for (const s of plan.delete) {
-            await deleteWorkspaceSnapshot(provider, aw.workspaceId, s.name);
-          }
-        } catch {
-          /* retention is best-effort — never fail the snapshot itself */
-        }
-      }
-    },
-  });
+  registerScheduledSnapshotsWiring({ context, globalConfig, registry });
 }
 
 export function deactivate(): void {
