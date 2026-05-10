@@ -41,9 +41,6 @@ import { restoreWorkspacesTreeFilters } from "./startup/restoreWorkspacesTreeFil
 import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceInstanceLockRefresher.js";
 import { createSyncOutputChannels } from "./startup/createSyncOutputChannels.js";
 import { unpausePersistedSync } from "./startup/unpausePersistedSync.js";
-import { SmartConflictPredictionService } from "./ui/smartConflictPredictionService.js";
-import { registerPresenceHeartbeat } from "./ui/presenceHeartbeat.js";
-import { registerCrossCloudBackup } from "./ui/crossCloudBackup.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
@@ -67,6 +64,7 @@ import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
 import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
+import { registerObservers } from "./startup/registerObservers.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -169,12 +167,6 @@ export function activate(context: vscode.ExtensionContext): void {
       storageDir: globalConfig.getStorageDir(),
     }),
   );
-
-  // Smart Conflict Prediction — status-bar warning when another machine has
-  // marked itself as editing the same active file.
-  const conflictPredictor = new SmartConflictPredictionService(globalConfig, () => tryAuthenticatedProvider(registry));
-  conflictPredictor.start();
-  context.subscriptions.push(conflictPredictor);
 
   context.subscriptions.push(fileDecorationRegistration);
   context.subscriptions.push(registerConfigChangeListeners({ context, fileDecorations }));
@@ -566,19 +558,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Live presence heartbeat — opt-in via `presenceHeartbeatMinutes`.
-  registerPresenceHeartbeat(context, {
-    globalConfig,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-  });
-
-  // Cross-cloud backup mirror — opt-in via `backup.secondaryProvider`.
-  registerCrossCloudBackup(context, {
-    globalConfig,
-    registry,
-    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-  });
-
+  registerObservers({ context, globalConfig, registry });
   registerScheduledSnapshotsWiring({ context, globalConfig, registry });
 }
 
