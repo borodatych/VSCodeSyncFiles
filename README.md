@@ -40,12 +40,12 @@
 
 ## Что нового в v0.6
 
-- **Analytics panel** — `VSCodeSync: Open Analytics Panel` открывает встроенный DuckDB для SQL-запросов по `activity.json` / `stats.json`.
-- **P2P sync (experimental)** — `VSCodeSync: Start P2P Session` создаёт зашифрованный канал между двумя машинами; manifest всё ещё через облако (authoritative), файлы летят напрямую через WebRTC. Включается через `vscodesync.p2p.experimental`.
-- **Passkey / WebAuthn** — `Enroll Passkey` оборачивает DEK в WebAuthn-производный KEK; `Unlock with Passkey` восстанавливает через биометрию или hardware key. Опциональный fallback — passphrase или recovery codes.
+- **Панель аналитики** — `VSCodeSync: Открыть панель аналитики` открывает встроенный DuckDB для SQL-запросов по `activity.json` / `stats.json`.
+- **P2P sync (experimental)** — `VSCodeSync: Начать P2P-сессию` создаёт зашифрованный канал между двумя машинами; manifest всё ещё через облако (authoritative), файлы летят напрямую через WebRTC. Включается через `vscodesync.p2p.experimental`.
+- **Passkey / WebAuthn** — `Зарегистрировать passkey` оборачивает DEK в WebAuthn-производный KEK; `Разлок ключа через passkey` восстанавливает через биометрию или hardware key. Опциональный fallback — passphrase или recovery codes.
 - **Локальный LLM для AI-merge** — endpoint настраивается через `vscodesync.aiMerge.endpointModel` (`vscode-lm` / `ollama` / `lm-studio` / custom URL). Ваши файлы могут не покидать машину.
-- **SARIF export** — `VSCodeSync: Export Conflicts to SARIF` выгружает heatmap конфликтов в формате, который поддерживают GitHub Advanced Security, SonarQube, любой SARIF-совместимый инструмент.
-- **Encrypted bundle export** — `VSCodeSync: Export Encrypted Bundle` — `.vscsbundle` файл для офлайн-переноса воркспейса (passphrase-protected, AES-256-GCM).
+- **SARIF export** — `VSCodeSync: Экспортировать конфликты в SARIF` выгружает heatmap конфликтов в формате, который поддерживают GitHub Advanced Security, SonarQube, любой SARIF-совместимый инструмент.
+- **Зашифрованный бандл** — `VSCodeSync: Экспортировать зашифрованный бандл` создаёт `.vscsbundle` файл для офлайн-переноса воркспейса (passphrase-protected, AES-256-GCM).
 - **BLAKE3 миграция** — опциональный апгрейд канонического хэша с SHA-256 на BLAKE3 (5–15× быстрее на больших файлах). Dual-hash transition без поломки совместимости.
 
 Полный список — см. [CHANGELOG.md](CHANGELOG.md).
@@ -109,15 +109,15 @@
 | `VSCodeSync: Экспорт / Импорт ключа шифрования` | Управление ключами шифрования |
 | `VSCodeSync: Мигрировать на другой провайдер` | Перенести все данные в другое облако |
 | `VSCodeSync: Проверка состояния` | Диагностика синхронизации |
-| `VSCodeSync: Open Analytics Panel` | DuckDB-панель для SQL-запросов по локальной активности |
-| `VSCodeSync: Start P2P Session` / `Disconnect` | Прямой канал между машинами (experimental) |
-| `VSCodeSync: Sign In via Device Code` | OAuth без браузера — для headless / SSH окружений |
-| `VSCodeSync: Enroll Passkey` / `Unlock with Passkey` / `Remove` | WebAuthn разлок ключа шифрования |
-| `VSCodeSync: Install Workspace Template` / `From Marketplace` | Установка пресетов воркспейса |
-| `VSCodeSync: Export Encrypted Bundle` | `.vscsbundle` для офлайн-переноса воркспейса |
-| `VSCodeSync: Export Conflicts to SARIF` | Выгрузка heatmap конфликтов в SARIF v2.1.0 |
-| `VSCodeSync: Check / Complete BLAKE3 Migration` | Миграция канонического хэша SHA-256 → BLAKE3 |
-| `VSCodeSync: Prefetch Active Workspace` | Прогрев `workspace.fs.prefetch` для быстрого открытия файлов |
+| `VSCodeSync: Открыть панель аналитики` | DuckDB-панель для SQL-запросов по локальной активности |
+| `VSCodeSync: Начать P2P-сессию` / `Завершить P2P-сессию` | Прямой канал между машинами (experimental) |
+| `VSCodeSync: Войти через OAuth Device Code` | OAuth без браузера — для headless / SSH окружений |
+| `VSCodeSync: Зарегистрировать passkey` / `Разлок ключа через passkey` / `Удалить passkey` | WebAuthn разлок ключа шифрования |
+| `VSCodeSync: Установить шаблон workspace` / `… из реестра` | Установка пресетов воркспейса |
+| `VSCodeSync: Экспортировать зашифрованный бандл` | `.vscsbundle` для офлайн-переноса воркспейса |
+| `VSCodeSync: Экспортировать конфликты в SARIF` | Выгрузка heatmap конфликтов в SARIF v2.1.0 |
+| `VSCodeSync: Проверить статус миграции на BLAKE3` / `Дозаполнить BLAKE3` | Миграция канонического хэша SHA-256 → BLAKE3 |
+| `VSCodeSync: Прогреть кэш активного воркспейса` | Прогрев `workspace.fs.prefetch` для быстрого открытия файлов |
 
 Полный список команд доступен в палитре команд (`Ctrl+Shift+P`) по запросу `VSCodeSync:`.
 
