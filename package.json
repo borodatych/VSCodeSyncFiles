@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
