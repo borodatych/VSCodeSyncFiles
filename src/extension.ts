@@ -4,12 +4,6 @@ import { initLog } from "./utils/logVscode.js";
 import type { ICloudProvider } from "./providers/cloudProviderTypes.js";
 import { appendActivityEvent } from "./core/activityLog.js";
 import { recordCompressionSaving, recordTransferBytes } from "./core/syncStatsStore.js";
-import { SyncEngine } from "./core/syncEngine.js";
-import {
-  decideResumeAction,
-  formatResumeSummaryMessage,
-  summariseResumePlans,
-} from "./core/sessionResumeSummary.js";
 import { readEncryptionKey } from "./core/encryptionKey.js";
 import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
@@ -17,7 +11,6 @@ import type { ProviderType } from "./core/types.js";
 import { SyncStatusBarController } from "./ui/statusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
-import { writeSyncPreviewOutput } from "./ui/syncPreviewUi.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
 import { registerProviderMigrationCommand } from "./ui/providerMigrationUi.js";
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
@@ -30,7 +23,6 @@ import { registerSyncScheduleTransition } from "./ui/syncScheduleTransition.js";
 import { registerSyncTriggerManager } from "./ui/syncTriggerManager.js";
 import { startDigestTimer, recordDigestPush, recordDigestPull, recordDigestConflict } from "./ui/notificationService.js";
 import { registerOfflineRecoveryMonitor } from "./ui/syncOfflineRecoveryMonitor.js";
-import { runQuietFullSyncAllFolders } from "./ui/quietFullSyncAllFolders.js";
 import { registerWatchModePoller } from "./ui/watchModePoller.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
 import { syncSessionPause } from "./core/syncSessionPause.js";
@@ -75,6 +67,7 @@ import { createProviderAuthFlows } from "./auth/providerAuthFlows.js";
 import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
+import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -531,72 +524,16 @@ export function activate(context: vscode.ExtensionContext): void {
       fileDecorations.refresh();
       void refreshActiveEditorSyncContext();
     },
-    runAfterSessionResume: async () => {
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      const providerOrNull = await tryAuthenticatedProvider(registry);
-      const action = decideResumeAction({ hasProvider: providerOrNull !== null, hasActiveRoot: false });
-      if (action === "abort_no_provider") {
-        await vscode.window.showWarningMessage(
-          "VSCodeSync: провайдер не авторизован — выполните Pull/Push вручную после снятия паузы.",
-        );
-        syncSessionPause.clearPendingDocs();
-        await statusBar.refresh();
-        return;
-      }
-      const provider = providerOrNull!;
-      const gcfg = await globalConfig.load();
-      const allPlans: Awaited<ReturnType<SyncEngine["previewSyncPlan"]>> = [];
-      let anyRoot = false;
-      for (const folder of folders) {
-        const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-        if (wc.activeWorkspaces.length === 0) {
-          continue;
-        }
-        anyRoot = true;
-        const engine = makeEngine(folder.uri.fsPath, provider, gcfg.machineId, gcfg.machineName);
-        try {
-          const part = await engine.previewSyncPlan();
-          allPlans.push(...part);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          await vscode.window.showErrorMessage(`VSCodeSync: preview после паузы — ${msg}`);
-          return;
-        }
-      }
-      if (!anyRoot) {
-        syncSessionPause.clearPendingDocs();
-        await statusBar.refresh();
-        return;
-      }
-      writeSyncPreviewOutput(syncPreviewChannel, allPlans);
-      syncPreviewChannel.show(true);
-      const totals = summariseResumePlans(allPlans);
-      const choice = await vscode.window.showWarningMessage(
-        formatResumeSummaryMessage(totals),
-        { modal: true },
-        "Синхронизировать",
-        "Позже",
-      );
-      if (choice === "Синхронизировать") {
-        await runQuietFullSyncAllFolders({
-          globalConfig,
-          tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-          makeEngine,
-          statusBar,
-          offlineQueue: offlineQueueStore,
-          bypassSchedule: true,
-          bypassAutoPause: true,
-          bypassRateLimit: true,
-          refreshUi: () => {
-            workspacesTree.refresh();
-            fileDecorations.refresh();
-            void refreshActiveEditorSyncContext();
-          },
-        });
-      }
-      syncSessionPause.clearPendingDocs();
-      await statusBar.refresh();
-    },
+    runAfterSessionResume: createRunAfterSessionResume({
+      globalConfig,
+      registry,
+      makeEngine,
+      syncPreviewChannel,
+      statusBar,
+      workspacesTree,
+      fileDecorations,
+      offlineQueueStore,
+    }),
   });
 
   registerQuickTransferFeatures(context, {
