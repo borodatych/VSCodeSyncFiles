@@ -2,8 +2,6 @@ import * as vscode from "vscode";
 import { GlobalConfigManager } from "./core/globalConfigManager.js";
 import { initLog } from "./utils/logVscode.js";
 import type { ICloudProvider } from "./providers/cloudProviderTypes.js";
-import { appendActivityEvent } from "./core/activityLog.js";
-import { recordCompressionSaving, recordTransferBytes } from "./core/syncStatsStore.js";
 import { readEncryptionKey } from "./core/encryptionKey.js";
 import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
@@ -21,7 +19,7 @@ import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
 import { registerAutoPauseMonitor } from "./ui/syncAutoPauseMonitor.js";
 import { registerSyncScheduleTransition } from "./ui/syncScheduleTransition.js";
 import { registerSyncTriggerManager } from "./ui/syncTriggerManager.js";
-import { startDigestTimer, recordDigestPush, recordDigestPull, recordDigestConflict } from "./ui/notificationService.js";
+import { startDigestTimer } from "./ui/notificationService.js";
 import { registerOfflineRecoveryMonitor } from "./ui/syncOfflineRecoveryMonitor.js";
 import { registerWatchModePoller } from "./ui/watchModePoller.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
@@ -68,6 +66,7 @@ import { createEngineFactory } from "./startup/_engineFactory.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
+import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -142,34 +141,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const engineFactory = createEngineFactory();
   const { makeEngine, notifiedConflictKeys } = engineFactory;
 
-  const logSyncActivity: NonNullable<
-    Parameters<typeof engineFactory.setRefs>[0]["logSyncActivity"]
-  > = (ev) => {
-    const retention = vscode.workspace.getConfiguration(CFG_SECTION).get<number>("activityRetentionDays", 90);
-    void appendActivityEvent(globalConfig.getStorageDir(), ev, retention);
-    timelineFireChangeRef?.();
-    activityAlertMonitor.notify(ev);
-    if (ev.kind === "push") recordDigestPush(1, ev.machineName);
-    else if (ev.kind === "pull") recordDigestPull(1, ev.machineName);
-    else if (ev.kind === "conflict") recordDigestConflict(ev.relPath);
-    // Feed into the sync-replay recorder when an active session is running.
-    void (async () => {
-      try {
-        const { feedActivity } = await import("./ui/syncReplayRecorderState.js");
-        feedActivity(ev);
-      } catch { /* recorder is best-effort; silent */ }
-    })();
-  };
-  const logSyncStatsTransfer: NonNullable<
-    Parameters<typeof engineFactory.setRefs>[0]["logSyncStatsTransfer"]
-  > = (ev) => {
-    void recordTransferBytes(globalConfig.getStorageDir(), ev);
-  };
-  const logSyncCompression: NonNullable<
-    Parameters<typeof engineFactory.setRefs>[0]["logSyncCompression"]
-  > = (saved) => {
-    void recordCompressionSaving(globalConfig.getStorageDir(), saved);
-  };
+  const { logSyncActivity, logSyncStatsTransfer, logSyncCompression } = createEngineLogRefs({
+    globalConfig,
+    activityAlertMonitor,
+    fireTimelineChange: () => { timelineFireChangeRef?.(); },
+  });
 
   unpausePersistedSync(globalConfig, syncSessionPause);
 
