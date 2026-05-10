@@ -22,6 +22,7 @@ export default tseslint.config(
       "scripts/**/*.mjs",
       "tests/integration/runTest.cjs",
       "vitest.config.ts",
+      "media/**",
     ],
   },
   {

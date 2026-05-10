@@ -145,5 +145,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.passkeyFallback",
   "vscodesync.exportConflictsToSarif",
   "vscodesync.showWorkspaceReadme",
-  "vscodesync.exportEncryptedBundle"
+  "vscodesync.exportEncryptedBundle",
+  "vscodesync.prefetchActiveWorkspace",
+  "vscodesync.openAnalyticsPanel"
 ];

@@ -1290,6 +1290,10 @@
       {
         "command": "vscodesync.prefetchActiveWorkspace",
         "title": "VSCodeSync: Prefetch Active Workspace"
+      },
+      {
+        "command": "vscodesync.openAnalyticsPanel",
+        "title": "VSCodeSync: Open Analytics Panel"
       }
     ],
     "menus": {
