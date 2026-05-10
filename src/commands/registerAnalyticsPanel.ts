@@ -1,15 +1,17 @@
 /**
  * v2.20.2 — Analytics panel command (`vscodesync.openAnalyticsPanel`).
  *
- * Opens a webview that bootstraps the DuckDB-WASM bridge
- * (media/duckdb-bridge.js). The full DuckDB runtime is not yet bundled
- * into the webview asset bundle (see `media/duckdb-bridge.js` for the
- * skeleton state); this command exercises the contract end-to-end:
- * bootstrap → `ready` → user feedback.
+ * Opens a webview that bootstraps the DuckDB-WASM bridge bundled at
+ * `dist/media/duckdb-bridge.js` (built from `media/duckdb-bridge.src.js`
+ * by `esbuild.mjs`). The bridge inlines `@duckdb/duckdb-wasm` +
+ * `apache-arrow`, instantiates `AsyncDuckDB(logger, worker)`, and
+ * fulfils the `DuckDbHostInbound` / `DuckDbHostOutbound` contract from
+ * `src/core/duckdbWorkerHost.ts`.
  *
- * Once the bridge gains a real DuckDB-WASM runtime, this command becomes
- * the entry point for "run a SQL query against activity.json /
- * stats.json" without further wiring changes.
+ * Wire: extension host ↔ webview (bridge) ↔ Worker ↔ DuckDB-WASM. The
+ * `createWebviewWorkerAdapter` below makes the webview look like a
+ * `Worker` to the existing `createDuckDbHost(...)` code, so any future
+ * caller (analytics surface) gets a typed `DuckDbHost` for free.
  */
 import * as vscode from "vscode";
 import { buildDuckDbBootstrapHtml, type DuckDbBundleVariant } from "../core/duckdbWebviewBootstrap.js";
@@ -48,6 +50,7 @@ export function registerAnalyticsPanel(deps: RegisterAnalyticsPanelDeps): vscode
         retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.joinPath(context.extensionUri, "media"),
+          vscode.Uri.joinPath(context.extensionUri, "dist", "media"),
           vscode.Uri.joinPath(context.extensionUri, "node_modules", "@duckdb", "duckdb-wasm", "dist"),
         ],
       },
@@ -64,7 +67,7 @@ export function registerAnalyticsPanel(deps: RegisterAnalyticsPanelDeps): vscode
     activeHost = host;
 
     const bridgeWebviewUri = panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(context.extensionUri, "media", "duckdb-bridge.js"),
+      vscode.Uri.joinPath(context.extensionUri, "dist", "media", "duckdb-bridge.js"),
     ).toString();
     const bundles = resolveBundles(panel.webview, context.extensionUri);
     const nonce = getWebviewNonce();
@@ -79,9 +82,8 @@ export function registerAnalyticsPanel(deps: RegisterAnalyticsPanelDeps): vscode
     try {
       await host.init(bridgeWebviewUri);
       await vscode.window.showInformationMessage(
-        "VSCodeSync · Analytics: webview bootstrapped. " +
-          "DuckDB-WASM runtime is not bundled yet — exec_sql will return a sentinel error " +
-          "until the bridge is upgraded with the runtime bundle.",
+        "VSCodeSync · Analytics: DuckDB-WASM ready. Use `host.execSql(...)` " +
+          "via the analytics surface (work in progress) to query activity / stats.",
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

@@ -53,6 +53,17 @@ const builds = [
       __CLI_VERSION__: JSON.stringify(cliPkg.version ?? "0.0.1"),
     },
   }),
+  // v2.20.2 — DuckDB-WASM analytics panel webview bridge. Inlines
+  // `@duckdb/duckdb-wasm` + `apache-arrow` so the webview loads a single
+  // self-contained ESM file (no bare specifiers to resolve at runtime).
+  esbuild.context({
+    ...base,
+    entryPoints: ["media/duckdb-bridge.src.js"],
+    outfile: "dist/media/duckdb-bridge.js",
+    platform: "browser",
+    format: "esm",
+    target: ["es2020"],
+  }),
 ];
 
 async function main() {
