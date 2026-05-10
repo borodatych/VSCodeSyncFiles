@@ -10,7 +10,6 @@ import { SyncStatusBarController } from "./ui/statusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
-import { registerProviderMigrationCommand } from "./ui/providerMigrationUi.js";
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
 import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
@@ -57,7 +56,6 @@ import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
 import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
 import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCreate.js";
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
-import { createProviderAuthFlows } from "./auth/providerAuthFlows.js";
 import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
@@ -65,6 +63,7 @@ import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResu
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
 import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
 import { registerObservers } from "./startup/registerObservers.js";
+import { registerProviderAuthBundle } from "./startup/registerProviderAuthBundle.js";
 import { registerCodeLensProviders } from "./startup/registerCodeLensProviders.js";
 import { registerWebhookLifecycles } from "./startup/registerWebhookLifecycles.js";
 import { registerScheduledHelpers } from "./startup/registerScheduledHelpers.js";
@@ -361,32 +360,15 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
 
-  const providerAuthFlows = createProviderAuthFlows({
+  const providerAuthFlows = registerProviderAuthBundle({
     context,
     globalConfig,
+    registry,
     workspacesTree,
     statusBar,
     fileDecorations,
-    refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
     refreshCloudWebhooks,
-  });
-
-  registerProviderMigrationCommand(context, {
-    registry,
-    globalConfig,
-    workspacesTree,
     makeEngine,
-    signInOneDrive: () => providerAuthFlows.oneDrive(true),
-    signInGoogleDrive: () => providerAuthFlows.googleDrive(true),
-    signInDropbox: () => providerAuthFlows.dropbox(true),
-    signInYandexDisk: () => providerAuthFlows.yandexDisk(true),
-    refreshUi: async () => {
-      await statusBar.refresh();
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      void refreshActiveEditorSyncContext();
-      refreshCloudWebhooks();
-    },
   });
 
   context.subscriptions.push(
