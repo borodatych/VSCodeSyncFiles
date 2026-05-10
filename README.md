@@ -24,12 +24,31 @@
 - **Своё облако** — OneDrive · Google Drive · Dropbox · Яндекс Диск
 - **Выборочная синхронизация** — добавляйте только нужные файлы
 - **Именованные воркспейсы** — группируйте файлы, делитесь между машинами
-- **Разрешение конфликтов** — оставить своё / взять чужое / трёхстороннее сравнение + AI-слияние (Copilot)
+- **Разрешение конфликтов** — оставить своё / взять чужое / трёхстороннее сравнение + AI-слияние (Copilot или локальный LLM: Ollama / LM Studio)
 - **Снимки и история** — создавайте именованные снимки, восстанавливайте любую версию файла
 - **Сквозное шифрование** — AES-256-GCM на уровне воркспейса, ключи хранятся у вас
 - **Watch-режим** — автосинхронизация при изменении файла с адаптивными интервалами
 - **Работа офлайн** — изменения ставятся в очередь и отправляются при восстановлении соединения
 - **Быстрая передача** — отправьте файл на другую машину без воркспейса, одним действием
+- **P2P-сессия** *(experimental)* — прямая передача файлов между машинами через WebRTC, минуя облако (когда обе онлайн)
+- **Passkey / WebAuthn unlock** — разлок ключа шифрования через Windows Hello / Touch ID / hardware key
+- **DuckDB analytics** — SQL-запросы по локальной активности и статистике через встроенный DuckDB-WASM
+- **Templates marketplace** — установка готовых пресетов воркспейса из публичного реестра шаблонов
+- **OAuth Device Code** — sign-in без браузера (для headless / SSH / restricted сред)
+
+---
+
+## Что нового в v0.6
+
+- **Analytics panel** — `VSCodeSync: Open Analytics Panel` открывает встроенный DuckDB для SQL-запросов по `activity.json` / `stats.json`.
+- **P2P sync (experimental)** — `VSCodeSync: Start P2P Session` создаёт зашифрованный канал между двумя машинами; manifest всё ещё через облако (authoritative), файлы летят напрямую через WebRTC. Включается через `vscodesync.p2p.experimental`.
+- **Passkey / WebAuthn** — `Enroll Passkey` оборачивает DEK в WebAuthn-производный KEK; `Unlock with Passkey` восстанавливает через биометрию или hardware key. Опциональный fallback — passphrase или recovery codes.
+- **Локальный LLM для AI-merge** — endpoint настраивается через `vscodesync.aiMerge.endpointModel` (`vscode-lm` / `ollama` / `lm-studio` / custom URL). Ваши файлы могут не покидать машину.
+- **SARIF export** — `VSCodeSync: Export Conflicts to SARIF` выгружает heatmap конфликтов в формате, который поддерживают GitHub Advanced Security, SonarQube, любой SARIF-совместимый инструмент.
+- **Encrypted bundle export** — `VSCodeSync: Export Encrypted Bundle` — `.vscsbundle` файл для офлайн-переноса воркспейса (passphrase-protected, AES-256-GCM).
+- **BLAKE3 миграция** — опциональный апгрейд канонического хэша с SHA-256 на BLAKE3 (5–15× быстрее на больших файлах). Dual-hash transition без поломки совместимости.
+
+Полный список — см. [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -90,6 +109,15 @@
 | `VSCodeSync: Экспорт / Импорт ключа шифрования` | Управление ключами шифрования |
 | `VSCodeSync: Мигрировать на другой провайдер` | Перенести все данные в другое облако |
 | `VSCodeSync: Проверка состояния` | Диагностика синхронизации |
+| `VSCodeSync: Open Analytics Panel` | DuckDB-панель для SQL-запросов по локальной активности |
+| `VSCodeSync: Start P2P Session` / `Disconnect` | Прямой канал между машинами (experimental) |
+| `VSCodeSync: Sign In via Device Code` | OAuth без браузера — для headless / SSH окружений |
+| `VSCodeSync: Enroll Passkey` / `Unlock with Passkey` / `Remove` | WebAuthn разлок ключа шифрования |
+| `VSCodeSync: Install Workspace Template` / `From Marketplace` | Установка пресетов воркспейса |
+| `VSCodeSync: Export Encrypted Bundle` | `.vscsbundle` для офлайн-переноса воркспейса |
+| `VSCodeSync: Export Conflicts to SARIF` | Выгрузка heatmap конфликтов в SARIF v2.1.0 |
+| `VSCodeSync: Check / Complete BLAKE3 Migration` | Миграция канонического хэша SHA-256 → BLAKE3 |
+| `VSCodeSync: Prefetch Active Workspace` | Прогрев `workspace.fs.prefetch` для быстрого открытия файлов |
 
 Полный список команд доступен в палитре команд (`Ctrl+Shift+P`) по запросу `VSCodeSync:`.
 
@@ -116,6 +144,17 @@
 | `vscodesync.snapshotRetentionDays` | `30` | Автоудаление старых снимков |
 | `vscodesync.quickTransferTtlDays` | `7` | Срок хранения файлов быстрой передачи в облаке |
 | `vscodesync.gitBranchAutoSync` | `false` | Переключать активный воркспейс при смене Git-ветки |
+| `vscodesync.p2p.experimental` | `false` | Включить P2P-сессии (WebRTC прямой канал) |
+| `vscodesync.aiMerge.endpointModel` | `vscode-lm` | Endpoint AI-merge: `vscode-lm` · `ollama` · `lm-studio` · custom URL |
+| `vscodesync.ai.sessionSummary.enabled` | `false` | Разрешить отправку метаданных для AI-сводки сессии |
+| `vscodesync.ai.suggestWorkspaceTags.enabled` | `false` | Разрешить AI-подсказку тегов воркспейса |
+| `vscodesync.ai.pathMapper.enabled` | `false` | Разрешить AI-сопоставление путей при миграции |
+| `vscodesync.canonicalHashAlgo` | `sha256` | Канонический хэш: `sha256` · `blake3` · `dual` |
+| `vscodesync.passkey.peerRegistrySync` | `off` | Синхронизация passkey между машинами: `off` · `p2p` · `cloud_mirror` |
+| `vscodesync.smartConflictPrediction.broadcastCurrentEditing` | `full` | Live-presence в `_machines.json`: `full` · `anonymised` · `off` |
+| `vscodesync.templates.registryUrl` | — | URL реестра шаблонов воркспейса (по умолчанию — `borodatych/vscodesync-templates`) |
+| `vscodesync.backup.secondaryProvider` | — | Зеркалировать manifest + snapshots в дополнительный провайдер |
+| `vscodesync.backup.intervalDays` | `7` | Интервал зеркалирования cross-cloud backup |
 
 ---
 
@@ -147,6 +186,9 @@ VSCodeSync регистрирует тип задачи для `tasks.json`:
 - Ваши файлы хранятся **в вашем собственном облачном аккаунте** — у VSCodeSync нет серверной части.
 - OAuth-токены хранятся в зашифрованном **Secret Storage** VS Code.
 - При включённом `vscodesync.encryption` содержимое файлов шифруется на клиенте до загрузки. Ключ шифрования никогда не передаётся.
+- При включённом WebAuthn ключ шифрования дополнительно оборачивается через PRF-производный KEK от passkey — даже компрометация Secret Storage не даёт доступа без биометрии или hardware key.
+- AI-команды (`sessionSummary` / `suggestWorkspaceTags` / `pathMapper`) **отключены по умолчанию** и требуют opt-in для каждой. Передаются только пути файлов, не содержимое.
+- При выборе локального LLM (`ollama` / `lm-studio`) данные AI-merge **не покидают машину**.
 - Телеметрия **отключена по умолчанию** и управляется командой `VSCodeSync: Переключить телеметрию`.
 
 ---
