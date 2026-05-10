@@ -130,7 +130,7 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 
 ## v2.6. Декомпозиция `extension.ts` — per-area split
 
-**Текущее состояние (2026-05-10, run 32):** **612 LoC, 0 inline-команд осталось.** Стартовый счёт был 5085 LoC / 87 команд; за серию commits вынесено **все 87 команд** в 13 per-area `register*.ts` модулей с единым `Deps`-контрактом. Helpers `pickRoot` / `pickWorkspaceId` / `pickWorkspaceIdMatching` / `pickOtherWorkspaceId` / `validateWorkspaceTransition` подняты в `src/commands/_shared.ts`. `RunWithEngineFn` typed alias в `registerWorkspaceLifecycle.ts` переиспользуется всеми bundle'ами. Tests 1757/1757, lint=0 на каждом этапе. Run 32 closures: `createRunAfterSessionResume.ts` (75 LoC из inline closure) + `registerScheduledSnapshotsWiring.ts` (33 LoC из inline closure). Что осталось в extension.ts (612 LoC) — startup wiring (config / registry / watchers / event handlers), helper functions (`makeEngine`, `runWithEngine`, `ensureProvider`, OAuth closures), `activate()` / `deactivate()` orchestration.
+**Текущее состояние (2026-05-10, run 33):** **494 LoC — soft target 500 достигнут.** Стартовый счёт был 5085 LoC / 87 команд; за серию commits вынесено **все 87 команд** в 13 per-area `register*.ts` модулей с единым `Deps`-контрактом. Helpers `pickRoot` / `pickWorkspaceId` / `pickWorkspaceIdMatching` / `pickOtherWorkspaceId` / `validateWorkspaceTransition` подняты в `src/commands/_shared.ts`. `RunWithEngineFn` typed alias в `registerWorkspaceLifecycle.ts` переиспользуется всеми bundle'ами. Tests 1757/1757, lint=0 на каждом этапе. Run 33 closures: `createEngineLogRefs.ts` (activity/stats/compression sinks ~30 LoC) + `registerObservers.ts` (conflict-pred / presence / cross-cloud-backup ~25 LoC) + `registerProviderAuthBundle.ts` (OAuth flows + migration ~30 LoC) + `registerSyncMonitors.ts` (5 monitors: trigger / watch / schedule-transition / auto-pause / offline-recovery ~70 LoC). Что осталось в extension.ts (494 LoC) — startup wiring (config / registry / watchers / event handlers), helper functions (`makeEngine`, `runWithEngine`, `ensureProvider`), `activate()` / `deactivate()` orchestration.
 
 ### v2.6.1. Workspace lifecycle
 
@@ -160,21 +160,18 @@ Switch SHA-256 → BLAKE3 в `computeHash` сломает совместимос
 ### v2.6.7. Validation
 
 - [x] **CI regression check:** `tests/unit/packageJsonCommandsConsistency.test.ts` — assert каждый `contributes.commands[].command` присутствует в `WEB_STUB_COMMAND_IDS` + no-duplicates check. Если refactor забывает зарегистрировать команду в одном из мест — тест падает.
-- [~] **`extension.ts < 500 LoC` assert** — текущий **612 LoC** (стартовый 5085 = -88%). Прогресс по подъёму closures + helpers в shared modules:
+- [x] **`extension.ts < 500 LoC` assert** — текущий **494 LoC** (стартовый 5085 = -90%). Soft target 500 достигнут в run 33 после 4 extraction passes:
   - `_providerFactory.ts` — `ensureProvider` + `tryAuthenticatedProvider` (49 LoC)
   - `_fileTargetHelpers.ts` — `resolveFileTarget` + `resolveFileTargetLoose` (~60 LoC)
-  - `_engineFlows.ts` — `runShowFileHistory` + `runConflict3WayDiff` + `runAiMergeForConflict` + `openTrackedFileInCloudStorage` + internal `historyVersionLabel` (~310 LoC)
-  - `auth/providerAuthFlows.ts` — `createProviderAuthFlows(deps)` factory packs 4 OAuth closures + 4 OutputChannels (~205 LoC)
-  - `_engineFactory.ts` (`createEngineFactory()`) + `_runWithEngine.ts` (`createRunWithEngine(deps)`) — engine factory + run wrapper (~280 LoC moved out).
-  - `createRunAfterSessionResume.ts` — post-pause preview/resume orchestrator (~75 LoC).
-  - `registerScheduledSnapshotsWiring.ts` — daily/weekly snapshot wiring (~33 LoC).
+  - `_engineFlows.ts` — `runShowFileHistory` + `runConflict3WayDiff` + `runAiMergeForConflict` + `openTrackedFileInCloudStorage` (~310 LoC)
+  - `auth/providerAuthFlows.ts` — `createProviderAuthFlows(deps)` factory (~205 LoC)
+  - `_engineFactory.ts` (`createEngineFactory()`) + `_runWithEngine.ts` (`createRunWithEngine(deps)`) — engine factory + run wrapper (~280 LoC)
+  - `createRunAfterSessionResume.ts` — post-pause preview/resume orchestrator (~75 LoC)
+  - `registerScheduledSnapshotsWiring.ts` — daily/weekly snapshot wiring (~33 LoC)
+  - **Run 33:** `createEngineLogRefs.ts` (3 setRefs sinks ~30 LoC) + `registerObservers.ts` (conflict-pred / presence / backup ~25 LoC) + `registerProviderAuthBundle.ts` (OAuth + migration ~30 LoC) + `registerSyncMonitors.ts` (5 monitors ~70 LoC).
   - Plus `runAddToNewWorkspace` (135 LoC) перенесён в `registerFileOperations.ts` как private impl.
-  Bundles импортируют helpers напрямую — отпали 6 callback-deps wrappers в extension.ts.
 
-  Оставшийся 612 LoC: `updateWorkspacesTreeBadge` + 3 setRefs callbacks (logSyncActivity / logSyncStatsTransfer / logSyncCompression) + 25 deps-сборок (`registerProviders` / `registerWebhookLifecycles` / `registerOnboardingFlow` / `registerScheduledHelpers` / etc). Soft target 500 требует ещё ~110 LoC:
-  1. setRefs activity/stats/compression closures → `createEngineLogRefs.ts` (~30 LoC).
-  2. Conflict-predictor + cross-cloud-backup + presence-heartbeat wiring → `registerObservers.ts` (~25 LoC).
-  3. Provider auth flows + migration command + sign-in deps → ~30 LoC inline reduction через factory.
+  Оставшийся 494 LoC: `updateWorkspacesTreeBadge` + ~25 deps-сборок (`registerProviders` / `registerWebhookLifecycles` / `registerOnboardingFlow` / `registerScheduledHelpers` / file lifecycle / panels / etc) + helper closures (`getEncKey`, `gitBranchActivationDeps`, `repushDeletedWorkspace`, `onboardingCloudDeps`). LoC ceiling test now pinned at 495 — further reductions are bonus.
 
 ---
 
@@ -343,7 +340,7 @@ ACL parser / status registry / config watcher) и backends удалены.
 ### v2.20.2. Performance / scale (4–6)
 
 - [~] **WebRTC SCTP multiplexing** — pure planner `src/core/p2pSctpMultiplex.ts` (6 тестов). Runtime adapter `src/core/sctpRuntimeHook.ts:SctpRuntimeAdapter` typed surface + `makeSkeletonSctpRuntime` + `SctpRuntimeNotImplementedError`; 2 теста. **Multi-channel runtime** `src/core/sctpMultiChannelRuntime.ts:createMultiChannelSctpRuntime` поверх RTC stub-shaped `RTCPeerConnectionLike` / `RTCDataChannelLike`: opens N stable channels, routes via `planSctpLane`, encode/decode wire format `[v=1:u8][kind:u8][payload...]`; 12 unit-тестов (lane routing / chunk-ordering invariant / not-open guard / fanout / wire round-trip). **Permanently blocked в текущей среде:** real `@roamhq/wrtc` two-machine smoke требует self-hosted CI runner с native binding'ом + двух peer-машин. Pure-runtime + 12 тестов уже фиксируют контракт; smoke автоматически unblock-нется как только runner с label `p2p-smoke` появится в CI.
-- [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle. Mount planner `src/core/duckdbVirtualTables.ts:planVirtualTableMount` (4 теста). **Worker host** `src/core/duckdbWorkerHost.ts:createDuckDbHost` — typed message-passing wrapper над `DuckDbWorkerLike` (Worker shape), discriminated inbound/outbound (init / register_file / exec_sql ↔ ready / rows / error); 6 тестов на init resolve+reject, in-flight guard, registerFile send. **Run 32 — webview bootstrap planner:** `src/core/duckdbWebviewBootstrap.ts:buildDuckDbBootstrapHtml` + `selectDuckDbVariant` (mvp/eh/coi с capability fallback) + `DuckDbBootstrapNoBundlesError` sentinel; 8 unit-тестов. Wire shape: caller передаёт URIs всех variants (`Webview.asWebviewUri(...)`) + cspSource + nonce + bridge module URI → возвращает full webview HTML с CSP nonce-locked + variant-specific worker/wasm. **Что блокирует full-impl:** webview bridge JS (`media/duckdb-bridge.js`) который инстанциирует Worker и реализует postMessage round-trip с DuckDbHost'ом — это часть analytics-панели UI, которая ещё не shipped.
+- [~] **DuckDB-WASM для analytics** — `@duckdb/duckdb-wasm@1.33` installed; `src/ui/duckdbAnalyticsHost.ts:loadDuckDb` lazy-loads bundle. Mount planner `src/core/duckdbVirtualTables.ts:planVirtualTableMount` (4 теста). **Worker host** `src/core/duckdbWorkerHost.ts:createDuckDbHost` — typed message-passing wrapper над `DuckDbWorkerLike` (Worker shape), discriminated inbound/outbound (init / register_file / exec_sql ↔ ready / rows / error); 6 тестов. Webview bootstrap planner `src/core/duckdbWebviewBootstrap.ts:buildDuckDbBootstrapHtml` + `selectDuckDbVariant` (mvp/eh/coi capability fallback) + `DuckDbBootstrapNoBundlesError` sentinel; 8 unit-тестов. **Run 33 — analytics panel command + bridge wired:** `vscodesync.openAnalyticsPanel` зарегистрирован в `src/commands/registerAnalyticsPanel.ts`; webview bridge `media/duckdb-bridge.js` ES-модуль с `bootstrapDuckDb(config)` экспортом + `acquireVsCodeApi()` postMessage round-trip. `createWebviewWorkerAdapter(panel.webview, dispose)` в `registerAnalyticsPanel.ts` оборачивает webview под `DuckDbWorkerLike` для существующего `createDuckDbHost(...)`. End-to-end контракт работает: бутстрап → `ready` frame echoes the variant. **Что остаётся skeleton:** `register_file` / `exec_sql` в bridge возвращают sentinel error — DuckDB-WASM рантайм пока не bundled в webview asset bundle; для полного impl нужно подключить `@duckdb/duckdb-wasm/dist/duckdb-browser.mjs` в bridge через ESM import (требует CSP `script-src` corrections + asset roots — `localResourceRoots` уже включает `node_modules/@duckdb/duckdb-wasm/dist`).
 - [x] **Sync prefetch hints** через `workspace.fs.prefetch(uri)` — pure planner `src/core/workspaceFsPrefetchHints.ts` (7 тестов). Defensive adapter `src/ui/workspaceFsPrefetchAdapter.ts:tryPrefetchUris` (4 теста). Команда `vscodesync.prefetchActiveWorkspace` зарегистрирована в `src/commands/registerPrefetchCommand.ts`: load tracked files → `planPrefetchHints` → `tryPrefetchUris` через `vscode.workspace.fs` cast; user-toast на каждый rejection branch (api_not_available / no_uris / error).
 
 ### v2.20.3. Security / privacy (7–9)
@@ -369,12 +366,15 @@ ACL parser / status registry / config watcher) и backends удалены.
 
 ## Состояние
 
-Когда **все** чекбоксы выше закроются — v2 будет fully shipped. Текущее (2026-05-10, run 32):
-все актionable пункты closed. Открытые `[~]` — все environment- или human-blocked:
-- v2.2.2 native FIDO2 binding — postinstall на Windows без libfido2; webview path в v2.2.1 покрывает desktop через Electron Chromium.
-- v2.6.7 extension.ts < 500 LoC — текущий 612 LoC; ~110 LoC до soft target требуют ещё 3 extraction passes.
-- v2.20.2 SCTP smoke — нужен self-hosted CI runner с `@roamhq/wrtc` binding + 2 машины.
-- v2.20.2 DuckDB-WASM — pure bootstrap planner добавлен; live UI требует analytics webview surface (отдельный roadmap item).
+Когда **все** чекбоксы выше закроются — v2 будет fully shipped. Текущее (2026-05-10, run 33):
+- **v2.6.7 extension.ts decomposition — fully closed.** 5085 → 494 LoC (-90%), soft target 500 reached. CI guard at LOC_CEILING=495.
+- **v2.10.1 webhook reconcileBody adapter — closed in run 32.** Both OneDrive and GoogleDrive lifecycles drive through `planWebhookLifecycleReconcile`.
+- **v2.20.2 DuckDB-WASM — analytics panel command + bridge wired in run 33.** End-to-end contract works; only the WASM runtime bundle is still missing from the webview side (skeleton state in `media/duckdb-bridge.js`).
+
+Открытые `[~]` — все environment- / human-blocked:
+- v2.2.2 native FIDO2 binding — postinstall на Windows без libfido2; webview path в v2.2.1 покрывает desktop через Electron Chromium. **Permanent.**
+- v2.20.2 SCTP smoke — нужен self-hosted CI runner с `@roamhq/wrtc` binding + 2 машины. **Auto-unblock** при появлении runner с label `p2p-smoke`.
+- v2.20.2 DuckDB live SQL — нужен `@duckdb/duckdb-wasm` runtime bundle в bridge; всё остальное wired. **Actionable** (отдельный roadmap item).
 - v2.20.4 SSE — auto-unblock когда провайдер объявит `available: true`.
 - v2.20.4 PAR — auto-unblock когда провайдер опубликует PAR endpoint.
-- v2.20.5 onboarding videos — нужен человек для screen capture.
+- v2.20.5 onboarding videos — нужен человек для screen capture. **Human-blocked.**
