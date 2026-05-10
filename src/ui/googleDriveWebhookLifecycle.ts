@@ -21,6 +21,7 @@ import {
 import { reconcileFromFlags } from "./webhookExpirationMath.js";
 import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
 import { gdriveExpirationToIso } from "../core/gdrivePushChannelResponseDecoder.js";
+import { planWebhookLifecycleReconcile } from "../core/webhookLifecycleReconcileDecision.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "gdrive-push-channel.json";
@@ -116,159 +117,189 @@ export function registerGoogleDriveWebhookLifecycle(
     const localPort = cfg.get<number>("webhooks.localPort", 0);
 
     const gc = await globalConfig.load();
+    const activeProviderMatches = gc.activeProvider === "gdrive";
 
-    if (gc.activeProvider !== "gdrive") {
-      const prev = await readState(globalConfig);
-      if (prev) {
-        const bundle = await readGdriveTokens(secrets);
-        if (bundle?.accessToken) {
-          try {
-            await gdriveStopPushChannel(bundle.accessToken, prev.channelId, prev.resourceId);
-            log(out, `Stopped Google Drive channel ${prev.channelId} (active provider is not Google Drive).`);
-          } catch (e) {
-            log(out, `Google Drive channel cleanup: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        }
-        await clearState(globalConfig);
-      }
-      return;
-    }
+    const bundle = activeProviderMatches ? await readGdriveTokens(secrets) : null;
+    const accessToken = bundle?.accessToken ?? null;
+    let workingState = await readState(globalConfig);
 
-    if (!enabled || !notificationUrl) {
-      const prev = await readState(globalConfig);
-      if (prev) {
-        const bundle = await readGdriveTokens(secrets);
-        if (bundle?.accessToken) {
-          try {
-            await gdriveStopPushChannel(bundle.accessToken, prev.channelId, prev.resourceId);
-            log(out, `Stopped Google Drive channel ${prev.channelId} (webhooks disabled or URL cleared).`);
-          } catch (e) {
-            log(out, `Google Drive channel cleanup: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        }
-        await clearState(globalConfig);
-      }
-      return;
-    }
-
-    const bundle = await readGdriveTokens(secrets);
-    if (!bundle?.accessToken) {
-      log(out, "Google Drive webhooks: not signed in to Google Drive.");
-      return;
-    }
-    const token = bundle.accessToken;
-
-    let state = await readState(globalConfig);
-    if (state) {
+    // Pre-pass: GD's expiration validation can't be expressed by the planner
+    // (it has no notion of channel TTL), so handle stale-expiration here.
+    // The planner's URL-drift branch then sees `persistedState: null` and
+    // naturally routes to create_subscription.
+    if (workingState && activeProviderMatches && enabled && notificationUrl) {
       const decision = reconcileFromFlags({
         hasExisting: true,
-        urlOk: state.notificationUrl === notificationUrl,
-        withinValidSlack: isNearOrPastGdriveExpiration(state.expiration, 600_000),
-        withinRenewSlack: isNearOrPastGdriveExpiration(state.expiration, 3600_000),
+        urlOk: workingState.notificationUrl === notificationUrl,
+        withinValidSlack: isNearOrPastGdriveExpiration(workingState.expiration, 600_000),
+        withinRenewSlack: isNearOrPastGdriveExpiration(workingState.expiration, 3600_000),
       });
-      if (decision.action === "create") {
-        try {
-          await gdriveStopPushChannel(token, state.channelId, state.resourceId);
-        } catch {
-          /* channel may already be gone */
+      if (decision.action === "create" && workingState.notificationUrl === notificationUrl) {
+        // URL is correct but expiration is stale → tear down before plan.
+        if (accessToken) {
+          try {
+            await gdriveStopPushChannel(accessToken, workingState.channelId, workingState.resourceId);
+            log(out, `Stopped Google Drive channel ${workingState.channelId} (expired).`);
+          } catch (e) {
+            log(out, `Google Drive channel cleanup: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
-        state = null;
         await clearState(globalConfig);
+        workingState = null;
       }
     }
 
-    const channelToken = state?.channelToken ?? randomBytes(24).toString("hex");
+    const plan = planWebhookLifecycleReconcile({
+      webhooksEnabled: enabled,
+      resolvedNotificationUrl: notificationUrl,
+      localPort,
+      activeProviderMatches,
+      hasToken: accessToken !== null,
+      persistedState: workingState
+        ? {
+            subscriptionId: workingState.channelId,
+            expirationDateTime: gdriveExpirationToIso(workingState.expiration) ?? "",
+            notificationUrl: workingState.notificationUrl,
+            clientState: workingState.channelToken,
+          }
+        : null,
+    });
 
-    if (localPort > 0) {
-      try {
-        serverHandle = await startGraphWebhookLocalServer({
-          port: localPort,
-          graphClientState: "__gdrive_unused__",
-          googleChannelToken: channelToken,
-          onDriveChangeHint: () => {
-            recordWebhookPushNotification();
-            void runQuietFullSyncAllFolders({
-              ...syncDeps,
-              bypassSchedule: true,
+    const reservedChannelToken = workingState?.channelToken ?? randomBytes(24).toString("hex");
+
+    for (const action of plan.actions) {
+      switch (action.kind) {
+        case "delete_stale_subscription": {
+          if (accessToken && workingState) {
+            try {
+              await gdriveStopPushChannel(accessToken, workingState.channelId, workingState.resourceId);
+              log(out, `Stopped Google Drive channel ${action.subscriptionId} (${action.reason}).`);
+            } catch (e) {
+              log(out, `Google Drive channel cleanup: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+          break;
+        }
+        case "clear_local_state": {
+          await clearState(globalConfig);
+          workingState = null;
+          break;
+        }
+        case "abort_no_token": {
+          log(out, "Google Drive webhooks: not signed in to Google Drive.");
+          return;
+        }
+        case "start_local_server": {
+          try {
+            serverHandle = await startGraphWebhookLocalServer({
+              port: action.port,
+              graphClientState: "__gdrive_unused__",
+              googleChannelToken: reservedChannelToken,
+              onDriveChangeHint: () => {
+                recordWebhookPushNotification();
+                void runQuietFullSyncAllFolders({
+                  ...syncDeps,
+                  bypassSchedule: true,
+                });
+              },
             });
-          },
-        });
-        log(out, `Local webhook listener on 127.0.0.1:${String(localPort)} (Google push; tunnel → this port).`);
-      } catch (e) {
-        log(out, `Failed to bind local webhook port ${String(localPort)}: ${e instanceof Error ? e.message : String(e)}`);
-        return;
+            log(out, `Local webhook listener on 127.0.0.1:${String(action.port)} (Google push; tunnel → this port).`);
+          } catch (e) {
+            log(out, `Failed to bind local webhook port ${String(action.port)}: ${e instanceof Error ? e.message : String(e)}`);
+            return;
+          }
+          break;
+        }
+        case "create_subscription": {
+          if (!accessToken) return;
+          try {
+            const folderId = await getGdriveVsCodeSyncRootFolderId(accessToken);
+            const channelId = randomUUID();
+            const created = await gdriveStartFolderWatch(
+              accessToken,
+              folderId,
+              channelId,
+              notificationUrl,
+              reservedChannelToken,
+            );
+            workingState = {
+              channelId: created.id,
+              resourceId: created.resourceId,
+              expiration: created.expiration,
+              folderId,
+              notificationUrl,
+              channelToken: reservedChannelToken,
+            };
+            await writeState(globalConfig, workingState);
+            log(out, `Google Drive push channel ${created.id} until expiration=${created.expiration}.`);
+          } catch (e) {
+            log(out, `Google Drive files.watch failed: ${e instanceof Error ? e.message : String(e)}`);
+            stopServer();
+            return;
+          }
+          break;
+        }
+        case "keep_subscription": {
+          break;
+        }
+        case "register_webhook_push": {
+          activateWebhookPushFor("gdrive");
+          break;
+        }
+        case "start_renew_loop": {
+          renewLoop = setInterval(() => {
+            void runRenewTick();
+          }, action.intervalMs);
+          break;
+        }
       }
     }
 
-    if (!state) {
-      try {
-        const folderId = await getGdriveVsCodeSyncRootFolderId(token);
-        const channelId = randomUUID();
-        const created = await gdriveStartFolderWatch(token, folderId, channelId, notificationUrl, channelToken);
-        state = {
-          channelId: created.id,
-          resourceId: created.resourceId,
-          expiration: created.expiration,
-          folderId,
-          notificationUrl,
-          channelToken,
-        };
-        await writeState(globalConfig, state);
-        log(out, `Google Drive push channel ${created.id} until expiration=${created.expiration}.`);
-      } catch (e) {
-        log(out, `Google Drive files.watch failed: ${e instanceof Error ? e.message : String(e)}`);
-        stopServer();
-        return;
-      }
+    if (!plan.lifecycleActive && plan.inactiveReason === "no_token") {
+      log(out, "Google Drive webhooks: not signed in to Google Drive.");
     }
+  };
 
-    activateWebhookPushFor("gdrive");
-
-    const renewTick = async (): Promise<void> => {
-      const s = await readState(globalConfig);
-      const cfgInner = vscode.workspace.getConfiguration(CFG);
-      const gci = await globalConfig.load();
-      const b = await readGdriveTokens(secrets);
-      const expirationIso = s ? gdriveExpirationToIso(s.expiration) ?? "" : "";
-      const decision = decideWebhookRenewTick({
-        state: s ? { subscriptionId: s.channelId, expirationDateTime: expirationIso } : null,
-        webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
-        activeProviderMatches: gci.activeProvider === "gdrive",
-        hasToken: Boolean(b?.accessToken),
-        renewSlackMs: 3600_000,
+  const runRenewTick = async (): Promise<void> => {
+    const s = await readState(globalConfig);
+    const cfgInner = vscode.workspace.getConfiguration(CFG);
+    const gci = await globalConfig.load();
+    const b = await readGdriveTokens(secrets);
+    const expirationIso = s ? gdriveExpirationToIso(s.expiration) ?? "" : "";
+    const decision = decideWebhookRenewTick({
+      state: s ? { subscriptionId: s.channelId, expirationDateTime: expirationIso } : null,
+      webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
+      activeProviderMatches: gci.activeProvider === "gdrive",
+      hasToken: Boolean(b?.accessToken),
+      renewSlackMs: 3600_000,
+    });
+    if (decision.kind !== "renew_now") {
+      return;
+    }
+    if (!s || !b?.accessToken) {
+      return;
+    }
+    try {
+      await gdriveStopPushChannel(b.accessToken, s.channelId, s.resourceId);
+      const channelId = randomUUID();
+      const created = await gdriveStartFolderWatch(
+        b.accessToken,
+        s.folderId,
+        channelId,
+        s.notificationUrl,
+        s.channelToken,
+      );
+      await writeState(globalConfig, {
+        ...s,
+        channelId: created.id,
+        resourceId: created.resourceId,
+        expiration: created.expiration,
       });
-      if (decision.kind !== "renew_now") {
-        return;
-      }
-      if (!s || !b?.accessToken) {
-        return;
-      }
-      try {
-        await gdriveStopPushChannel(b.accessToken, s.channelId, s.resourceId);
-        const channelId = randomUUID();
-        const created = await gdriveStartFolderWatch(
-          b.accessToken,
-          s.folderId,
-          channelId,
-          s.notificationUrl,
-          s.channelToken,
-        );
-        await writeState(globalConfig, {
-          ...s,
-          channelId: created.id,
-          resourceId: created.resourceId,
-          expiration: created.expiration,
-        });
-        log(out, `Google Drive channel renewed ${created.id} until expiration=${created.expiration}.`);
-      } catch (e) {
-        log(out, `Google Drive channel renew failed: ${e instanceof Error ? e.message : String(e)}`);
-        deactivateWebhookPushIfProvider("gdrive");
-      }
-    };
-
-    renewLoop = setInterval(() => {
-      void renewTick();
-    }, 4 * 60_000);
+      log(out, `Google Drive channel renewed ${created.id} until expiration=${created.expiration}.`);
+    } catch (e) {
+      log(out, `Google Drive channel renew failed: ${e instanceof Error ? e.message : String(e)}`);
+      deactivateWebhookPushIfProvider("gdrive");
+    }
   };
 
   const refresh = (): Promise<void> => {
