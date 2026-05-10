@@ -19,11 +19,9 @@ import {
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
 import { createAndStartSmeeRelay, type SmeeRelay } from "./webhookTunnel.js";
-import {
-  reconcileSubscription,
-} from "./webhookExpirationMath.js";
 import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
 import { createWebhookRenewalLoop, type RenewalLoopHandle } from "../core/webhookRenewalLoop.js";
+import { planWebhookLifecycleReconcile } from "../core/webhookLifecycleReconcileDecision.js";
 
 const CFG = "vscodesync";
 const STATE_NAME = "onedrive-graph-subscription.json";
@@ -128,29 +126,14 @@ export function registerOneDriveWebhookLifecycle(
     const tunnelEnabled = cfg.get<boolean>("webhooks.tunnelEnabled", false);
 
     const gc = await globalConfig.load();
+    const activeProviderMatches = gc.activeProvider === "onedrive";
 
-    if (gc.activeProvider !== "onedrive") {
-      const prev = await readState(globalConfig);
-      if (prev) {
-        const bundle = await readOneDriveTokenBundle(secrets);
-        if (bundle?.accessToken) {
-          try {
-            await graphDeleteSubscription(bundle.accessToken, prev.subscriptionId);
-            log(out, `Removed Graph subscription ${prev.subscriptionId} (active provider is not OneDrive).`);
-          } catch (e) {
-            log(out, `Graph subscription cleanup: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        }
-        await clearState(globalConfig);
-      }
-      return;
-    }
-
-    // Start smee.io relay if enabled and no static URL provided.
-    if (enabled && !notificationUrl && tunnelEnabled) {
+    // Resolve the public ingress URL before invoking the planner — smee
+    // tunnel only spins up when we are still the active provider AND the
+    // user hasn't supplied a static URL.
+    if (activeProviderMatches && enabled && !notificationUrl && tunnelEnabled) {
       try {
-        const relay = await createAndStartSmeeRelay((payload) => {
-          void payload; // payload dispatched; local server handles actual processing
+        const relay = await createAndStartSmeeRelay(() => {
           recordWebhookPushNotification();
           void runQuietFullSyncAllFolders({ ...syncDeps, bypassSchedule: true });
         });
@@ -166,129 +149,150 @@ export function registerOneDriveWebhookLifecycle(
       }
     }
 
-    if (!enabled || !notificationUrl) {
-      const prev = await readState(globalConfig);
-      if (prev) {
-        const bundle = await readOneDriveTokenBundle(secrets);
-        if (bundle?.accessToken) {
-          try {
-            await graphDeleteSubscription(bundle.accessToken, prev.subscriptionId);
-            log(out, `Removed Graph subscription ${prev.subscriptionId} (webhooks disabled or URL cleared).`);
-          } catch (e: unknown) {
-            log(out, `Graph subscription cleanup: ${e instanceof Error ? e.message : String(e)}`);
+    const bundle = activeProviderMatches ? await readOneDriveTokenBundle(secrets) : null;
+    const accessToken = bundle?.accessToken ?? null;
+    const persistedState = await readState(globalConfig);
+
+    const plan = planWebhookLifecycleReconcile({
+      webhooksEnabled: enabled,
+      resolvedNotificationUrl: notificationUrl,
+      localPort,
+      activeProviderMatches,
+      hasToken: accessToken !== null,
+      persistedState: persistedState
+        ? {
+            subscriptionId: persistedState.subscriptionId,
+            expirationDateTime: persistedState.expirationDateTime,
+            notificationUrl: persistedState.notificationUrl,
+            clientState: persistedState.clientState,
           }
-        }
-        await clearState(globalConfig);
-      }
-      return;
-    }
-
-    const bundle = await readOneDriveTokenBundle(secrets);
-    if (!bundle?.accessToken) {
-      log(out, "OneDrive Graph webhooks: not signed in to OneDrive.");
-      return;
-    }
-    const token = bundle.accessToken;
-
-    let state = await readState(globalConfig);
-    if (state) {
-      const decision = reconcileSubscription(
-        { notificationUrl: state.notificationUrl, expirationDateTime: state.expirationDateTime },
-        notificationUrl,
-      );
-      if (decision.action === "create") {
-        try {
-          await graphDeleteSubscription(token, state.subscriptionId);
-        } catch {
-          /* Graph may already have dropped it */
-        }
-        state = null;
-        await clearState(globalConfig);
-      }
-    }
-
-    const clientState = state?.clientState ?? randomBytes(24).toString("hex");
-
-    if (localPort > 0) {
-      try {
-        serverHandle = await startGraphWebhookLocalServer({
-          port: localPort,
-          graphClientState: clientState,
-          onDriveChangeHint: () => {
-            recordWebhookPushNotification();
-            void runQuietFullSyncAllFolders({
-              ...syncDeps,
-              bypassSchedule: true,
-            });
-          },
-        });
-        log(out, `Local webhook listener on 127.0.0.1:${String(localPort)} (use HTTPS tunnel → this port).`);
-      } catch (e) {
-        log(out, `Failed to bind local webhook port ${String(localPort)}: ${e instanceof Error ? e.message : String(e)}`);
-        return;
-      }
-    }
-
-    if (!state) {
-      try {
-        const created = await graphCreateDriveRootSubscription(token, notificationUrl, clientState);
-        state = {
-          subscriptionId: created.id,
-          expirationDateTime: created.expirationDateTime,
-          clientState,
-          notificationUrl,
-        };
-        await writeState(globalConfig, state);
-        log(out, `Graph subscription ${created.id} until ${created.expirationDateTime}.`);
-      } catch (e) {
-        log(out, `Graph subscription failed: ${e instanceof Error ? e.message : String(e)}`);
-        stopServer();
-        return;
-      }
-    }
-
-    activateWebhookPushFor("onedrive");
-
-    // v2.10.2 — adaptive renewal driver. fetchSubscriptions checks the
-    // decideWebhookRenewTick guard first, so a disabled / mismatched / token-
-    // less state yields an empty list and the loop just waits.
-    renewalDriver = createWebhookRenewalLoop({
-      fetchSubscriptions: async () => {
-        const s = await readState(globalConfig);
-        const cfgInner = vscode.workspace.getConfiguration(CFG);
-        const gci = await globalConfig.load();
-        const b = await readOneDriveTokenBundle(secrets);
-        const decision = decideWebhookRenewTick({
-          state: s ? { subscriptionId: s.subscriptionId, expirationDateTime: s.expirationDateTime } : null,
-          webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
-          activeProviderMatches: gci.activeProvider === "onedrive",
-          hasToken: Boolean(b?.accessToken),
-        });
-        if (decision.kind !== "renew_now" || !s || !b?.accessToken) return [];
-        return [{ id: s.subscriptionId, expiresAtIso: s.expirationDateTime }];
-      },
-      onRenew: async (sub) => {
-        const s = await readState(globalConfig);
-        const b = await readOneDriveTokenBundle(secrets);
-        if (!s || !b?.accessToken) return;
-        try {
-          const newExp = await graphRenewSubscription(b.accessToken, sub.id);
-          await writeState(globalConfig, { ...s, expirationDateTime: newExp });
-          log(out, `Subscription renewed until ${newExp}.`);
-        } catch (e) {
-          log(out, `Renew failed: ${e instanceof Error ? e.message : String(e)}`);
-          deactivateWebhookPushIfProvider("onedrive");
-        }
-      },
-      onRecreate: (sub) => {
-        // Trigger a full reconcile — the existing branch handles delete +
-        // re-create + writeState atomically.
-        log(out, `Subscription ${sub.id} expired — re-running reconcile.`);
-        void refresh();
-      },
-      onLog: (line) => { log(out, line); },
+        : null,
     });
-    renewalDriver.start();
+
+    // Reserve a single clientState for both the local server (if any) and
+    // the create_subscription action — Graph pairs them via this token.
+    const reservedClientState = persistedState?.clientState ?? randomBytes(24).toString("hex");
+    let workingState: PersistedState | null = persistedState;
+
+    for (const action of plan.actions) {
+      switch (action.kind) {
+        case "delete_stale_subscription": {
+          if (accessToken) {
+            try {
+              await graphDeleteSubscription(accessToken, action.subscriptionId);
+              log(out, `Removed Graph subscription ${action.subscriptionId} (${action.reason}).`);
+            } catch (e) {
+              log(out, `Graph subscription cleanup: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+          break;
+        }
+        case "clear_local_state": {
+          await clearState(globalConfig);
+          workingState = null;
+          break;
+        }
+        case "abort_no_token": {
+          // Reachable only as a sentinel; planner returns lifecycleActive=false
+          // with inactiveReason="no_token" instead. Surface and stop.
+          log(out, "OneDrive Graph webhooks: not signed in to OneDrive.");
+          return;
+        }
+        case "start_local_server": {
+          try {
+            serverHandle = await startGraphWebhookLocalServer({
+              port: action.port,
+              graphClientState: reservedClientState,
+              onDriveChangeHint: () => {
+                recordWebhookPushNotification();
+                void runQuietFullSyncAllFolders({
+                  ...syncDeps,
+                  bypassSchedule: true,
+                });
+              },
+            });
+            log(out, `Local webhook listener on 127.0.0.1:${String(action.port)} (use HTTPS tunnel → this port).`);
+          } catch (e) {
+            log(out, `Failed to bind local webhook port ${String(action.port)}: ${e instanceof Error ? e.message : String(e)}`);
+            return;
+          }
+          break;
+        }
+        case "create_subscription": {
+          if (!accessToken) return;
+          try {
+            const created = await graphCreateDriveRootSubscription(
+              accessToken,
+              notificationUrl,
+              reservedClientState,
+            );
+            workingState = {
+              subscriptionId: created.id,
+              expirationDateTime: created.expirationDateTime,
+              clientState: reservedClientState,
+              notificationUrl,
+            };
+            await writeState(globalConfig, workingState);
+            log(out, `Graph subscription ${created.id} until ${created.expirationDateTime}.`);
+          } catch (e) {
+            log(out, `Graph subscription failed: ${e instanceof Error ? e.message : String(e)}`);
+            stopServer();
+            return;
+          }
+          break;
+        }
+        case "keep_subscription": {
+          // No-op — persisted state already matches the resolved URL.
+          break;
+        }
+        case "register_webhook_push": {
+          activateWebhookPushFor("onedrive");
+          break;
+        }
+        case "start_renew_loop": {
+          renewalDriver = createWebhookRenewalLoop({
+            fetchSubscriptions: async () => {
+              const s = await readState(globalConfig);
+              const cfgInner = vscode.workspace.getConfiguration(CFG);
+              const gci = await globalConfig.load();
+              const b = await readOneDriveTokenBundle(secrets);
+              const decision = decideWebhookRenewTick({
+                state: s ? { subscriptionId: s.subscriptionId, expirationDateTime: s.expirationDateTime } : null,
+                webhooksEnabled: cfgInner.get<boolean>("webhooks.enabled", false),
+                activeProviderMatches: gci.activeProvider === "onedrive",
+                hasToken: Boolean(b?.accessToken),
+              });
+              if (decision.kind !== "renew_now" || !s || !b?.accessToken) return [];
+              return [{ id: s.subscriptionId, expiresAtIso: s.expirationDateTime }];
+            },
+            onRenew: async (sub) => {
+              const s = await readState(globalConfig);
+              const b = await readOneDriveTokenBundle(secrets);
+              if (!s || !b?.accessToken) return;
+              try {
+                const newExp = await graphRenewSubscription(b.accessToken, sub.id);
+                await writeState(globalConfig, { ...s, expirationDateTime: newExp });
+                log(out, `Subscription renewed until ${newExp}.`);
+              } catch (e) {
+                log(out, `Renew failed: ${e instanceof Error ? e.message : String(e)}`);
+                deactivateWebhookPushIfProvider("onedrive");
+              }
+            },
+            onRecreate: (sub) => {
+              log(out, `Subscription ${sub.id} expired — re-running reconcile.`);
+              void refresh();
+            },
+            onLog: (line) => { log(out, line); },
+          });
+          renewalDriver.start();
+          break;
+        }
+      }
+    }
+
+    if (!plan.lifecycleActive && plan.inactiveReason === "no_token") {
+      log(out, "OneDrive Graph webhooks: not signed in to OneDrive.");
+    }
   };
 
   const refresh = (): Promise<void> => {
