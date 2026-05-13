@@ -59,7 +59,7 @@ export const SETTINGS_SYNC_RULES: readonly SettingsSyncRule[] = [
   { key: "ai.sessionSummary.enabled", category: "preference", reason: "feature flag" },
   { key: "ai.suggestWorkspaceTags.enabled", category: "preference", reason: "feature flag" },
   { key: "ai.pathMapper.enabled", category: "preference", reason: "feature flag" },
-  { key: "aiMerge", category: "preference", reason: "feature flag" },
+  { key: "aiMerge.enabled", category: "preference", reason: "feature flag" },
   { key: "aiMerge.endpoint", category: "preference", reason: "endpoint pref" },
   { key: "aiMerge.endpointModel", category: "preference", reason: "endpoint pref" },
   { key: "telemetry", category: "preference", reason: "opt-in" },

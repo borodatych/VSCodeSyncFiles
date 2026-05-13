@@ -131,7 +131,7 @@ const ALL_KEYS = [
   "smartSuggestions", "requireMachineApproval",
   "pauseOnMeteredConnection", "pauseBatteryThreshold",
   "watchMode", "watchIntervalSeconds", "watchMaxIntervalSeconds", "watchAdaptive",
-  "compressUploads", "encryption", "aiMerge",
+  "compressUploads", "encryption", "aiMerge.enabled",
   "deltaSync", "deltaThresholdKB",
   "webhooks.enabled", "webhooks.url", "webhooks.fallbackAfterMinutes", "webhooks.tunnelEnabled",
   "gitBranchAutoSync",
@@ -433,7 +433,7 @@ function getSettingsHtml(): string {
   <div id="security" class="section">
     <h2>🔒 Безопасность</h2>
     ${toggle("encryption","E2E шифрование (AES-256-GCM)","Шифровать файлы перед загрузкой на облако. Требует настройки ключа. Несовместимо с compression.")}
-    ${toggle("aiMerge","AI Merge конфликтов","Кнопка «✨ Merge with AI» в диалоге конфликтов. Требует GitHub Copilot.")}
+    ${toggle("aiMerge.enabled","AI Merge конфликтов","Кнопка «✨ Merge with AI» в диалоге конфликтов. Требует GitHub Copilot.")}
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.setupEncryptionKey')">Настроить ключ шифрования</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.exportEncryptionKey')">Экспортировать ключ</button>

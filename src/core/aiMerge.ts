@@ -1,6 +1,6 @@
 /**
  * AI-assisted 3-way merge using VS Code Language Model API (Copilot / any LM).
- * Requires vscodesync.aiMerge: true and a compatible LM available in VS Code.
+ * Requires vscodesync.aiMerge.enabled: true and a compatible LM available in VS Code.
  *
  * The merge prompt sends base / local / remote versions and asks the model
  * to produce a merged result. If the model cannot resolve the conflict it returns null.
@@ -64,7 +64,7 @@ export async function runAiMerge(
   relPath: string,
 ): Promise<AiMergeResult> {
   const cfg = vscode.workspace.getConfiguration(CFG);
-  if (!cfg.get<boolean>("aiMerge", false)) {
+  if (!cfg.get<boolean>("aiMerge.enabled", false)) {
     return { ok: false, reason: "disabled" };
   }
 
@@ -202,7 +202,7 @@ function extractMergedContent(response: string): string | null {
  */
 export async function isAiMergeAvailable(): Promise<boolean> {
   const cfg = vscode.workspace.getConfiguration(CFG);
-  if (!cfg.get<boolean>("aiMerge", false)) return false;
+  if (!cfg.get<boolean>("aiMerge.enabled", false)) return false;
   const endpoint = resolveAiMergeEndpoint(cfg.get<string>("aiMerge.endpoint"));
   if (endpoint.kind !== "vscode-lm") return true; // local endpoint reachability is checked at call time
   const lm = getLm();

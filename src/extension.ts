@@ -35,6 +35,7 @@ import { restoreWorkspacesTreeFilters } from "./startup/restoreWorkspacesTreeFil
 import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceInstanceLockRefresher.js";
 import { createSyncOutputChannels } from "./startup/createSyncOutputChannels.js";
 import { unpausePersistedSync } from "./startup/unpausePersistedSync.js";
+import { migrateAiMergeFlag } from "./startup/migrateAiMergeFlag.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
@@ -109,6 +110,7 @@ async function updateWorkspacesTreeBadge(tv: vscode.TreeView<SyncTreeElement>): 
 
 export function activate(context: vscode.ExtensionContext): void {
   initLog(context);
+  migrateAiMergeFlag();
 
   const globalDir = GlobalConfigManager.resolveDefaultConfigDir();
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);

@@ -52,7 +52,9 @@ interface GitApiLike {
 interface GitRepoLike {
   readonly rootUri: vscode.Uri;
   readonly state: { HEAD?: { commit?: string } };
-  readonly onDidChangeState: vscode.Event<void>;
+  // VS Code Git API Repository exposes `onDidChange`, not `onDidChangeState`
+  // (see extensions/git/src/api/git.d.ts: Repository.onDidChange).
+  readonly onDidChange: vscode.Event<void>;
 }
 
 interface GitExtLike {
@@ -469,7 +471,7 @@ function registerGitPushOnCommit(
   const bindRepo = (repo: GitRepoLike): void => {
     lastHeadByRepo.set(repo.rootUri.fsPath, repo.state.HEAD?.commit);
     disposables.push(
-      repo.onDidChangeState(() => {
+      repo.onDidChange(() => {
         void (async () => {
           const head = repo.state.HEAD?.commit;
           const repoRoot = repo.rootUri.fsPath;

@@ -40,7 +40,7 @@ export function registerCodeLensProviders(deps: CodeLensProvidersDeps): void {
   );
 
   const inlineConflictLens = new InlineConflictCodeLensProvider(
-    () => vscode.workspace.getConfiguration("vscodesync").get<boolean>("aiMerge", false),
+    () => vscode.workspace.getConfiguration("vscodesync").get<boolean>("aiMerge.enabled", false),
   );
   context.subscriptions.push(
     inlineConflictLens,
@@ -53,7 +53,7 @@ export function registerCodeLensProviders(deps: CodeLensProvidersDeps): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration("vscodesync.inlineConflictCodeLens") ||
-        e.affectsConfiguration("vscodesync.aiMerge")
+        e.affectsConfiguration("vscodesync.aiMerge.enabled")
       ) {
         inlineConflictLens.refresh();
       }

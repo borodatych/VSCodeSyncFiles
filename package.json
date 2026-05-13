@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -371,7 +371,7 @@
           "default": false,
           "description": "%cfg.encryption.description%"
         },
-        "vscodesync.aiMerge": {
+        "vscodesync.aiMerge.enabled": {
           "type": "boolean",
           "default": false,
           "description": "%cfg.aiMerge.description%"

@@ -134,7 +134,7 @@ export function registerPlannedPaletteCommands(
       // suggest a Conventional-Commit one-liner from the workspace's tracked files.
       // Falls back to empty placeholder when LM isn't available.
       let aiPrefill = "";
-      const aiOn = configuration().get<boolean>("aiMerge", false);
+      const aiOn = configuration().get<boolean>("aiMerge.enabled", false);
       if (aiOn) {
         try {
           const targetWs = wc.activeWorkspaces.find((w) => w.workspaceId === workspaceId);

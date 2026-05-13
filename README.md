@@ -133,7 +133,7 @@
 | `vscodesync.showFileDecorations` | `true` | Значки статуса синхронизации в Проводнике |
 | `vscodesync.maxFileSizeMB` | `10` | Пропускать файлы крупнее этого размера |
 | `vscodesync.encryption` | `false` | Шифровать блобы воркспейса (AES-256-GCM) |
-| `vscodesync.aiMerge` | `false` | Использовать GitHub Copilot для разрешения конфликтов |
+| `vscodesync.aiMerge.enabled` | `false` | Использовать GitHub Copilot для разрешения конфликтов |
 | `vscodesync.watchMode` | `false` | Автосинхронизация при сохранении файла |
 | `vscodesync.watchIntervalSeconds` | `30` | Минимальный интервал опроса в watch-режиме |
 | `vscodesync.deltaSync` | `true` | Загружать только изменённые части файла |

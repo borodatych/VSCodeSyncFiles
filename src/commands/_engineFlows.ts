@@ -258,7 +258,7 @@ export async function runAiMergeForConflict(
 
         if (!result.ok) {
           const reasonMsg: Record<string, string> = {
-            disabled: "AI merge отключён (vscodesync.aiMerge: false).",
+            disabled: "AI merge отключён (vscodesync.aiMerge.enabled: false).",
             no_model: "Нет доступной языковой модели. Активируйте GitHub Copilot.",
             too_large: result.detail ?? "Файл слишком большой для AI merge.",
             model_refused: result.detail ?? "Модель не смогла разрешить конфликт. Разрешите вручную.",

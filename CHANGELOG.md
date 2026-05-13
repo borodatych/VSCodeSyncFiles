@@ -8,6 +8,22 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-05-13
+
+### Fixed
+- **Configuration schema collision** — boolean флаг `vscodesync.aiMerge` переименован
+  в `vscodesync.aiMerge.enabled`. Старая схема одновременно держала `aiMerge`
+  (boolean) и `aiMerge.endpoint` / `aiMerge.endpointModel` (string-дети), что
+  на каждый старт давало по 4 красные строки `Ignoring vscodesync.aiMerge.endpoint
+  as vscodesync.aiMerge is false` в Output → Log. Миграция запускается один раз
+  при activate (`migrateAiMergeFlag.ts`), переносит значение пользователя
+  пер-scope (Global / Workspace / WorkspaceFolder) и чистит старый ключ.
+- **Git API binding** — `bindRepo` в `syncTriggerManager.ts` подписывался на
+  несуществующий `Repository.onDidChangeState`; на каждом активном репозитории
+  это давало `TypeError: repo.onDidChangeState is not a function` при открытии
+  и каскадно ронял extension host VS Code/VibeIDE. Заменено на штатный
+  `Repository.onDidChange` (см. extensions/git API).
+
 ## [0.6.1] — 2026-05-10
 
 i18n / docs релиз — без функциональных изменений.
