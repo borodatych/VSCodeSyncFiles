@@ -8,6 +8,20 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-05-13
+
+### Fixed
+- **Git API binding (regression of 0.6.2 fix)** — в 0.6.2 `bindRepo` ошибочно
+  переехал с `Repository.onDidChangeState` на `Repository.onDidChange`, но и
+  такого свойства у `Repository` нет — `onDidChange` живёт только на
+  `RepositoryState` (`extensions/git/src/api/git.d.ts`). На каждом активном
+  репозитории это давало `TypeError: repo.onDidChange is not a function`,
+  каскадно роняя extension host VibeIDE сразу после открытия workspace.
+  Затронуты две точки: `src/ui/syncTriggerManager.ts` (push-on-commit) и
+  `src/ui/gitBranchWorkspaceActivation.ts` (branch policy). Обе подписки
+  перенесены на `repo.state.onDidChange`. Интерфейсы `GitRepoLike` /
+  `GitRepositoryLike` приведены в соответствие c реальным API.
+
 ## [0.6.2] — 2026-05-13
 
 ### Fixed

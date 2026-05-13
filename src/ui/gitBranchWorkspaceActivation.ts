@@ -29,8 +29,10 @@ export function normalizeGitBranchRef(name: string): string {
 
 interface GitRepositoryLike {
   readonly rootUri: vscode.Uri;
-  readonly state: { HEAD?: { name?: string } };
-  readonly onDidChange: vscode.Event<void>;
+  readonly state: {
+    HEAD?: { name?: string };
+    readonly onDidChange: vscode.Event<void>;
+  };
 }
 
 interface GitAPILike {
@@ -262,7 +264,7 @@ export function registerGitBranchWorkspaceActivation(
       const repo = git?.getRepository(folder.uri);
       if (repo) {
         folderListeners.push(
-          repo.onDidChange(() => {
+          repo.state.onDidChange(() => {
             schedule(root);
           }),
         );
