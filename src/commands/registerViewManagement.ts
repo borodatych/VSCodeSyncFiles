@@ -48,7 +48,11 @@ export function registerViewManagementCommands(
     }),
 
     vscode.commands.registerCommand("vscodesync.focusWorkspacesView", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.vscodesync.focus");
+      try {
+        await vscode.commands.executeCommand("vscodesync.workspaces.focus");
+      } catch (err) {
+        console.warn("[vscodesync] focusWorkspacesView failed:", err);
+      }
     }),
 
     vscode.commands.registerCommand("vscodesync.refreshWorkspacesView", () => {

@@ -38,6 +38,7 @@ Workflow выбора и сохранения — в [AGENTS.md → «Фраза
 |---|---|
 | v0.6.2 | Repository.onDidChangeState ушёл в Вальгаллу. Кнопка ниже — за упокой. |
 | v0.6.3 | vscode.git API меняется чаще, чем погода в Лондоне. VSCodeSyncFiles догоняет — за ваш счёт нервов и за свой счёт кофе. |
+| v0.6.4 | VSCodeSyncFiles — opt-in донаты, opt-out телеметрия. Всё, как вы любите. |
 
 ---
 
