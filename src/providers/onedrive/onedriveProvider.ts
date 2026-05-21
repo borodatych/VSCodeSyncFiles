@@ -20,6 +20,11 @@ import {
   noteCloudTransportSuccess,
 } from "../../core/syncOfflineHints.js";
 import { withRetry } from "../../core/withRetry.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  DEFAULT_DATA_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 const TOKEN_KEY = "vscodesync.onedrive.oauth";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -99,11 +104,11 @@ export async function maybeRefreshToken(secrets: SecretStore, bundle: OneDriveTo
   });
   let res: Response;
   try {
-    res = await fetch(TOKEN_URL, {
+    res = await fetchWithTimeout(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
-    });
+    }, { channel: "onedrive.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   } catch {
     return bundle; // Network error — use existing token
   }
@@ -164,7 +169,11 @@ export class OneDriveProvider implements ICloudProvider {
       async (): Promise<Response> => {
         let r: Response;
         try {
-          r = await fetch(url, init);
+          const isDataPath = /\/content(\?|$)|uploadSession/.test(url);
+          r = await fetchWithTimeout(url, init ?? {}, {
+            channel: "onedrive.fetch",
+            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+          });
         } catch (e) {
           bumpOfflineFlushBackoff();
           noteCloudTransportFailure();
@@ -269,7 +278,7 @@ export class OneDriveProvider implements ICloudProvider {
     while (offset < total) {
       const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
       const chunk = content.subarray(offset, end);
-      const chunkRes = await fetch(uploadUrl, {
+      const chunkRes = await fetchWithTimeout(uploadUrl, {
         method: "PUT",
         headers: {
           "Content-Range": `bytes ${String(offset)}-${String(end - 1)}/${String(total)}`,
@@ -278,7 +287,7 @@ export class OneDriveProvider implements ICloudProvider {
         // Cast through unknown: lib.dom BodyInit is stricter than the runtime
         // accepts. A bare Uint8Array view ships fine over fetch.
         body: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) as unknown as BodyInit,
-      });
+      }, { channel: "onedrive.fetch", timeoutMs: DEFAULT_DATA_TIMEOUT_MS });
       if (!chunkRes.ok && chunkRes.status !== 202) {
         throw new ProviderError(
           "NETWORK_ERROR",

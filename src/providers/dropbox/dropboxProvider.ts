@@ -20,6 +20,11 @@ import {
   noteCloudTransportSuccess,
 } from "../../core/syncOfflineHints.js";
 import {
+  DEFAULT_API_TIMEOUT_MS,
+  DEFAULT_DATA_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
+import {
   clearDropboxTokens,
   readDropboxTokens,
   storeDropboxTokens,
@@ -79,11 +84,11 @@ export class DropboxProvider implements ICloudProvider {
       refresh_token: rt,
       client_id: key,
     });
-    const r = await fetch(`${API}/oauth2/token`, {
+    const r = await fetchWithTimeout(`${API}/oauth2/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
-    });
+    }, { channel: "dropbox.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     if (!r.ok) {
       throw new ProviderError("UNAUTHORIZED", await r.text());
     }
@@ -116,7 +121,11 @@ export class DropboxProvider implements ICloudProvider {
   private async apiFetch(url: string, init?: RequestInit): Promise<Response> {
     let r: Response;
     try {
-      r = await fetch(url, init);
+      const isDataPath = /\/files\/(upload|download)/.test(url);
+      r = await fetchWithTimeout(url, init ?? {}, {
+        channel: "dropbox.fetch",
+        timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+      });
     } catch (e) {
       bumpOfflineFlushBackoff();
       noteCloudTransportFailure();

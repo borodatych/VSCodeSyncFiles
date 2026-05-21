@@ -15,6 +15,11 @@ import {
   noteProviderRequestSuccess,
 } from "../../core/syncRateLimitState.js";
 import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  DEFAULT_DATA_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
 import {
   noteCloudTransportFailure,
@@ -109,11 +114,11 @@ export class GdriveProvider implements ICloudProvider {
       refresh_token: refreshToken,
       client_id: clientId,
     });
-    const r = await fetch("https://oauth2.googleapis.com/token", {
+    const r = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
-    });
+    }, { channel: "gdrive.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     if (!r.ok) {
       throw new ProviderError("UNAUTHORIZED", await r.text());
     }
@@ -155,7 +160,13 @@ export class GdriveProvider implements ICloudProvider {
       async (): Promise<Response> => {
         let r: Response;
         try {
-          r = await fetch(url, init);
+          // Download/upload paths may stream multi-MB blobs — give them
+          // a wider timeout than metadata requests.
+          const isDataPath = /(\/upload\/|alt=media)/.test(url);
+          r = await fetchWithTimeout(url, init ?? {}, {
+            channel: "gdrive.fetch",
+            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+          });
         } catch (e) {
           bumpOfflineFlushBackoff();
           noteCloudTransportFailure();
