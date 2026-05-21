@@ -50,7 +50,7 @@
 
 - [x] **F1 Smart Pull Digest.** Команда `vscodesync.showSmartPullDigest`. Pure `smartPullDigestPlanner.ts` группирует cloud_newer-файлы по `editingByName` (fallback на workspace), считает конфликты, рендерит markdown. Notification с кнопками «Bulk Pull...» / «Подробнее» (markdown в открытом TextDocument). Unit-тесты ×5.
 - [ ] **F2 (модное) Cursor-style remote presence chip** в редакторе. Для tracked-файла, который сейчас редактируется на другой машине, поверх textArea показывается тонкая полоска с именем машины и временем последнего ping'а (без блокировки ввода).
-- [ ] **F3 Diff-on-hover для `cloud_newer`.** При наведении на файл в дереве — превью diff'а (cloud vs local) во встроенном Webview, без полноценного pull. Re-uses `hoverDiffPreviewProvider`.
+- [x] **F3 Compare with cloud.** Команда `vscodesync.compareWithCloud` — скачивает облачный blob в virtual document, открывает `vscode.diff` против локального. Tree-hover не поддерживается VS Code API; полноценный side-by-side diff покрывает кейс лучше. `hoverDiffPreviewProvider` уже даёт hint в editor.
 - [x] **F4 Bulk Pull selectively.** Команда `vscodesync.bulkPullSelected` — quickPick canPickMany со всеми файлами в `cloud_newer`, прогресс-нотификация, output channel. Решает кейс «коллеги обновили N файлов, скачать пачкой».
 - [x] **U2 (bonus)** 14 команд имели hard-coded английские title — переведены на NLS-ключи (`%cmd.X.title%`); RU-перевод был уже в `package.nls.ru.json`, добавлен EN-fallback в `package.nls.json`.
 - [x] **F5 Auto-mode quiet hours.** `core/autoSyncModeAdaptive.ts` (pure) + settings `vscodesync.quietHours.start/end` (HH:MM с wrap через полночь). Внутри окна `check-only` → `full`; `off` и `full` нетронуты. Wired в `watchModePoller`. Unit-тесты ×10.

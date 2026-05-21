@@ -923,6 +923,10 @@
         "title": "%cmd.showSmartPullDigest.title%"
       },
       {
+        "command": "vscodesync.compareWithCloud",
+        "title": "%cmd.compareWithCloud.title%"
+      },
+      {
         "command": "vscodesync.syncWorkspace",
         "title": "%cmd.syncWorkspace.title%"
       },

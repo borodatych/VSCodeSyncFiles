@@ -396,6 +396,43 @@ export function registerFileOperationsCommands(
       }, target.root);
     }),
 
+    // F3 — Compare current file with cloud version. Downloads the cloud
+    // blob into a virtual scratch document, opens `vscode.diff()` against
+    // the local file. Read-only — never writes anything.
+    vscode.commands.registerCommand("vscodesync.compareWithCloud", async (uri?: vscode.Uri) => {
+      const target = await resolveFileTarget(uri);
+      if (!target) return;
+      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      await runWithEngine(async (engine, root) => {
+        const cfg = await WorkspaceConfigManager.load(root);
+        const fileEntry = cfg.files.find((f) => f.localPath === rel);
+        if (!fileEntry) {
+          await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
+          return;
+        }
+        const provider = engine.getProvider();
+        try {
+          const dl = await provider.downloadFile(fileEntry.cloudPath);
+          const cloudText = dl.body.toString("utf8");
+          const scratch = await vscode.workspace.openTextDocument({
+            language: undefined,
+            content: cloudText,
+          });
+          await vscode.commands.executeCommand(
+            "vscode.diff",
+            scratch.uri,
+            vscode.Uri.file(target.fsPath),
+            `${rel} — облако ⇄ локально`,
+            { preview: true },
+          );
+        } catch (e) {
+          await vscode.window.showErrorMessage(
+            `VSCodeSync: не удалось скачать облачную версию: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }, target.root);
+    }),
+
     vscode.commands.registerCommand("vscodesync.moveCurrentFileToWorkspace", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) {
