@@ -8,6 +8,8 @@
  * progress notification + per-workspace OutputChannel report.
  */
 import * as vscode from "vscode";
+import * as os from "node:os";
+import * as nodePath from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { pickRoot, pickWorkspaceId } from "./_shared.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
@@ -106,6 +108,66 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
           }, root);
         },
       );
+    }),
+
+    // F7 — Send activity-log digest to a webhook (Discord / Slack /
+    // Telegram bot / generic). URL configured via `vscodesync.webhookDigestUrl`;
+    // format auto-detected by URL host. Manual one-shot command; the
+    // recurring daily/weekly schedule is left for a future fase.
+    vscode.commands.registerCommand("vscodesync.sendWebhookDigest", async () => {
+      const url = vscode.workspace
+        .getConfiguration("vscodesync")
+        .get<string>("webhookDigestUrl", "");
+      if (!url) {
+        const choice = await vscode.window.showWarningMessage(
+          "VSCodeSync: задайте URL в `vscodesync.webhookDigestUrl` (Discord / Slack / Telegram bot).",
+          "Открыть настройку",
+        );
+        if (choice === "Открыть настройку") {
+          await vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "vscodesync.webhookDigestUrl",
+          );
+        }
+        return;
+      }
+      const root = pickRoot();
+      if (!root) return;
+      await runWithEngine(async (engine) => {
+        void engine;
+        const { loadActivityFile } = await import("../core/activityLog.js");
+        const { buildWeeklyDigest } = await import("../core/insightsWeeklyDigest.js");
+        const { detectWebhookFormat, formatDigestForWebhook } = await import(
+          "../core/digestWebhookFormatter.js"
+        );
+        const storageDir = nodePath.join(os.homedir(), ".vscode", "vscodeSync");
+        const file = await loadActivityFile(storageDir);
+        const digest = buildWeeklyDigest({ events: file.events, nowMs: Date.now() });
+        const format = detectWebhookFormat(url);
+        const { contentType, body } = formatDigestForWebhook(digest, format);
+        try {
+          const { fetchWithTimeout } = await import("../providers/_shared/fetchWithTimeout.js");
+          const r = await fetchWithTimeout(
+            url,
+            {
+              method: "POST",
+              headers: { "Content-Type": contentType },
+              body,
+            },
+            { channel: "webhookDigest", timeoutMs: 15_000 },
+          );
+          if (!r.ok) {
+            throw new Error(`HTTP ${String(r.status)} ${await r.text()}`);
+          }
+          await vscode.window.showInformationMessage(
+            `Webhook digest отправлен (${format}, ${String(digest.totalEvents)} events).`,
+          );
+        } catch (e) {
+          await vscode.window.showErrorMessage(
+            `Webhook digest не отправлен: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }, root);
     }),
 
     // F1 — Smart Pull Digest: aggregate cloud_newer files by who-edited

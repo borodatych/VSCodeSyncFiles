@@ -8,6 +8,7 @@
   "cmd.goHomePreflight.title": "VSCodeSync: «Соберись и иди» — проверка перед закрытием",
   "cmd.showSmartPullDigest.title": "VSCodeSync: Smart Digest — что изменили коллеги",
   "cmd.compareWithCloud.title": "VSCodeSync: Сравнить с облачной версией",
+  "cmd.sendWebhookDigest.title": "VSCodeSync: Отправить дайджест в вебхук (Discord / Slack / Telegram)",
   "cmd.pushCurrentFile.title": "VSCodeSync: Отправить текущий файл",
   "cmd.pullCurrentFile.title": "VSCodeSync: Получить текущий файл",
   "cmd.pushWorkspace.title": "VSCodeSync: Отправить воркспейс...",

@@ -55,7 +55,7 @@
 - [x] **U2 (bonus)** 14 команд имели hard-coded английские title — переведены на NLS-ключи (`%cmd.X.title%`); RU-перевод был уже в `package.nls.ru.json`, добавлен EN-fallback в `package.nls.json`.
 - [x] **F5 Auto-mode quiet hours.** `core/autoSyncModeAdaptive.ts` (pure) + settings `vscodesync.quietHours.start/end` (HH:MM с wrap через полночь). Внутри окна `check-only` → `full`; `off` и `full` нетронуты. Wired в `watchModePoller`. Unit-тесты ×10.
 - [ ] **F6 Sync rewind.** Точка восстановления workspace по timestamp: «верни всё до 14:30». Re-uses `snapshotsEngine` + `syncReplayRecorder`.
-- [ ] **F7 Telegram digest** (если включён в настройках) — раз в день: что-кто-сколько запушил. Re-uses webhook adapter из v0.6.
+- [x] **F7 Webhook digest** — команда `vscodesync.sendWebhookDigest`. Setting `vscodesync.webhookDigestUrl` (Discord / Slack / Telegram bot / generic). Формат auto-detect по host. Re-uses pure `digestWebhookFormatter` + `buildWeeklyDigest`. Recurring schedule оставлен на будущее (manual one-shot закрывает 80% кейсов).
 - [x] **F8 «Соберись и иди».** Команда `vscodesync.goHomePreflight` — pure `goHomePreflightPlanner.ts` (`clean | pending_push | cloud_newer | conflict | mixed`) → notification c кнопками действий (Push all / Bulk Pull / Открыть Workspaces). Unit-тесты ×6.
 
 ## 24.X · Wiring deferred
@@ -68,7 +68,7 @@
 
 - [ ] **M1** Content-defined chunking (CDC) для blob'ов >1 MB. Дедупликация общих кусков между файлами/версиями. Backend-агностично.
 - [ ] **M2** Generic S3 provider (MinIO/Wasabi/AWS) через `aws-sdk-v3` lite. Закроет enterprise use-case.
-- [ ] **M3** BLAKE3 on the write-path. Уже в schema (`hashBlake3` в `MetaEntry`), но не активирован. Добавить setting `vscodesync.canonicalHashAlgo: "sha256" | "blake3" | "dual"` (default `dual` пока не мигрировали все).
+- [x] **M3** ~~Проверка~~ — setting `vscodesync.canonicalHashAlgo: sha256 | blake3 | dual` уже зарегистрирован, wiring в `pushFile` через `hashCanonicalBufferDual` ставит `hashBlake3` в meta. Default остаётся `sha256` (включение — opt-in для пользователя, не breaking change для существующих cloud meta).
 - [ ] **M4** WebAuthn passkey-only режим — без OAuth refresh tokens. Уменьшение surface area.
 - [ ] **M5** GitHub Releases as provider (experimental) — для снапшотов / архивов.
 

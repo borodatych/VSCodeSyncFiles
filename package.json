@@ -538,6 +538,11 @@
           "pattern": "^(|([01]?[0-9]|2[0-3]):[0-5][0-9])$",
           "markdownDescription": "Начало тихих часов в формате `HH:MM`. Если задано вместе с `quietHours.end` — `check-only` режим в эти часы апгрейдится до `full` (никто не работает — фоновая синхронизация безопасна). Пусто = выключено."
         },
+        "vscodesync.webhookDigestUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "URL для webhook-дайджеста активности (Discord webhook, Slack webhook, Telegram bot `/sendMessage`, или generic JSON). Формат определяется по hostname URL. Команда — `VSCodeSync: Send Webhook Digest`."
+        },
         "vscodesync.quietHours.end": {
           "type": "string",
           "default": "",
@@ -925,6 +930,10 @@
       {
         "command": "vscodesync.compareWithCloud",
         "title": "%cmd.compareWithCloud.title%"
+      },
+      {
+        "command": "vscodesync.sendWebhookDigest",
+        "title": "%cmd.sendWebhookDigest.title%"
       },
       {
         "command": "vscodesync.syncWorkspace",
