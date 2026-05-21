@@ -53,7 +53,7 @@
 - [ ] **F3 Diff-on-hover для `cloud_newer`.** При наведении на файл в дереве — превью diff'а (cloud vs local) во встроенном Webview, без полноценного pull. Re-uses `hoverDiffPreviewProvider`.
 - [x] **F4 Bulk Pull selectively.** Команда `vscodesync.bulkPullSelected` — quickPick canPickMany со всеми файлами в `cloud_newer`, прогресс-нотификация, output channel. Решает кейс «коллеги обновили N файлов, скачать пачкой».
 - [x] **U2 (bonus)** 14 команд имели hard-coded английские title — переведены на NLS-ключи (`%cmd.X.title%`); RU-перевод был уже в `package.nls.ru.json`, добавлен EN-fallback в `package.nls.json`.
-- [ ] **F5 Auto-mode «adaptive».** Новый режим: `check-only` днём, `full` после 22:00 (или `quiet-hours`). Расширение `autoSyncMode` enum.
+- [x] **F5 Auto-mode quiet hours.** `core/autoSyncModeAdaptive.ts` (pure) + settings `vscodesync.quietHours.start/end` (HH:MM с wrap через полночь). Внутри окна `check-only` → `full`; `off` и `full` нетронуты. Wired в `watchModePoller`. Unit-тесты ×10.
 - [ ] **F6 Sync rewind.** Точка восстановления workspace по timestamp: «верни всё до 14:30». Re-uses `snapshotsEngine` + `syncReplayRecorder`.
 - [ ] **F7 Telegram digest** (если включён в настройках) — раз в день: что-кто-сколько запушил. Re-uses webhook adapter из v0.6.
 - [ ] **F8 Команда «Соберись и иди»** — pre-flight перед закрытием ноутбука: пушнуть всё, проверить что нет конфликтов, показать «можно закрывать» / «есть N изменений, разрешите?». Палитра + статус-bar item.
