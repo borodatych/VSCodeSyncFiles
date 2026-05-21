@@ -42,35 +42,35 @@
 
 - [x] **U1** ~~Проверка~~ — false positive. Единственный VSCodeSync keybinding (`Ctrl+Alt+W` → `quickSwitchWorkspace`) уже имеет корректный `when: workspaceFolderCount != 0`.
 - [x] **U2** ~~Проверка~~ — false positive. 18 команд с `when: false` в `commandPalette` — by design (программно доступны через `executeCommand`, не показываются в Quick Pick).
-- [ ] **U3** Опасные действия (`deleteWorkspaceFromCloud`, `purgeEncrypted`, `forceDetach`) — 5-секундная undo-подсказка через `withCancellableNotification` (`vscode.window.withProgress` с `cancellable: true`).
+- [~] **U3 Undoable registry — skeleton.** `core/undoableActionRegistry.ts` — in-memory ring (TTL по умолчанию 60s) с `register/snapshot/consume`. UI-обёртка (Quick Pick «Отменить недавнее») — следующая фаза.
 - [x] **U4** Dedicated mini-StatusBarItem `vscodesync.autoSyncModeStatus` (left, prio 101) — клик открывает `cycleAutoSyncMode` Quick Pick. Auto-refresh при смене настройки.
 - [~] **U5** `src/ui/i18nMessages.ts` — централизованный словарь UI-строк (sync statuses, auto-mode labels, action labels, common). `buildFileTooltip` helper. Unit-тесты ×5. **Wiring**: компоненты постепенно мигрируют (skeleton-acceptable, чтобы не делать массовый рефакторинг внутри одной фазы).
 
 ## 24.F · New features (scope-bounded, wired)
 
 - [x] **F1 Smart Pull Digest.** Команда `vscodesync.showSmartPullDigest`. Pure `smartPullDigestPlanner.ts` группирует cloud_newer-файлы по `editingByName` (fallback на workspace), считает конфликты, рендерит markdown. Notification с кнопками «Bulk Pull...» / «Подробнее» (markdown в открытом TextDocument). Unit-тесты ×5.
-- [ ] **F2 (модное) Cursor-style remote presence chip** в редакторе. Для tracked-файла, который сейчас редактируется на другой машине, поверх textArea показывается тонкая полоска с именем машины и временем последнего ping'а (без блокировки ввода).
+- [~] **F2 Remote presence chip — skeleton.** `core/remotePresencePlanner.ts` — pure planner для presence-чипов по soft-lock manifest. Sentinel `RemotePresenceNotReadyError` для случая «канал не готов». Wiring (editor decorations + real-time stream) — следующая фаза.
 - [x] **F3 Compare with cloud.** Команда `vscodesync.compareWithCloud` — скачивает облачный blob в virtual document, открывает `vscode.diff` против локального. Tree-hover не поддерживается VS Code API; полноценный side-by-side diff покрывает кейс лучше. `hoverDiffPreviewProvider` уже даёт hint в editor.
 - [x] **F4 Bulk Pull selectively.** Команда `vscodesync.bulkPullSelected` — quickPick canPickMany со всеми файлами в `cloud_newer`, прогресс-нотификация, output channel. Решает кейс «коллеги обновили N файлов, скачать пачкой».
 - [x] **U2 (bonus)** 14 команд имели hard-coded английские title — переведены на NLS-ключи (`%cmd.X.title%`); RU-перевод был уже в `package.nls.ru.json`, добавлен EN-fallback в `package.nls.json`.
 - [x] **F5 Auto-mode quiet hours.** `core/autoSyncModeAdaptive.ts` (pure) + settings `vscodesync.quietHours.start/end` (HH:MM с wrap через полночь). Внутри окна `check-only` → `full`; `off` и `full` нетронуты. Wired в `watchModePoller`. Unit-тесты ×10.
-- [ ] **F6 Sync rewind.** Точка восстановления workspace по timestamp: «верни всё до 14:30». Re-uses `snapshotsEngine` + `syncReplayRecorder`.
+- [~] **F6 Sync rewind — skeleton.** `core/syncRewindPlanner.ts` — pure planner: history-index + target timestamp → выбор версии. Sentinel `SyncRewindNotImplementedError`. Engine `rewindFileTo()` — следующая фаза.
 - [x] **F7 Webhook digest** — команда `vscodesync.sendWebhookDigest`. Setting `vscodesync.webhookDigestUrl` (Discord / Slack / Telegram bot / generic). Формат auto-detect по host. Re-uses pure `digestWebhookFormatter` + `buildWeeklyDigest`. Recurring schedule оставлен на будущее (manual one-shot закрывает 80% кейсов).
 - [x] **F8 «Соберись и иди».** Команда `vscodesync.goHomePreflight` — pure `goHomePreflightPlanner.ts` (`clean | pending_push | cloud_newer | conflict | mixed`) → notification c кнопками действий (Push all / Bulk Pull / Открыть Workspaces). Unit-тесты ×6.
 
 ## 24.X · Wiring deferred
 
 - [x] **X1** `D01` provider hash verify расширен на `pullFile` — после download'а blob'а сравниваем provider etag с локальным digest. Skip для encrypted/wireGzip (provider видит другое). INTEGRITY_FAILED → throw.
-- [ ] **X2** `D06` Trusted teammates — UI для добавления через QR-код / share-link.
-- [ ] **X3** Phase 17 (Finish underbaked) WebRTC P2P signaling — раз и навсегда завершить hand-shake round-trip с реальным провайдером сигналинга или явно убрать в `v2.5`.
+- [~] **X2 Trusted teammates invite-link — skeleton.** `core/trustedTeammatesInvitePlanner.ts` — encode/decode/sign payload `{machineId, name, exp, sig}`. UI (Quick Pick «Поделиться» → clipboard + QR) — следующая фаза.
+- [ ] **X3** WebRTC P2P signaling — **BLOCKED**. Требует реальный signaling-сервер (TURN/STUN + persistent socket), который вне scope этой фазы. Перенесено в v2.5.
 
 ## 24.M · Modern bonus (без явного user-ask)
 
-- [ ] **M1** Content-defined chunking (CDC) для blob'ов >1 MB. Дедупликация общих кусков между файлами/версиями. Backend-агностично.
-- [ ] **M2** Generic S3 provider (MinIO/Wasabi/AWS) через `aws-sdk-v3` lite. Закроет enterprise use-case.
+- [~] **M1 CDC — skeleton.** `core/contentDefinedChunking.ts` — Buzhash-rolling 64-byte window, MIN_CHUNK=16K, MAX_CHUNK=64K. Boundary finder готов. Chunk store / dedup index (`chunkStore.ts`) — следующая фаза.
+- [~] **M2 S3 provider — skeleton.** `core/s3ProviderPlanner.ts` — config shape + bucket-name validation + `s3ObjectKeyForCloudPath`. `@aws-sdk/client-s3` install + ICloudProvider implementation — следующая фаза (5 MB dep, отложил).
 - [x] **M3** ~~Проверка~~ — setting `vscodesync.canonicalHashAlgo: sha256 | blake3 | dual` уже зарегистрирован, wiring в `pushFile` через `hashCanonicalBufferDual` ставит `hashBlake3` в meta. Default остаётся `sha256` (включение — opt-in для пользователя, не breaking change для существующих cloud meta).
-- [ ] **M4** WebAuthn passkey-only режим — без OAuth refresh tokens. Уменьшение surface area.
-- [ ] **M5** GitHub Releases as provider (experimental) — для снапшотов / архивов.
+- [~] **M4 Passkey-only — skeleton.** `core/passkeyOnlyMode.ts` — `decidePassphraseAllowance(passkeyOnly, hasRegisteredPasskey)` с anti-lockout логикой. Setting `vscodesync.passkeyOnly` — следующая фаза. Sentinel `PassphraseDeniedByPasskeyOnlyError`.
+- [~] **M5 GH Releases as snapshot provider — skeleton.** `core/githubReleasesProviderPlanner.ts` — tag prefix convention `vscodesync-snapshot-<iso>`, tag/iso round-trip. HTTP layer (`octokit` или fetch + PAT) — следующая фаза. Snapshot-only (не для live blob-sync).
 
 ## 24.D · Docs
 
