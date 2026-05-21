@@ -5,6 +5,7 @@
   "cmd.pushAll.title": "VSCodeSync: Push all files",
   "cmd.bulkPush.title": "VSCodeSync: Bulk Push wizard (pick workspaces → push)",
   "cmd.pullAll.title": "VSCodeSync: Pull all files",
+  "cmd.bulkPullSelected.title": "VSCodeSync: Bulk Pull (pick cloud-newer files → pull selected)",
   "cmd.pushCurrentFile.title": "VSCodeSync: Push current file",
   "cmd.pullCurrentFile.title": "VSCodeSync: Pull current file",
   "cmd.pushWorkspace.title": "VSCodeSync: Push workspace…",
@@ -240,5 +241,19 @@
   "cfg.yandex.lockedRetryDelayMs.description": "Delay (ms) before retrying after Yandex.Disk responds with HTTP 423 Locked.",
   "cfg.diagnostics.profileSync.description": "Enable per-file timing collection (hash ms / network ms / verify ms) for the «VSCodeSync: Profile Sync» command. Minimal overhead, off by default.",
   "cfg.providerHashVerify.description": "After upload, compare the provider-reported digest (md5 on GDrive/Yandex, content_hash on Dropbox, sha256 on OneDrive) with locally-computed expected digest. On mismatch — `INTEGRITY_FAILED`. Adds a `getMetadata` round-trip. Skipped for encrypted and gzip-compressed uploads.",
-  "cfg.hints.enabled.description": "Show contextual hints on window focus regain (many conflicts, quota high, sync paused long). Dedup window 6 hours per hint id."
+  "cfg.hints.enabled.description": "Show contextual hints on window focus regain (many conflicts, quota high, sync paused long). Dedup window 6 hours per hint id.",
+  "cmd.installWorkspaceTemplateFromMarketplace.title": "VSCodeSync: Install Workspace Template (Marketplace)",
+  "cmd.signInDeviceCode.title": "VSCodeSync: Sign In via OAuth Device Code",
+  "cmd.startP2PSession.title": "VSCodeSync: Start P2P Session",
+  "cmd.disconnectP2PSession.title": "VSCodeSync: Disconnect P2P Session",
+  "cmd.showPasskeySettings.title": "VSCodeSync: Show Passkey Settings",
+  "cmd.enrollPasskey.title": "VSCodeSync: Enroll Passkey",
+  "cmd.unlockWithPasskey.title": "VSCodeSync: Unlock with Passkey",
+  "cmd.removePasskey.title": "VSCodeSync: Remove Passkey",
+  "cmd.passkeyFallback.title": "VSCodeSync: Passphrase Fallback",
+  "cmd.exportConflictsToSarif.title": "VSCodeSync: Export Conflicts to SARIF",
+  "cmd.showWorkspaceReadme.title": "VSCodeSync: Show Workspace README",
+  "cmd.exportEncryptedBundle.title": "VSCodeSync: Export Encrypted Bundle",
+  "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace",
+  "cmd.openAnalyticsPanel.title": "VSCodeSync: Open Analytics Panel"
 }

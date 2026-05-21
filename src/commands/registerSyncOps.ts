@@ -115,6 +115,81 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       });
     }),
 
+    // F4 — Bulk Pull (selectively). Quick-pick of files with syncStatus =
+    // "cloud_newer" across all open folders; multi-select; per-file pull
+    // with progress. Closes the "колеги обновили N файлов" workflow that
+    // was the trigger for the v0.7 audit (manual one-by-one pull was
+    // painful).
+    vscode.commands.registerCommand("vscodesync.bulkPullSelected", async () => {
+      const root = pickRoot();
+      if (!root) {
+        return;
+      }
+      const cfg = await WorkspaceConfigManager.load(root);
+      const cloudNewerFiles = cfg.files.filter((f) => f.syncStatus === "cloud_newer");
+      if (cloudNewerFiles.length === 0) {
+        await vscode.window.showInformationMessage(
+          "VSCodeSync: нет файлов в состоянии «облако новее» — нечего скачивать.",
+        );
+        return;
+      }
+      const wsNote = (id: string): string =>
+        cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote ?? id.slice(0, 8);
+      const picks = await vscode.window.showQuickPick(
+        cloudNewerFiles.map((f) => ({
+          label: f.localPath,
+          description: `${wsNote(f.workspaceId)} · ${f.editingByName ?? ""}`.trim(),
+          picked: true,
+          workspaceId: f.workspaceId,
+          posixRel: f.localPath,
+        })),
+        {
+          canPickMany: true,
+          title: `Bulk Pull — ${String(cloudNewerFiles.length)} файл(ов) «облако новее»`,
+          placeHolder: "Выберите файлы (Space — toggle, Enter — скачать)",
+        },
+      );
+      if (!picks || picks.length === 0) {
+        return;
+      }
+      const channel = vscode.window.createOutputChannel("VSCodeSync · Bulk Pull");
+      channel.clear();
+      channel.show(true);
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "VSCodeSync · Bulk Pull",
+          cancellable: false,
+        },
+        async (progress) => {
+          await runWithEngine(async (engine) => {
+            let done = 0;
+            let failed = 0;
+            const total = picks.length;
+            const liveCfg = await WorkspaceConfigManager.load(root);
+            for (const p of picks) {
+              progress.report({
+                message: `${p.posixRel} (${String(done + 1)}/${String(total)})`,
+                increment: 100 / total,
+              });
+              try {
+                await engine.pullFile(liveCfg, p.workspaceId, p.posixRel);
+                channel.appendLine(`  ✓ ${p.posixRel}`);
+                done += 1;
+              } catch (e) {
+                failed += 1;
+                channel.appendLine(`  ✗ ${p.posixRel}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+            channel.appendLine("");
+            channel.appendLine(
+              `Bulk Pull: ${String(done)} OK · ${String(failed)} fail · ${String(total)} total`,
+            );
+          }, root);
+        },
+      );
+    }),
+
     vscode.commands.registerCommand("vscodesync.syncWorkspace", async () => {
       const root = pickRoot();
       if (!root) {

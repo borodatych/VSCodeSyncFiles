@@ -899,6 +899,10 @@
         "title": "%cmd.pullAll.title%"
       },
       {
+        "command": "vscodesync.bulkPullSelected",
+        "title": "%cmd.bulkPullSelected.title%"
+      },
+      {
         "command": "vscodesync.syncWorkspace",
         "title": "%cmd.syncWorkspace.title%"
       },
@@ -1461,59 +1465,59 @@
       },
       {
         "command": "vscodesync.installWorkspaceTemplateFromMarketplace",
-        "title": "VSCodeSync: Install Workspace Template (Marketplace)"
+        "title": "%cmd.installWorkspaceTemplateFromMarketplace.title%"
       },
       {
         "command": "vscodesync.signInDeviceCode",
-        "title": "VSCodeSync: Sign In via OAuth Device Code"
+        "title": "%cmd.signInDeviceCode.title%"
       },
       {
         "command": "vscodesync.startP2PSession",
-        "title": "VSCodeSync: Start P2P Session"
+        "title": "%cmd.startP2PSession.title%"
       },
       {
         "command": "vscodesync.disconnectP2PSession",
-        "title": "VSCodeSync: Disconnect P2P Session"
+        "title": "%cmd.disconnectP2PSession.title%"
       },
       {
         "command": "vscodesync.showPasskeySettings",
-        "title": "VSCodeSync: Show Passkey Settings"
+        "title": "%cmd.showPasskeySettings.title%"
       },
       {
         "command": "vscodesync.enrollPasskey",
-        "title": "VSCodeSync: Enroll Passkey"
+        "title": "%cmd.enrollPasskey.title%"
       },
       {
         "command": "vscodesync.unlockWithPasskey",
-        "title": "VSCodeSync: Unlock with Passkey"
+        "title": "%cmd.unlockWithPasskey.title%"
       },
       {
         "command": "vscodesync.removePasskey",
-        "title": "VSCodeSync: Remove Passkey"
+        "title": "%cmd.removePasskey.title%"
       },
       {
         "command": "vscodesync.passkeyFallback",
-        "title": "VSCodeSync: Passphrase Fallback"
+        "title": "%cmd.passkeyFallback.title%"
       },
       {
         "command": "vscodesync.exportConflictsToSarif",
-        "title": "VSCodeSync: Export Conflicts to SARIF"
+        "title": "%cmd.exportConflictsToSarif.title%"
       },
       {
         "command": "vscodesync.showWorkspaceReadme",
-        "title": "VSCodeSync: Show Workspace README"
+        "title": "%cmd.showWorkspaceReadme.title%"
       },
       {
         "command": "vscodesync.exportEncryptedBundle",
-        "title": "VSCodeSync: Export Encrypted Bundle"
+        "title": "%cmd.exportEncryptedBundle.title%"
       },
       {
         "command": "vscodesync.prefetchActiveWorkspace",
-        "title": "VSCodeSync: Prefetch Active Workspace"
+        "title": "%cmd.prefetchActiveWorkspace.title%"
       },
       {
         "command": "vscodesync.openAnalyticsPanel",
-        "title": "VSCodeSync: Open Analytics Panel"
+        "title": "%cmd.openAnalyticsPanel.title%"
       }
     ],
     "menus": {
