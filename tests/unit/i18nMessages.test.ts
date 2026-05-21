@@ -33,21 +33,21 @@ describe("i18nMessages — central UI string table", () => {
   it("buildFileTooltip composes ws + path + status + editingBy", () => {
     expect(
       buildFileTooltip({
-        workspaceNote: "PROMED",
+        workspaceNote: "alpha-workspace",
         posixRel: "src/foo.js",
         status: "cloudNewer",
-        editingByName: "059-1-ws-346",
+        editingByName: "work-laptop",
       }),
     ).toContain("Облако новее");
     expect(
       buildFileTooltip({
-        workspaceNote: "PROMED",
+        workspaceNote: "alpha-workspace",
         posixRel: "src/foo.js",
-        editingByName: "059-1-ws-346",
+        editingByName: "work-laptop",
       }),
     ).toContain("Редактируется");
     expect(
-      buildFileTooltip({ workspaceNote: "PROMED", posixRel: "src/foo.js" }),
+      buildFileTooltip({ workspaceNote: "alpha-workspace", posixRel: "src/foo.js" }),
     ).not.toContain("Редактируется");
   });
 });

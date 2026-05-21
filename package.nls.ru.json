@@ -6,6 +6,7 @@
   "cmd.pullAll.title": "VSCodeSync: Получить всё",
   "cmd.bulkPullSelected.title": "VSCodeSync: Получить выбранное (отметьте файлы «облако новее» → pull)",
   "cmd.goHomePreflight.title": "VSCodeSync: «Соберись и иди» — проверка перед закрытием",
+  "cmd.showSmartPullDigest.title": "VSCodeSync: Smart Digest — что изменили коллеги",
   "cmd.pushCurrentFile.title": "VSCodeSync: Отправить текущий файл",
   "cmd.pullCurrentFile.title": "VSCodeSync: Получить текущий файл",
   "cmd.pushWorkspace.title": "VSCodeSync: Отправить воркспейс...",

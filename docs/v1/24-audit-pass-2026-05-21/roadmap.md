@@ -48,7 +48,7 @@
 
 ## 24.F · New features (scope-bounded, wired)
 
-- [ ] **F1 (модное) Smart Pull Digest.** Кнопка/нотификация «Коллеги обновили N файлов с момента последнего открытия» — агрегат с группировкой по машинам, ссылками на diff в hover preview, один клик «Pull всё».
+- [x] **F1 Smart Pull Digest.** Команда `vscodesync.showSmartPullDigest`. Pure `smartPullDigestPlanner.ts` группирует cloud_newer-файлы по `editingByName` (fallback на workspace), считает конфликты, рендерит markdown. Notification с кнопками «Bulk Pull...» / «Подробнее» (markdown в открытом TextDocument). Unit-тесты ×5.
 - [ ] **F2 (модное) Cursor-style remote presence chip** в редакторе. Для tracked-файла, который сейчас редактируется на другой машине, поверх textArea показывается тонкая полоска с именем машины и временем последнего ping'а (без блокировки ввода).
 - [ ] **F3 Diff-on-hover для `cloud_newer`.** При наведении на файл в дереве — превью diff'а (cloud vs local) во встроенном Webview, без полноценного pull. Re-uses `hoverDiffPreviewProvider`.
 - [x] **F4 Bulk Pull selectively.** Команда `vscodesync.bulkPullSelected` — quickPick canPickMany со всеми файлами в `cloud_newer`, прогресс-нотификация, output channel. Решает кейс «коллеги обновили N файлов, скачать пачкой».

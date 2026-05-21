@@ -919,6 +919,10 @@
         "title": "%cmd.goHomePreflight.title%"
       },
       {
+        "command": "vscodesync.showSmartPullDigest",
+        "title": "%cmd.showSmartPullDigest.title%"
+      },
+      {
         "command": "vscodesync.syncWorkspace",
         "title": "%cmd.syncWorkspace.title%"
       },

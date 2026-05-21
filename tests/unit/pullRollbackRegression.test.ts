@@ -30,7 +30,7 @@ describe("Pull rollback regression — softlock + check-only must not flip statu
       workspaceRoot: rootA,
       provider,
       machineId: "machine-a",
-      machineName: "059-1-ws-346",
+      machineName: "work-laptop",
     });
     const wid = await engineA.createWorkspace("rollback-repro", "onedrive");
     const rel = "shared.txt";

@@ -108,6 +108,47 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       );
     }),
 
+    // F1 — Smart Pull Digest: aggregate cloud_newer files by who-edited
+    // them or workspace, render as a webview-friendly markdown summary.
+    vscode.commands.registerCommand("vscodesync.showSmartPullDigest", async () => {
+      const root = pickRoot();
+      if (!root) return;
+      const cfg = await WorkspaceConfigManager.load(root);
+      const { buildSmartPullDigest } = await import("../core/smartPullDigestPlanner.js");
+      const wsNote = (id: string): string | undefined =>
+        cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote;
+      const digest = buildSmartPullDigest(
+        cfg.files.map((f) => ({
+          workspaceId: f.workspaceId,
+          workspaceNote: wsNote(f.workspaceId),
+          localPath: f.localPath,
+          syncStatus: f.syncStatus,
+          editingBy: f.editingBy,
+          editingByName: f.editingByName,
+          lastSync: f.lastSync,
+        })),
+      );
+      if (digest.totalCloudNewer === 0 && digest.totalConflicts === 0) {
+        await vscode.window.showInformationMessage(digest.headline);
+        return;
+      }
+      const choice = await vscode.window.showInformationMessage(
+        digest.headline,
+        { modal: false },
+        "Bulk Pull...",
+        "Подробнее",
+      );
+      if (choice === "Bulk Pull...") {
+        await vscode.commands.executeCommand("vscodesync.bulkPullSelected");
+      } else if (choice === "Подробнее") {
+        const doc = await vscode.workspace.openTextDocument({
+          language: "markdown",
+          content: `# Smart Pull Digest\n\n${digest.markdown}\n`,
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      }
+    }),
+
     // F8 — pre-flight before closing the laptop. Reads tracked files,
     // delegates verdict to pure planner, surfaces an info / warning with
     // action buttons. Pure planner = `goHomePreflightPlanner.ts`.
