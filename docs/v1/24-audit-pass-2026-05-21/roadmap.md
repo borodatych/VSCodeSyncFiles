@@ -44,7 +44,7 @@
 - [x] **U2** ~~Проверка~~ — false positive. 18 команд с `when: false` в `commandPalette` — by design (программно доступны через `executeCommand`, не показываются в Quick Pick).
 - [ ] **U3** Опасные действия (`deleteWorkspaceFromCloud`, `purgeEncrypted`, `forceDetach`) — 5-секундная undo-подсказка через `withCancellableNotification` (`vscode.window.withProgress` с `cancellable: true`).
 - [x] **U4** Dedicated mini-StatusBarItem `vscodesync.autoSyncModeStatus` (left, prio 101) — клик открывает `cycleAutoSyncMode` Quick Pick. Auto-refresh при смене настройки.
-- [ ] **U5** Tooltips/decorations — единый словарь строк (`src/ui/i18nMessages.ts`) для устранения смешения en/ru.
+- [~] **U5** `src/ui/i18nMessages.ts` — централизованный словарь UI-строк (sync statuses, auto-mode labels, action labels, common). `buildFileTooltip` helper. Unit-тесты ×5. **Wiring**: компоненты постепенно мигрируют (skeleton-acceptable, чтобы не делать массовый рефакторинг внутри одной фазы).
 
 ## 24.F · New features (scope-bounded, wired)
 
