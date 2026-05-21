@@ -95,7 +95,23 @@ export class GlobalConfigManager {
     return c[key];
   }
 
+  /**
+   * Update a field and persist to disk in one step. Default for callers that
+   * don't need batched writes.
+   *
+   * For batched updates (multiple `set` calls in a row, single `save` at end),
+   * use {@link setCached} explicitly.
+   */
   async set<K extends keyof GlobalConfig>(key: K, value: GlobalConfig[K]): Promise<void> {
+    await this.setCached(key, value);
+    await this.save();
+  }
+
+  /**
+   * Update a field in memory only; caller MUST invoke `save()` afterwards.
+   * Use when you want to batch several updates into one disk write.
+   */
+  async setCached<K extends keyof GlobalConfig>(key: K, value: GlobalConfig[K]): Promise<void> {
     const c = await this.load();
     const next: GlobalConfig = { ...c, [key]: value };
     this.cache = next;

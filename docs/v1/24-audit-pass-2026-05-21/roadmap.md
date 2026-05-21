@@ -29,7 +29,7 @@
 ## 24.B · Bug fixes (новые, scope этой фазы)
 
 - [ ] **B1** `deleteRemoteBlobBestEffort` (`syncEngine.ts:3806-3814`) — добавить `warnLog` для не-`NOT_FOUND` ошибок. Сейчас глотает любую сеть/auth/throttling-ошибку, оставляя дубли в `.history/`.
-- [ ] **B2** `globalConfigManager.set()` (`globalConfigManager.ts:98-102`) — переименовать в `setCached()` ИЛИ сделать `set()` сразу сохраняющим. Текущий API хрупок: если новый caller забудет `save()`, изменения теряются между сессиями.
+- [x] **B2** `globalConfigManager.set()` — теперь делает `setCached()` + `save()` в одном вызове. Старый batched-pattern доступен через явный `setCached()`. Существующие callers `set+save` остались — двойная запись идемпотентна.
 - [ ] **B3** `fetch()` без `AbortController` в `gdriveProvider.ts:158`, `onedriveProvider.ts`, `dropboxProvider.ts` — добавить timeout (по аналогии с Yandex `fetchWithTimeout(..., API_TIMEOUT_MS)`). Default 30s, конфигурируется через `vscodesync.providerRequestTimeoutSec`.
 - [ ] **B4** `dropboxProvider.downloadFile` (`:233`) — `void options?.ifNoneMatch` буквально игнорирует кэш. Реализовать via Dropbox `Dropbox-API-Arg.rev` сравнение в `getMetadata` (как Yandex), либо явно задокументировать «no 304 на этом провайдере» и кэшировать `(path, rev) → body` локально с TTL.
 - [ ] **B5** `watchModePoller` (`watchModePoller.ts`) — если `await runQuietFullSyncAllFolders` бросает, текущий цикл не fail-safe: следующий тик может никогда не запуститься. Завернуть `tick()` в `try/catch` с `warnLog`.
