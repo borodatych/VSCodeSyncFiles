@@ -33,8 +33,8 @@
 - [x] **B3** Общий `_shared/fetchWithTimeout.ts` (30s API / 120s data). Подключён в `gdriveProvider.driveFetch + refreshAccessToken`, `onedriveProvider.graphFetch + token refresh + upload session chunks`, `dropboxProvider.apiFetch + token refresh`. Все три провайдера теперь aborting after timeout с логом на их каналах.
 - [x] **B4** `dropboxProvider.downloadFile` — 304 эмуляция через `get_metadata`-rev сравнение перед полной загрузкой. Bandwidth saved на unchanged files.
 - [ ] **B5** `watchModePoller` (`watchModePoller.ts`) — если `await runQuietFullSyncAllFolders` бросает, текущий цикл не fail-safe: следующий тик может никогда не запуститься. Завернуть `tick()` в `try/catch` с `warnLog`.
-- [ ] **B6** `workspacesTree.refresh()` debounce 150ms + `markPendingDelete()` — гонка между «pending hide» и следующим tree refresh. Гарантировать порядок: `markPendingDelete` → fire → wait next-tick → invalidateRemoteCache.
-- [ ] **B7** `fileDecorations.provideFileDecoration()` — стейл `editingBy` в результате. Подключить через `_onDidChangeFileDecorations` к event'у изменения cfg, а не к hash mtime.
+- [x] **B6** `markPendingDelete`/`clearPendingDelete` теперь сами вызывают `invalidateRemoteCache` + `refresh()`. Удалённый workspace перестаёт висеть в дереве вплоть до 8s TTL.
+- [x] **B7** `fileDecorations.provideFileDecoration` honours `CancellationToken` after every async boundary — старый chain прерывается до перезаписи fresh state'а.
 - [ ] **B8** `statusBar.formatLastSync` — заменить `toLocaleTimeString()` на явный `formatHm()` чтобы не словить AM/PM в русской локали.
 - [ ] **B9** `manifestMerger.mergeManifestFiles` tie-break (`version+updatedAt` равны) — добавить `warnLog` при коллизии, потому что сейчас молча возвращается `a` без сигнала.
 

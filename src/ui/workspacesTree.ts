@@ -134,17 +134,29 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
   /**
    * Optimistically hides a workspace from all tree sections while a cloud delete is in flight.
    * Must be paired with clearPendingDelete() when the operation settles.
+   *
+   * B6 — also invalidates the remote-summaries cache (TTL was 8s) and fires
+   * a refresh so the deleted workspace doesn't linger in either active or
+   * cloud-offers section while the cache TTL ticks down.
    */
   markPendingDelete(workspaceId: string): void {
     this._pendingDeleteIds.add(workspaceId);
+    this.invalidateRemoteCache();
+    this.refresh();
   }
 
   /**
    * Removes the workspace from the pending-delete set.
    * Call on both success and failure paths after cloud delete settles.
+   *
+   * Also invalidates the remote cache so the next refresh fetches the
+   * authoritative state from the cloud (cleared whether delete succeeded
+   * or failed; the cloud is the source of truth).
    */
   clearPendingDelete(workspaceId: string): void {
     this._pendingDeleteIds.delete(workspaceId);
+    this.invalidateRemoteCache();
+    this.refresh();
   }
 
   private rebindWorkspaceJsonWatchers(): void {

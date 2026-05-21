@@ -56,7 +56,6 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
   }
 
   provideFileDecoration(uri: vscode.Uri, token: vscode.CancellationToken): vscode.ProviderResult<vscode.FileDecoration> {
-    void token;
     if (uri.scheme !== "file") {
       return undefined;
     }
@@ -69,7 +68,12 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
       return undefined;
     }
     return (async () => {
+      // B7 — honour the CancellationToken at every async boundary. Without
+      // this a slow async chain (cfg load → hash) could resolve AFTER a
+      // newer call already produced a decoration, overwriting fresh state
+      // with stale.
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+      if (token.isCancellationRequested) return undefined;
       const rel = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/");
       const tf = wc.files.find((f) => f.localPath === rel);
       if (!tf) {
@@ -98,6 +102,8 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
         );
       }
       const curHash = await computeHash(uri.fsPath, decoHashConfig()).catch(() => "");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- token.isCancellationRequested mutates during the await
+      if (token.isCancellationRequested) return undefined;
       if (curHash !== "" && curHash !== tf.localHash) {
         return new vscode.FileDecoration(
           "↑",
