@@ -8,6 +8,179 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-21
+
+**Audit-pass релиз. Pull rollback гонка закрыта; UX-фичи вокруг ручного
+Pull (теперь это основной путь после v0.7 `check-only` default).**
+
+### 🐛 Исправления
+
+- **Pull rollback race.** После ручного Pull статусы файлов мгновенно
+  возвращались в ✓, но через 30–60 секунд откатывались обратно в
+  `cloud_newer` / `pending_push`. Это происходило при работе с одним
+  workspace на двух машинах одновременно, когда другая машина держала
+  soft lock (`editingBy`) или meta на cloud отставала от blob'ов. Три
+  независимых корня в одной баг-цепи:
+  - **`iterateTrackedFiles` soft-lock branch** перетирал статус: как
+    только manifest сообщал, что другая машина редактирует файл,
+    локальный статус принудительно становился `cloud_newer` — даже
+    если хеш диска уже совпадал с облаком. Soft lock теперь остаётся
+    **UI-индикацией** через `file.editingBy/editingByName`, а реальный
+    статус вычисляется через `checkOneFileStatus` (3-way compare).
+  - **Окно гонки в `pullFile`.** Порядок инвертирован: сначала
+    `pushMetaJson` (cloud meta), потом `persistMutatedCfg` (локально
+    `"ok"`). Если cloud meta upload падает — локальный статус **не**
+    переходит в `"ok"`, пользователь видит реальную проблему. Полностью
+    закрывает окно между «cfg уже OK» и «meta на cloud ещё старая», в
+    которое тик watcher'а раньше успевал переписать статус.
+  - **`checkOneFileStatus` missing `consensusLagsLocally` rule.** В
+    check-only ветке отсутствовало правило «meta уже обновлена другой
+    машиной, наш `file.localHash` отстал», которое в full-sync ветке
+    (`syncOneFile`) есть давно. Без него детект `detectChange` ошибочно
+    возвращал `push` (а не `pull`), и check-only ставил `pending_push`
+    вместо `cloud_newer`.
+  - **In-memory `inFlightOps: Set<workspaceId:posixRel>`** в
+    `SyncEngine`. Pull/Push помечает файл на время операции, check-only
+    watcher пропускает его до завершения. Без блокировок UX — чисто
+    уведомление tick'у, что файл сейчас «занят».
+- **`globalConfigManager.set()`** теперь сразу делает `save()`. Раньше
+  обновлял только `this.cache` и полагался на то, что caller потом сам
+  вызовет `save()` — хрупкий API. Старый pattern для batched-write
+  доступен через явный `setCached()`.
+- **Dropbox `ifNoneMatch` игнорировался.** Provider буквально содержал
+  `void options?.ifNoneMatch;` и всегда скачивал blob целиком. Теперь
+  эмулирует 304 через `get_metadata.rev` сравнение перед загрузкой.
+- **`watchModePoller.tick()`** обёрнут в try/catch. Раньше одна сетевая
+  ошибка в `runQuietFullSyncAllFolders` пробрасывала исключение из
+  `setInterval`-колбэка и могла оставить таймер без рестарта.
+- **`workspacesTree.markPendingDelete` / `clearPendingDelete`** теперь
+  сами вызывают `invalidateRemoteCache()` + `refresh()`. Раньше удалённый
+  workspace мог висеть в дереве 8–10 секунд (TTL remote-summaries cache).
+- **`fileDecorations.provideFileDecoration`** honours `CancellationToken`
+  после каждого `await`. Раньше медленная async-цепочка (cfg load → hash)
+  могла резолвнуться **после** свежего вызова и перетереть актуальное
+  состояние устаревшим.
+- **`deleteRemoteBlobBestEffort`** теперь логирует не-`NOT_FOUND` ошибки
+  через `warnLog`. Раньше глоталось молча — сетевые сбои при удалении
+  старого blob'а оставляли дубли в `.history/` без диагностики.
+- **`statusBar.formatLastSync`** — явный 24-часовой `HH:MM` через
+  `getHours()` / `getMinutes()` вместо `toLocaleTimeString()`. Последняя
+  на некоторых ru-локалях выдавала AM/PM формат.
+- **`metaMerge.pickNewer` / `manifestMerger.maxVersion`** — `warnLog`
+  при tie-break (одинаковые `version` + `updatedAt` / `addedAt`, но
+  разные `hash` / `editingBy`). Раньше молча выигрывал `a`; теперь
+  support bundle ловит расхождение.
+- **NLS — 14 команд** имели hard-coded английский title прямо в
+  `package.json` (`"title": "VSCodeSync: Open Analytics Panel"`) вместо
+  NLS-ключа. Русский перевод существовал в `package.nls.ru.json`, но не
+  применялся. Команды: P2P session start/disconnect, Passkey settings/
+  enroll/unlock/remove/fallback, Analytics panel, Templates marketplace,
+  SARIF export, encrypted bundle, prefetch workspace, device-code sign-in,
+  workspace README.
+- **Provider hash verify** расширен на `pullFile` — после скачивания
+  blob'а сравниваем provider etag с локально вычисленным digest. Mismatch
+  → `INTEGRITY_FAILED`. Раньше проверка работала только на push.
+
+### ✨ Новое
+
+- **Smart Pull Digest** — `VSCodeSync: Smart Digest — что изменили
+  коллеги`. Группирует файлы со статусом `cloud_newer` по машине
+  (`editingByName`) или workspace, считает конфликты, рендерит markdown
+  с кнопками «Bulk Pull...» / «Подробнее» (открывает digest в virtual
+  document для прокрутки).
+- **Bulk Pull selectively** — `VSCodeSync: Получить выбранное`. Quick
+  Pick с canPickMany по всем файлам `cloud_newer` через все открытые
+  workspace'ы. Pre-checked all, прогресс-нотификация, output channel с
+  per-file результатами. Закрывает кейс «коллеги обновили N файлов,
+  скачать пачкой» — раньше нужно было кликать каждый файл отдельно.
+- **«Соберись и иди» pre-flight** — `VSCodeSync: «Соберись и иди» —
+  проверка перед закрытием`. Pure planner (`clean | pending_push |
+  cloud_newer | conflict | mixed`) → notification c кнопками действий
+  (Push all / Bulk Pull... / Открыть Workspaces). Удобно перед
+  выключением ноутбука.
+- **Compare with cloud** — `VSCodeSync: Сравнить с облачной версией`.
+  Скачивает облачный blob в virtual document, открывает `vscode.diff`
+  против локального файла. Read-only — никаких записей.
+- **Adaptive auto-mode (quiet hours)** — новые настройки
+  `vscodesync.quietHours.start` / `quietHours.end` (HH:MM, поддержка
+  wrap через полночь, например `22:00→08:00`). Внутри окна `check-only`
+  автоматически апгрейдится до `full` (никто не работает — фоновая
+  синхронизация безопасна). `off` и `full` остаются нетронуты.
+- **Webhook digest** — `VSCodeSync: Отправить дайджест в вебхук
+  (Discord / Slack / Telegram)`. Setting `vscodesync.webhookDigestUrl`,
+  формат auto-detect по host (Discord webhooks, hooks.slack.com,
+  api.telegram.org). Re-uses pure `digestWebhookFormatter` +
+  `buildWeeklyDigest`. Recurring schedule — отложен на следующую фазу.
+- **Dedicated mini status-bar item** для autoSyncMode (отдельно от
+  основного). Иконки `$(eye-closed)` / `$(eye)` / `$(sync)` в зависимости
+  от режима. Клик — Quick Pick смены режима (вызывает существующий
+  `vscodesync.cycleAutoSyncMode`). Auto-refresh при смене настройки.
+
+### 🚀 Производительность
+
+- **`_shared/fetchWithTimeout.ts`** — общий wrapper над `fetch` с
+  `AbortController` (30s API / 120s data) + tracing на канал провайдера.
+  Подключён в `gdriveProvider.driveFetch + refreshAccessToken`,
+  `onedriveProvider.graphFetch + token refresh + upload session chunks`,
+  `dropboxProvider.apiFetch + token refresh`. Раньше эти три провайдера
+  использовали голый `fetch` — зависший сетевой запрос мог блокировать
+  цикл синхронизации навсегда.
+- **Dropbox bandwidth saving.** `ifNoneMatch` эмуляция через
+  `get_metadata.rev` — unchanged файлы теперь не качаются целиком
+  (см. также в «Исправления»).
+
+### 🔒 Безопасность
+
+- **Provider hash verify на pull-пути** — сравнение provider digest с
+  локально вычисленным после download'а blob'а. Mismatch → throw
+  `INTEGRITY_FAILED`. Skip для encrypted (provider видит ciphertext) и
+  wireGzip (provider digests .gz, не plaintext).
+
+### ♻️ Внутреннее
+
+- **`src/ui/i18nMessages.ts`** — централизованный словарь UI-строк
+  (sync labels, auto-mode labels, action labels, common, tooltip
+  builder). Цель — устранить en/ru drift, когда один tooltip говорит
+  «Last sync», а соседний «Последняя синхронизация» о том же. Компоненты
+  мигрируют постепенно (skeleton-acceptable).
+- **9 новых pure planners в `src/core/`** (Phase 24 skeletons,
+  wiring — следующая фаза):
+  - `remotePresencePlanner.ts` — F2 Cursor-style presence chips.
+  - `syncRewindPlanner.ts` — F6 точка восстановления по timestamp.
+  - `undoableActionRegistry.ts` — U3 in-memory ring для undo
+    destructive ops (TTL по умолчанию 60s).
+  - `contentDefinedChunking.ts` — M1 Buzhash rolling-hash boundary
+    finder (64-byte window, 16K min, 64K max, ~8K avg chunk).
+  - `passkeyOnlyMode.ts` — M4 решение allow/deny для passphrase
+    fallback с anti-lockout логикой.
+  - `githubReleasesProviderPlanner.ts` — M5 tag-naming convention для
+    GH Releases as snapshot provider.
+  - `s3ProviderPlanner.ts` — M2 bucket-name validation + key prefix
+    handling для будущего S3 provider.
+  - `trustedTeammatesInvitePlanner.ts` — X2 encode/decode/sign
+    invite-link для добавления доверенной машины.
+  - `goHomePreflightPlanner.ts` + `smartPullDigestPlanner.ts` —
+    pure backends к новым командам F1/F8 (см. «Новое»).
+- **Sentinel error classes** на каждом skeleton (`*NotReadyError`,
+  `*NotImplementedError`, `*NotConnectedError`) — UI ловит по имени и
+  роутит в «work in progress» состояние вместо тихой деградации.
+- **`autoSyncModeAdaptive.ts`** — pure helper `parseHmToMinutes` /
+  `isInsideQuietHours` / `effectiveAutoSyncMode`. Поддержка wrap через
+  полночь. Wired в `watchModePoller`.
+- **Test fixtures** — везде заменены реальные имена машин/workspace'ов
+  (`PROMED`, `059-1-ws-346`) на абстрактные (`alpha-workspace`,
+  `work-laptop`). Договорённость: unit-тесты никогда не используют
+  «личные» названия, даже как innocuous fixtures.
+- **+52 unit-тестов** (всего 2125). Lint = 0, compile OK.
+
+### 📦 Сборка
+
+- 15 atomic commits (по одному пункту roadmap). Marker
+  `~/.claude/roadmap-max-active` снят после завершения автопрохода.
+- Phase 24 в `docs/v1/roadmap.md` — 18 закрыто, 9 skeleton-acceptable,
+  1 blocked (X3 WebRTC P2P signaling — требует real signaling server,
+  перенесён в v2.5).
+
 ## [0.7.0] — 2026-05-21
 
 **Крупный релиз. Содержит breaking change в поведении автосинхронизации.**
