@@ -3913,6 +3913,37 @@ export class SyncEngine {
     const dl = await this.deps.provider.downloadFile(downloadPath, {
       ifNoneMatch,
     });
+    // X1 — provider digest verify on pull. Mirrors the push-side D01
+    // check: when the provider's metadata exposes md5/sha1/sha256, compare
+    // it against the digest we'd compute from the downloaded body. Skip
+    // for encrypted reads (the provider sees ciphertext) and for
+    // wire-compressed blobs (provider digests the .gz, not plaintext).
+    if (
+      !dl.notModified &&
+      !this.deps.decrypt &&
+      !wireGzip &&
+      this.resolveProviderHashVerify()
+    ) {
+      try {
+        if (dl.etag) {
+          const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
+          const expected = expectedProviderDigests(this.deps.provider.type, dl.body);
+          const cleaned = dl.etag.replace(/^"+|"+$/g, "").toLowerCase();
+          const matched = expected.some((d) => digestEquals(d.value, cleaned));
+          if (!matched && cleaned.length >= 32) {
+            throw new ProviderError(
+              "INTEGRITY_FAILED",
+              `Provider digest mismatch on pull ${posixRel}: provider=${cleaned} expected one of [${expected.map((d) => d.value).join(", ")}]`,
+            );
+          }
+        }
+      } catch (e) {
+        if (e instanceof ProviderError && e.code === "INTEGRITY_FAILED") throw e;
+        // Other failures (provider doesn't expose etag-as-digest, etc.)
+        // are non-fatal — local canonical hash check below catches the
+        // common corruption case anyway.
+      }
+    }
     if (dl.notModified) {
       if (file.localHash !== localCanon || file.syncStatus !== "ok") {
         file.localHash = localCanon;

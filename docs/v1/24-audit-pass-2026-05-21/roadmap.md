@@ -60,7 +60,7 @@
 
 ## 24.X · Wiring deferred
 
-- [ ] **X1** `D01` provider hash verify — расширить на `pullFile` (сейчас только push).
+- [x] **X1** `D01` provider hash verify расширен на `pullFile` — после download'а blob'а сравниваем provider etag с локальным digest. Skip для encrypted/wireGzip (provider видит другое). INTEGRITY_FAILED → throw.
 - [ ] **X2** `D06` Trusted teammates — UI для добавления через QR-код / share-link.
 - [ ] **X3** Phase 17 (Finish underbaked) WebRTC P2P signaling — раз и навсегда завершить hand-shake round-trip с реальным провайдером сигналинга или явно убрать в `v2.5`.
 
