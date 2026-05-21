@@ -72,7 +72,7 @@ async function seedConflictState(
   const updatedAt = new Date().toISOString();
   const meta: MetaJson = {
     files: {
-      [rel]: { hash: staleHash, etag: blobEtag, version: 99, machineId: "A", updatedAt },
+      [rel]: { hash: staleHash, etag: blobEtag ?? "", version: 99, machineId: "A", updatedAt },
     },
   };
   await provider.uploadFile(metaPath, Buffer.from(JSON.stringify(meta, null, 2) + "\n", "utf8"));

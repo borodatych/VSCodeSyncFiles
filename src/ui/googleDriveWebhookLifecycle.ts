@@ -193,7 +193,7 @@ export function registerGoogleDriveWebhookLifecycle(
           try {
             serverHandle = await startGraphWebhookLocalServer({
               port: action.port,
-              graphClientState: "__gdrive_unused__",
+              graphClientState: null,
               googleChannelToken: reservedChannelToken,
               onDriveChangeHint: () => {
                 recordWebhookPushNotification();

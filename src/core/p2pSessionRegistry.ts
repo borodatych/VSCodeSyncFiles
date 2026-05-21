@@ -39,13 +39,13 @@ export function createP2PSessionRegistry(): P2PSessionRegistry {
   };
 
   const severityRank = (e: P2PSessionEntry): number => {
+    // Higher rank = more visible in the single status-bar widget.
     switch (e.snapshot.state.kind) {
       case "connected": return 3;
       case "connecting":
       case "reconnecting": return 2;
-      case "ended": return 1;
-      case "idle":
-      default: return 0;
+      case "disconnected": return 1;
+      case "idle": return 0;
     }
   };
 

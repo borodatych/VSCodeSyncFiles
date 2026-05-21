@@ -10,6 +10,8 @@
 
 ## 1. WebRTC P2P sync (cloud-bypass mode) — XL · skeleton
 
+> **Финиш-план:** [v1 phase 17.1 (F-030)](../v1/17-finish-underbaked/roadmap.md#171-webrtc-p2p-signaling-round-trip-f-030) — конкретные подпункты для закрытия 60% → 100%.
+
 **Прогресс ночной волны:**
 - Signaling envelope: `src/core/p2pSignaling.ts` со strict-decoder (offer/answer/ice/bye, freshness-window, recipient-binding). 13 unit-тестов.
 - DataChannel layer: `src/core/p2pDataChannel.ts` поверх `@roamhq/wrtc` (lazy-load, fallback к null если binding не установлен). 8 unit-тестов на fake channel: send/onMessage round-trip с ArrayBuffer / Uint8Array / TypedArrayView, isOpen state, idempotent close.
@@ -30,6 +32,8 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 
 ## 2. Passkey/WebAuthn-разлок ключа шифрования — M · skeleton
 
+> **Финиш-план:** [v1 phase 17.2 (F-031)](../v1/17-finish-underbaked/roadmap.md#172-passkey-recovery-codes-ui-f-031) — закрывает 70% → 100% через recovery codes UI.
+
 **Прогресс ночной волны:** envelope-shape готов — `src/core/keyEnvelope.ts` (`KeyEnvelope` v1: `none` / `passphrase` / `webauthn`, `isKeyEnvelope` валидация, `envelopeNoneFromRawKey`/`rawKeyFromNoneEnvelope` round-trip, `bytesToB64`/`b64ToBytes`, `constantTimeEqual`). 13 unit-тестов. `deriveWebauthnKek` бросает `KeyEnvelopeNotImplementedError` — UI должен ловить и предлагать enroll.
 
 **Зачем:** ключ AES-256 живёт в SecretStorage как чистый секрет — компрометация ОС =
@@ -42,6 +46,8 @@ workflow «дом → стенд RDP»). Дифференциатор: «еди�
 - Опциональный fallback на passphrase, опциональное второе устройство.
 
 ## 3. WASM-ядро: zstd + BLAKE3 — L · partially DONE
+
+> **Финиш-план:** [v1 phase 17.3 (F-032)](../v1/17-finish-underbaked/roadmap.md#173-wasm-zstd--blake3-на-write-path-f-032) — добивает 50% → 100% через применение `canonicalHashAlgo` на write-path + migration plan.
 
 **Прогресс ночной волны:**
 - Wire-format готов — `src/core/wireCodec.ts` с pure-helpers `detectWireCodec / chooseWireCodec / flagsForCodec / describeCodec`. `MetaEntry.wireZstd?: boolean` объявлен в `cloudLayout.ts` (mutually exclusive с `wireGzip`). 11 unit-тестов на codec selection.

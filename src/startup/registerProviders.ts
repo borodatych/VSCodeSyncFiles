@@ -29,11 +29,16 @@ export function registerProviders(deps: RegisterProvidersDeps): ProviderRegistry
   registry.register("onedrive", () => new OneDriveProvider(context.secrets));
   registry.register(
     "gdrive",
-    () =>
-      new GdriveProvider(context.secrets, () => {
+    () => {
+      const provider = new GdriveProvider(context.secrets, () => {
         const raw = vscode.workspace.getConfiguration(CFG).get<string>("googleDriveClientId", "");
         return typeof raw === "string" ? raw : "";
-      }),
+      });
+      // v0.7 — apply folder-id cache TTL from the user setting.
+      const sec = vscode.workspace.getConfiguration(CFG).get<number>("gdrive.folderCacheTtlSec", 600);
+      provider.setFolderCacheTtl(Math.max(0, sec) * 1000);
+      return provider;
+    },
   );
   registry.register("yandex", () => {
     const cfg = vscode.workspace.getConfiguration(CFG);

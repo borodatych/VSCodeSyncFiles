@@ -6,8 +6,9 @@ const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
 
 export interface StartGraphWebhookLocalServerOptions {
   port: number;
-  /** Microsoft Graph `clientState` in JSON notification batches. */
-  graphClientState: string;
+  /** Microsoft Graph `clientState` in JSON notification batches. Optional —
+   *  pass `null` for a Google-Drive-only listener (no Graph notifications). */
+  graphClientState: string | null;
   /** Google Drive channel `token` — must match `X-Goog-Channel-Token` on notifications. */
   googleChannelToken?: string;
   onDriveChangeHint: () => void;
@@ -67,7 +68,19 @@ export async function startGraphWebhookLocalServer(
       let aborted = false;
       req.on("data", (d: unknown) => {
         if (aborted) return;
-        const buf = Buffer.isBuffer(d) ? d : Buffer.from(d as ArrayBufferView | string);
+        let buf: Buffer;
+        if (Buffer.isBuffer(d)) {
+          buf = d;
+        } else if (typeof d === "string") {
+          buf = Buffer.from(d);
+        } else if (ArrayBuffer.isView(d)) {
+          // ArrayBufferView (Uint8Array, etc.) — copy through to a Buffer.
+          const view = d;
+          buf = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+        } else {
+          // Unexpected shape — drop chunk; node http only ever emits Buffer/string.
+          return;
+        }
         total += buf.length;
         if (total > MAX_WEBHOOK_BODY_BYTES) {
           aborted = true;
@@ -82,7 +95,7 @@ export async function startGraphWebhookLocalServer(
         if (aborted) return;
         try {
           const raw = Buffer.concat(chunks).toString("utf8");
-          if (raw.length > 0) {
+          if (raw.length > 0 && opts.graphClientState !== null) {
             const j = JSON.parse(raw) as { value?: { clientState?: string }[] };
             const ok = j.value?.some((v) => v.clientState === opts.graphClientState) ?? false;
             if (ok) {

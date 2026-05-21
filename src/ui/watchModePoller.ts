@@ -9,6 +9,7 @@ import {
   isWebhookSubscriptionActive,
   isWebhookWatchPollingSuppressed,
 } from "./webhookChannelCoordinator.js";
+import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 
 const CFG = "vscodesync";
 
@@ -69,6 +70,12 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
   const tick = async (): Promise<void> => {
     const cfg = vscode.workspace.getConfiguration(CFG);
     if (!cfg.get<boolean>("watchMode", false)) {
+      return;
+    }
+    // v0.7 — Watch Mode also obeys autoSyncMode. `off` → silent; `check-only`
+    // → quietFullSync runs in check-only branch (statuses only).
+    const autoMode = parseAutoSyncMode(cfg.get<string>("autoSyncMode", "check-only"));
+    if (!isAutoCheckEnabled(autoMode)) {
       return;
     }
     if (syncSessionPause.isPaused()) {

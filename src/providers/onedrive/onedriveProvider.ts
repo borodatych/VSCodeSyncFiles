@@ -19,6 +19,7 @@ import {
   noteCloudTransportFailure,
   noteCloudTransportSuccess,
 } from "../../core/syncOfflineHints.js";
+import { withRetry } from "../../core/withRetry.js";
 
 const TOKEN_KEY = "vscodesync.onedrive.oauth";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -157,31 +158,40 @@ export class OneDriveProvider implements ICloudProvider {
   }
 
   private async graphFetch(url: string, init?: RequestInit): Promise<Response> {
-    let r: Response;
-    try {
-      r = await fetch(url, init);
-    } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
-    }
-    if (r.status === 429 || r.status === 503) {
-      const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-      noteProviderRateLimited(ra);
-      throw new ProviderError("RATE_LIMITED", `OneDrive throttled (${String(r.status)})`, {
-        retryAfterMs: ra,
-      });
-    }
-    if (r.status === 304) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-      return r;
-    }
-    if (r.ok) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-    }
-    return r;
+    // v0.17 D03 — uniform retry envelope.
+    return withRetry(
+      { op: "onedrive.graphFetch", maxAttempts: 3, initialDelayMs: 500 },
+      async (): Promise<Response> => {
+        let r: Response;
+        try {
+          r = await fetch(url, init);
+        } catch (e) {
+          bumpOfflineFlushBackoff();
+          noteCloudTransportFailure();
+          throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+        }
+        if (r.status === 429 || r.status === 503) {
+          const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
+          noteProviderRateLimited(ra);
+          throw new ProviderError("RATE_LIMITED", `OneDrive throttled (${String(r.status)})`, {
+            retryAfterMs: ra,
+          });
+        }
+        if (r.status >= 500 && r.status < 600) {
+          throw new ProviderError("SERVER_ERROR", `OneDrive 5xx (${String(r.status)})`);
+        }
+        if (r.status === 304) {
+          noteProviderRequestSuccess();
+          noteCloudTransportSuccess();
+          return r;
+        }
+        if (r.ok) {
+          noteProviderRequestSuccess();
+          noteCloudTransportSuccess();
+        }
+        return r;
+      },
+    );
   }
 
   async uploadFile(cloudPath: string, content: Buffer, options?: UploadOptions): Promise<UploadResult> {
@@ -265,7 +275,9 @@ export class OneDriveProvider implements ICloudProvider {
           "Content-Range": `bytes ${String(offset)}-${String(end - 1)}/${String(total)}`,
           "Content-Length": String(chunk.length),
         },
-        body: chunk,
+        // Cast through unknown: lib.dom BodyInit is stricter than the runtime
+        // accepts. A bare Uint8Array view ships fine over fetch.
+        body: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) as unknown as BodyInit,
       });
       if (!chunkRes.ok && chunkRes.status !== 202) {
         throw new ProviderError(
@@ -344,27 +356,40 @@ export class OneDriveProvider implements ICloudProvider {
 
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     const token = await this.accessToken();
-    const r = await this.graphFetch(childrenUrl(cloudPath), {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (r.status === 404) {
-      return [];
-    }
-    if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
-    }
-    const j = (await r.json()) as {
-      value?: { name?: string; size?: number; eTag?: string; lastModifiedDateTime?: string }[];
-    };
     const prefix = cloudPath.endsWith("/") ? cloudPath : `${cloudPath}/`;
-    return (
-      j.value?.map((it) => ({
-        cloudPath: `${prefix}${it.name ?? ""}`,
-        size: it.size,
-        etag: normalizeEtag(it.eTag ?? null),
-        modifiedIso: it.lastModifiedDateTime,
-      })) ?? []
-    );
+    // v0.8 F-007 — follow `@odata.nextLink` for Graph pagination (default
+    // 200 items/page). Hard cap defends against runaway folders.
+    const HARD_CAP = 50_000;
+    const out: FileMetadata[] = [];
+    let url: string | undefined = childrenUrl(cloudPath);
+    let firstHop = true;
+    while (url !== undefined && out.length < HARD_CAP) {
+      const r = await this.graphFetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.status === 404) {
+        return firstHop ? [] : out;
+      }
+      if (!r.ok) {
+        throw new ProviderError("NETWORK_ERROR", await r.text());
+      }
+      const j = (await r.json()) as {
+        value?: { name?: string; size?: number; eTag?: string; lastModifiedDateTime?: string }[];
+        "@odata.nextLink"?: string;
+      };
+      for (const it of j.value ?? []) {
+        out.push({
+          cloudPath: `${prefix}${it.name ?? ""}`,
+          size: it.size,
+          etag: normalizeEtag(it.eTag ?? null),
+          modifiedIso: it.lastModifiedDateTime,
+        });
+        if (out.length >= HARD_CAP) break;
+      }
+      url = j["@odata.nextLink"];
+      firstHop = false;
+    }
+    return out;
   }
 
   async createFolder(cloudPath: string): Promise<void> {

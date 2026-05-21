@@ -248,10 +248,15 @@ export async function peekWorkspaceInstanceLockHolder(
  * Forcibly acquires the lock for the current process, evicting whoever held it.
  * Returns the evicted lock body (so the caller can show the previous PID to the user),
  * or null if no foreign lock was present.
+ *
+ * v0.8 F-008 — also writes `<lock>.took-ownership-by` marker so the evicted
+ * window can show a toast on its next polling tick instead of silently
+ * flipping to Read-only.
  */
 export async function forceAcquireWorkspaceInstanceLock(
   storageDir: string,
   roots: string[],
+  winnerLabel?: string,
 ): Promise<WorkspaceLockBody | null> {
   if (roots.length === 0) {
     return null;
@@ -261,6 +266,19 @@ export async function forceAcquireWorkspaceInstanceLock(
 
   const evicted = await readLock(lockPath);
   await tryUnlink(lockPath);
+
+  // Mark the loser's notification — best-effort, never fatal.
+  if (evicted) {
+    try {
+      const markerPath = `${lockPath}.took-ownership-by`;
+      const marker = {
+        winnerPid: process.pid,
+        winnerLabel: winnerLabel ?? "VSCode",
+        atIso: new Date().toISOString(),
+      };
+      await fs.writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8").catch(() => undefined);
+    } catch { /* non-fatal */ }
+  }
 
   const nonce = randomUUID();
   const body: WorkspaceLockBody = {
@@ -282,6 +300,54 @@ export async function forceAcquireWorkspaceInstanceLock(
   setSecondaryWorkspaceInstanceReadOnly(false);
 
   return evicted ?? null;
+}
+
+/**
+ * v0.8 F-008 — read+consume the take-ownership marker if a peer forced
+ * eviction of this process's lock. Returns the marker once; subsequent
+ * calls find nothing (the marker file is removed). Used by the loser
+ * window to surface a toast on the next polling tick.
+ */
+export interface TookOwnershipMarker {
+  winnerPid: number;
+  winnerLabel: string;
+  atIso: string;
+}
+
+export async function consumeTookOwnershipMarker(
+  storageDir: string,
+  roots: string[],
+): Promise<TookOwnershipMarker | null> {
+  if (roots.length === 0) return null;
+  const hash = hashWorkspaceRoots(roots);
+  const lockPath = lockFilePath(storageDir, hash);
+  const markerPath = `${lockPath}.took-ownership-by`;
+  let raw: string;
+  try {
+    raw = await fs.readFile(markerPath, "utf8");
+  } catch {
+    return null;
+  }
+  // From here on: the marker file exists. Always best-effort unlink so a
+  // corrupt JSON doesn't linger forever and re-fire on every poll tick.
+  await tryUnlink(markerPath);
+  try {
+    const parsed = JSON.parse(raw) as Partial<TookOwnershipMarker>;
+    if (
+      typeof parsed.winnerPid === "number" &&
+      typeof parsed.winnerLabel === "string" &&
+      typeof parsed.atIso === "string"
+    ) {
+      return {
+        winnerPid: parsed.winnerPid,
+        winnerLabel: parsed.winnerLabel,
+        atIso: parsed.atIso,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

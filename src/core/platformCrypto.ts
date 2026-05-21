@@ -82,8 +82,13 @@ export function createNodeCrypto(): ICrypto {
 export function createWebCrypto(): ICrypto {
   const subtle = crypto.subtle;
 
+  // SubtleCrypto types declare `BufferSource` (= ArrayBuffer | ArrayBufferView<ArrayBuffer>).
+  // TS sees our `Uint8Array<ArrayBufferLike>` (which includes SharedArrayBuffer) as a
+  // wider type. We only ever produce regular ArrayBuffers — the cast is safe.
+  const bs = (u: Uint8Array): BufferSource => u as unknown as BufferSource;
+
   async function importAesKey(key: Uint8Array): Promise<CryptoKey> {
-    return subtle.importKey("raw", key, { name: "AES-GCM", length: 256 }, false, [
+    return subtle.importKey("raw", bs(key), { name: "AES-GCM", length: 256 }, false, [
       "encrypt",
       "decrypt",
     ]);
@@ -104,9 +109,9 @@ export function createWebCrypto(): ICrypto {
       const cryptoKey: CryptoKey = await importAesKey(key);
       // SubtleCrypto AES-GCM appends authTag to the end of ciphertext output
       const encrypted = await subtle.encrypt(
-        { name: "AES-GCM", iv, tagLength: AUTH_TAG_BYTES * 8 },
+        { name: "AES-GCM", iv: bs(iv), tagLength: AUTH_TAG_BYTES * 8 },
         cryptoKey,
-        plaintext,
+        bs(plaintext),
       );
       // encrypted = ciphertext || authTag (WebCrypto convention)
       const result = new Uint8Array(IV_BYTES + encrypted.byteLength);
@@ -124,15 +129,15 @@ export function createWebCrypto(): ICrypto {
       const ciphertextWithTag = blob.subarray(IV_BYTES);
       const cryptoKey: CryptoKey = await importAesKey(key);
       const decrypted = await subtle.decrypt(
-        { name: "AES-GCM", iv, tagLength: AUTH_TAG_BYTES * 8 },
+        { name: "AES-GCM", iv: bs(iv), tagLength: AUTH_TAG_BYTES * 8 },
         cryptoKey,
-        ciphertextWithTag,
+        bs(ciphertextWithTag),
       );
       return new Uint8Array(decrypted);
     },
 
     async sha256(data: Uint8Array): Promise<Uint8Array> {
-      const digest = await subtle.digest("SHA-256", data);
+      const digest = await subtle.digest("SHA-256", bs(data));
       return new Uint8Array(digest);
     },
 

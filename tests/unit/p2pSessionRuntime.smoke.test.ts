@@ -127,12 +127,12 @@ describe("p2pSessionRuntime — in-process loopback smoke", () => {
 
     const received: { type: string; payload: Buffer }[] = [];
     a.channel.onFrame((type, _seq, payload) => { received.push({ type, payload }); });
-    b.channel.sendFrame("data_chunk", Buffer.from("hello-from-bob"));
+    b.channel.sendFrame("file_chunk", Buffer.from("hello-from-bob"));
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
     expect(received.length).toBeGreaterThan(0);
     if (received[0]) {
-      expect(received[0].type).toBe("data_chunk");
+      expect(received[0].type).toBe("file_chunk");
       expect(received[0].payload.toString("utf8")).toBe("hello-from-bob");
     }
 

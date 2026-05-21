@@ -8,6 +8,156 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-21
+
+**Крупный релиз. Содержит breaking change в поведении автосинхронизации.**
+
+### ⚠ Breaking
+
+- **`vscodesync.autoSyncMode` по умолчанию = `check-only`.** Раньше любое
+  сохранение файла (`onSave`), открытие (`onOpen`) и фокус окна (`onFocus`)
+  автоматически дёргали push/pull. Это создавало «гонку» при работе с одним
+  workspace на нескольких машинах одновременно: дома сохранил → на работе
+  откатилось → дома снова правишь → бесконечный цикл. Новый дефолт
+  `check-only` оставляет автоматику только для **обновления статусов**
+  (`pending_push` / `cloud_newer` / `conflict` подсвечиваются в дереве),
+  но **push и pull выполняются только вручную**. Восстановить старое
+  поведение: `vscodesync.autoSyncMode = full` или команда
+  `VSCodeSync: Auto-sync mode → full`.
+
+### ✨ Новое
+
+- **`autoSyncMode`** — три режима: `off` (без автоматики), `check-only`
+  (только подсветка статусов, default), `full` (историческое поведение).
+- **Параллельная синхронизация** — `sync.concurrency` (default 4) для файлов
+  внутри workspace и `sync.workspaceConcurrency` (default 2) для workspace'ов.
+  Раньше один файл за раз — на больших workspace'ах ускорение до 4×.
+- **Adaptive concurrency** — параллелизм автоматически снижается при
+  низком заряде батареи, высокой загрузке RAM, или 429/503 от провайдера.
+- **Connectivity probe + status bar widget** — иконка online/degraded/offline
+  на статус-баре. При offline auto-sync тихо приостанавливается (без
+  заваливания Activity Feed ошибками).
+- **Sync profiler** — `VSCodeSync: Профиль синка` показывает топ-15
+  самых медленных файлов с разбивкой hash/network/verify ms. Opt-in через
+  `vscodesync.diagnostics.profileSync`.
+- **`vscodesync://` URI scheme** — deep-links для workspace / file / command.
+  Команда `VSCodeSync: Копировать share-ссылку` копирует ссылку в clipboard.
+- **Invite-ссылки** — `VSCodeSync: Сгенерировать invite-ссылку для коллеги`
+  (TTL 24h/7d/30d/без срока) + `VSCodeSync: Подключиться по invite-ссылке`.
+- **Conflict — keep both** — третий путь разрешения помимо keep-mine /
+  take-theirs: облачная версия сохраняется как `<name>.conflict-<machine>-<ts>`
+  рядом, локальная остаётся как pending push.
+- **Repair cloud manifest** — `VSCodeSync: Восстановить облачный манифест...`
+  пересобирает повреждённый манифест из scan blob'ов + `_meta.json`.
+- **`VSCodeSync: Почему файл не синкается?`** — диагностическая команда
+  с 10-чек-листом (trust, mode, pause, schedule, rate-limit, workspace state,
+  tracking, status, soft lock, last sync).
+- **Support bundle export** — `VSCodeSync: Экспорт support bundle (для
+  отчёта о баге)` создаёт папку с redacted settings + metadata. Все токены /
+  emails / UUID вырезаются.
+- **SBOM report** — `VSCodeSync: Экспорт списка синкаемых файлов (SBOM)`
+  показывает в Markdown какие файлы и куда синкаются.
+- **Trusted teammates** — `VSCodeSync: Добавить доверенную машину...`
+  пропускает `requireMachineApproval` гейт для своей машины. Удобно
+  командам, где не хочется approval modal на каждую новую workstation.
+- **`.vscodesyncrc.json`** — per-workspace overrides allowlisted настроек
+  (autoSyncMode, sync.concurrency, lineEnding, …). Файл коммитится в Git,
+  применяется автоматически.
+- **Контекстуальные подсказки** — однократно в 6 часов, при возврате
+  фокуса в окно: «5+ конфликтов? Resolve All», «Облако переполнено?
+  Открыть SBOM», и т.п. Opt-out: `vscodesync.hints.enabled = false`.
+- **AI Explain Conflict** — `VSCodeSync: AI · объяснить конфликт` копирует
+  готовый prompt в clipboard для вставки в Copilot Chat / ChatGPT (с
+  3-секционным system prompt: LOCAL intent / REMOTE intent / recommendation).
+- **`.gitignore` watcher** — авто-проверяет, что наша блок-разметка не
+  пропала после rebase / reset; предлагает re-prompt с 5-min dedup.
+
+### 🚀 Производительность
+
+- **Google Drive folder-id cache** — раньше каждый push на файл
+  `src/core/foo.ts` делал 5-7 GET перед PUT (разрешение пути через
+  `files.list?q=name=…`). Теперь — один прогрев и кэш на 10 минут (настройка
+  `gdrive.folderCacheTtlSec`). На больших workspace'ах ускорение от 3× до 10×.
+- **listFolder pagination** — Google Drive (`nextPageToken`), OneDrive
+  (`@odata.nextLink`), Yandex (`offset`). Workspace'ы с > 1000 файлов
+  больше не теряют файлы при list.
+- **Batched cfg writes** — внутри `syncWorkspace` N файловых операций
+  больше не делают N записей в `vscodesync.json` — один flush в конце.
+- **Lazy history snapshots** — `historyMode = lazy` копит снимки в очереди
+  и отгружает пакетом раз в N минут (по умолчанию `inline` — старое
+  поведение).
+- **withRetry** — единая retry-обвязка для Google Drive `driveFetch` и
+  OneDrive `graphFetch`: 5xx (SERVER_ERROR) → exponential backoff с jitter,
+  429 → уважает Retry-After header.
+- **Provider registry memoisation** — `getFor()` теперь кэширует instance
+  per-type, не пересоздаёт класс на каждый вызов.
+
+### 🔒 Безопасность
+
+- **Workspace Trust gates** на 4 destructive commands (repair manifest,
+  keep-both, ai-explain, URI openFile). Untrusted workspace не может
+  спровоцировать запись на cloud / disk через эти пути.
+- **`vscodesync://` URI whitelist** — команды через URI ограничены
+  read-only списком (открыть Activity Feed, профайлер, support bundle).
+  Destructive (delete, repair) **не** доступны через URI.
+- **Provider hash verify** (opt-in, `vscodesync.providerHashVerify`) —
+  после upload сравнивается дайджест провайдера (md5 у GDrive/Yandex,
+  content_hash у Dropbox, sha256 у OneDrive) с локально вычисленным.
+  Mismatch → `INTEGRITY_FAILED` (retry-able).
+
+### 🐛 Исправления
+
+- **Encrypted local backup** — теперь `throws` при `.enc` файле без
+  ключа вместо silent возврата ciphertext-as-plaintext (был footgun).
+- **`consumeTookOwnershipMarker`** — corrupt JSON marker больше не висит
+  вечно, разблокируя toast на каждом poll-tick.
+- **`insightsWeeklyDigest.byKind`** инициализирует все 21 ActivityKind
+  (было 7 — остальные превращали счётчик в NaN).
+- **`syncEngine.repairByCloudScan`** теперь пишет `machineId` вместо
+  несуществующего `updatedBy` (out-of-schema поле в `_meta.json`).
+- **`p2pSessionRegistry`** — убран dead `case "ended"`, добавлен корректный
+  ranking для `disconnected`.
+- **`passkeyCommands.orderForDisplay`** — primary passkey теперь поднимается
+  наверх QuickPick (была swapped signature).
+- **Take-ownership notification** — проигравшее окно VSCode получает
+  однократный toast при следующем focus вместо silent flip в Read-only.
+- **Default 90-day window** в `conflictHeatmapTimeline` (раньше принимал
+  события с 1970-го).
+- **Windows-drive guard** в `zipImportPlanner` — `C:/Windows/system32/evil.exe`
+  больше не проходит как «безопасный относительный путь».
+- **`vscodesync://` URI handler** — `openFile` теперь требует Workspace
+  Trust, host segment валидируется до synthesise (precise error code
+  вместо generic `scheme_mismatch`).
+
+### ♻️ Внутреннее
+
+- **190+ новых pure-helpers** в `src/core/` (parallelLimit, gdriveFolderIdCache,
+  withRetry, planQuotaExhaustion, explainFileSyncState, redactSettings,
+  parseVscodeSyncUri, planContextualHints, encodeQrSdpEnvelope,
+  providerHashVerify, gitignoreCoexistence, detectWorkspaceContext,
+  buildQuickSwitchItems, notebookConflictPlanner, planDropboxUpload,
+  buildSbomReport, buildCrossMachineDiff, formatDigestForWebhook,
+  trustedMachinesRegistry, perGlobScheduler, encryptedLocalBackup,
+  syncExcludeStore, buildReleaseNotes, buildConflictHeatmapTimeline,
+  planZipImport, scmResourceGrouper, SyncProgressEstimator,
+  buildWelcomeMessage, vscodeTaskDefinitions, connectivityProbe,
+  schemaMigrationCoordinator, workspaceInviteLink, adaptiveConcurrency,
+  vscodesyncRc, lazyProviderLoader). Все unit-тестированы.
+- **+2000 новых unit-тестов** (всего ~2070).
+- **TS lib drift fixes** — `Uint8Array<ArrayBufferLike>` vs `BufferSource`
+  в `platformCrypto` / `platformCompression`; `Buffer` vs `BodyInit` в
+  fetch body для gdrive/onedrive providers.
+- **Auto-sync mode wiring** — gate во всех 6 точках авто-триггеров (save,
+  open, focus, watch poll, push-on-commit, startup pull).
+- **Engine factory** обогащён 11 новыми resolver hooks (читают setting
+  live, без rebuild engine при изменении конфигурации).
+- **17 новых настроек** в `contributes.configuration` с RU/EN nls.
+
+### 📦 Сборка
+
+- 24 фазы roadmap (`docs/v1/roadmap.md`) — все `[x]` либо `[~]` (deferred
+  с явным обоснованием).
+
 ## [0.6.3] — 2026-05-13
 
 ### Fixed

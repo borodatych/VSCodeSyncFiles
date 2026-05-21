@@ -5,9 +5,15 @@ import type { SyncEngine } from "../core/syncEngine.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
+import { isCloudConnectivityOffline } from "./connectivityProbeWidget.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
 import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
+import {
+  isAutoCheckEnabled,
+  isAutoFullSyncEnabled,
+  parseAutoSyncMode,
+} from "../core/autoSyncMode.js";
 import {
   allowImmediateOfflineFlushRetry,
   bumpOfflineFlushBackoff,
@@ -34,12 +40,34 @@ export interface QuietFullSyncAllFoldersDeps {
 /**
  * Full sync (`syncWorkspace` per active id) for every workspace folder that has VSCodeSync workspaces. Errors swallowed.
  * Returns `true` if any file was pushed or pulled (changes detected), `false` if fully idle.
+ *
+ * v0.7 — when the global `vscodesync.autoSyncMode` setting is `check-only`,
+ * the per-workspace pass calls `engine.checkWorkspaceStatus` instead of
+ * `engine.syncWorkspace` — statuses are updated but no file moves.
+ * When `off`, the function returns immediately without any work.
+ *
+ * Callers that need to bypass the gate (manual user-driven sync,
+ * deferred-flush, webhook-driven sync) should pass `bypassAutoSyncMode: true`.
  */
-export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps): Promise<boolean> {
+export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps & { bypassAutoSyncMode?: boolean }): Promise<boolean> {
   if (!vscode.workspace.isTrusted) {
     return false;
   }
+  const autoMode = parseAutoSyncMode(
+    vscode.workspace.getConfiguration("vscodesync").get<string>("autoSyncMode", "check-only"),
+  );
+  const allowFull = d.bypassAutoSyncMode === true || isAutoFullSyncEnabled(autoMode);
+  const allowCheck = d.bypassAutoSyncMode === true || isAutoCheckEnabled(autoMode);
+  if (!allowCheck) {
+    return false;
+  }
   if (!d.bypassRateLimit && isAutoSyncBlockedByRateLimit()) {
+    return false;
+  }
+  // v0.18 W5 — skip silently when the connectivity probe says we're
+  // offline. Manual user-driven sync calls pass `bypassRateLimit` and
+  // also bypass this check.
+  if (!d.bypassRateLimit && isCloudConnectivityOffline()) {
     return false;
   }
   if (!d.bypassSchedule && isAutoSyncBlockedBySchedule()) {
@@ -75,7 +103,12 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
       const engine = d.makeEngine(folder.uri.fsPath, p, mc.machineId, mc.machineName);
       const fresh = await WorkspaceConfigManager.load(folder.uri.fsPath);
       for (const aw of fresh.activeWorkspaces) {
-        await engine.syncWorkspace(aw.workspaceId);
+        if (allowFull) {
+          await engine.syncWorkspace(aw.workspaceId);
+        } else {
+          // check-only: update sync statuses, but no push/pull happens.
+          await engine.checkWorkspaceStatus(aw.workspaceId);
+        }
       }
     }
   } catch (e: unknown) {

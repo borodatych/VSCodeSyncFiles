@@ -93,9 +93,19 @@ export class SmartConflictPredictionService implements vscode.Disposable {
     this.statusBar.dispose();
   }
 
-  /** v2.9.3 — pull `_machines.json` and refresh the in-memory presence cache. */
+  /** v2.9.3 — pull `_machines.json` and refresh the in-memory presence cache.
+   *  v0.8 — guarded by `lastPresenceFetchMs` so back-to-back triggers
+   *  (e.g. editor flip + save in <1s) don't double up the provider call. */
   private async fetchPresence(): Promise<void> {
     if (!this.tryAuthenticatedProvider) return;
+    const nowMs = Date.now();
+    // Throttle: skip if we already fetched within the last (interval − 1s).
+    // Allows the timer-driven fetch to always succeed, while debouncing
+    // ad-hoc callers that may invoke fetchPresence sooner.
+    if (nowMs - this.lastPresenceFetchMs < PRESENCE_FETCH_INTERVAL_MS - 1_000) {
+      return;
+    }
+    this.lastPresenceFetchMs = nowMs;
     try {
       const provider = await this.tryAuthenticatedProvider();
       if (!provider) return;
@@ -105,8 +115,7 @@ export class SmartConflictPredictionService implements vscode.Disposable {
       const entries = parseMachinesRegistry(res.body);
       const gc = await this.globalConfig.load().catch(() => null);
       const myMachineId = gc?.machineId ?? "";
-      const nowMs = Date.now();
-      this.lastPresenceFetchMs = nowMs;
+      const receivedAtMs = Date.now();
       for (const e of entries) {
         if (e.machineId === myMachineId) continue;
         if (e.currentEditing === undefined) continue; // unknown — skip
@@ -114,7 +123,7 @@ export class SmartConflictPredictionService implements vscode.Disposable {
           machineId: e.machineId,
           machineName: e.machineName,
           frame: e.currentEditing,
-          receivedAtMs: nowMs,
+          receivedAtMs,
         });
       }
     } catch (err) {

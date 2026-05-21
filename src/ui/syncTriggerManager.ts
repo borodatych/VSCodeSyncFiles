@@ -9,6 +9,11 @@ import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "../core/pathMa
 import type { SyncEngine } from "../core/syncEngine.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { isIgnoredSyncTriggerPath, resolveSaveDebounceMs } from "../core/syncTriggerLogic.js";
+import {
+  isAutoCheckEnabled,
+  isAutoFullSyncEnabled,
+  parseAutoSyncMode,
+} from "../core/autoSyncMode.js";
 import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { subscribeSyncFileLock } from "../core/syncFileLock.js";
@@ -31,6 +36,13 @@ import { verboseLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
 const GIT_EXT = "vscode.git";
+
+/** v0.7 — read live setting `vscodesync.autoSyncMode`. */
+function currentAutoSyncMode(): "off" | "check-only" | "full" {
+  return parseAutoSyncMode(
+    vscode.workspace.getConfiguration(CFG).get<string>("autoSyncMode", "check-only"),
+  );
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -247,6 +259,12 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       if (isIgnoredSyncTriggerPath(doc.uri.fsPath)) {
         return;
       }
+      // v0.7 — autoSyncMode: only `full` triggers an automatic push.
+      // `check-only` / `off` rely on the user pressing Push manually; the
+      // file-decoration tree will still show `pending_push`.
+      if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
+        return;
+      }
       const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
       if (!folder) {
         return;
@@ -309,6 +327,11 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       if (syncSessionPause.isPaused()) {
         return;
       }
+      // v0.7 — `off` blocks all automatic activity. `check-only` falls
+      // through to runFocusSyncAll which itself respects the mode.
+      if (!isAutoCheckEnabled(currentAutoSyncMode())) {
+        return;
+      }
       const delay = vscode.workspace.getConfiguration(CFG).get<number>("syncOnFocusDelayMs", 3000);
       focusTimer = setTimeout(() => {
         focusTimer = undefined;
@@ -342,6 +365,12 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       }
       const conf = vscode.workspace.getConfiguration(CFG);
       if (!conf.get<boolean>("syncOnOpen", true)) {
+        return;
+      }
+      // v0.7 — auto pull-on-open requires `full` mode. In check-only the
+      // tree decoration tells the user a fresher version exists; they pull
+      // manually.
+      if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
         return;
       }
       const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
@@ -484,6 +513,10 @@ function registerGitPushOnCommit(
             return;
           }
           if (syncSessionPause.isPaused()) {
+            return;
+          }
+          // v0.7 — auto push-on-commit requires `full` mode.
+          if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
             return;
           }
           if (!vscode.workspace.getConfiguration(CFG).get<boolean>("pushOnCommit", false)) {

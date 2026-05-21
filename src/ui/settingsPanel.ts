@@ -140,6 +140,17 @@ const ALL_KEYS = [
   "workspaceInactiveDays", "batchAddWarnThreshold", "longAbsenceThresholdDays",
   "quickTransferTtlDays",
   "telemetry", "telemetryIngestUrl",
+  // v0.7 — performance / auto-sync mode tunables.
+  "autoSyncMode",
+  "sync.concurrency", "sync.workspaceConcurrency",
+  "verifyUploadHash", "historyVersions", "historyMode", "historyLazyDrainMinutes",
+  "metaWriteRetries", "verifyRetries", "softLockStaleHours",
+  "tokenRefreshSkewMinutes", "saveDebounceSecDefault",
+  "watchIdleCyclesBeforeBackoff", "localBackupDir",
+  "gdrive.folderCacheTtlSec",
+  "onedrive.uploadSessionThresholdMB", "onedrive.uploadChunkMB",
+  "yandex.apiTimeoutMs", "yandex.dataTimeoutMs", "yandex.lockedRetryDelayMs",
+  "diagnostics.profileSync",
 ];
 
 function getSettingsHtml(): string {
@@ -298,6 +309,7 @@ function getSettingsHtml(): string {
 <nav class="sidebar">
   <div class="sidebar-item active" onclick="nav('providers',this)">🔑 Провайдеры</div>
   <div class="sidebar-item" onclick="nav('sync',this)">☁ Синхронизация</div>
+  <div class="sidebar-item" onclick="nav('performance',this)">🚀 Производительность</div>
   <div class="sidebar-item" onclick="nav('notifications',this)">🔔 Уведомления</div>
   <div class="sidebar-item" onclick="nav('watchmode',this)">👁 Watch Mode</div>
   <div class="sidebar-item" onclick="nav('reliability',this)">🛡 Надёжность</div>
@@ -393,6 +405,38 @@ function getSettingsHtml(): string {
     ${number("workspaceInactiveDays","Дней до архивирования","Предлагать архивировать workspace если нет активности (0 — не проверять).",0,3650)}
     ${number("batchAddWarnThreshold","Порог пакетного добавления","Предупреждать при добавлении больше N файлов за раз.",1,10000)}
     ${number("longAbsenceThresholdDays","Порог «долгого отсутствия» (дни)","Показывать подсказку о накопившихся изменениях после N дней.",1,365)}
+  </div>
+
+  <!-- ── ПРОИЗВОДИТЕЛЬНОСТЬ ──────────────────────────────────── -->
+  <div id="performance" class="section">
+    <h2>🚀 Производительность и авто-режим</h2>
+
+    ${select("autoSyncMode","Режим автосинхронизации","Что делают автоматические триггеры (save / open / focus / watch / commit). off — ничего, check-only — только статусы, full — историческое поведение.",["off","check-only","full"])}
+    ${number("sync.concurrency","Параллелизм файлов","Сколько файлов синхронизировать параллельно в одном workspace. 1 = последовательно (старое).",1,32)}
+    ${number("sync.workspaceConcurrency","Параллелизм workspace'ов","Сколько workspace'ов синкать параллельно при pushAll. Учитывайте rate-limit провайдера.",1,16)}
+    ${select("verifyUploadHash","Проверка хэша после upload","plaintext-only — проверять только для незашифрованных файлов (старое). never — не проверять, экономия 1 GET на push.",["plaintext-only","never"])}
+    ${select("historyMode","Режим истории файлов","inline — сохранять снимок на каждый push (+1 GET +1 PUT). lazy — отгружать пакетом. off — без истории.",["inline","lazy","off"])}
+    ${number("historyVersions","Версий в .history/","Сколько версий каждого файла держать в облаке. 0 — без ротации.",0,200)}
+    ${number("historyLazyDrainMinutes","Период отлива истории (мин)","Только для historyMode=lazy: как часто отгружать накопленные снимки.",1,720)}
+    ${number("metaWriteRetries","Retry для _meta.json","Сколько раз пытаться записать meta при гонке с другой машиной.",1,10)}
+    ${number("verifyRetries","Retry для verify-hash","Сколько раз перепроверять хэш blob'а после upload.",1,10)}
+    ${number("softLockStaleHours","Soft-lock TTL (часы)","Через сколько часов editingSince считается устаревшим.",1,168)}
+    ${number("tokenRefreshSkewMinutes","Обновление токена за (мин)","За сколько минут до истечения обновлять OAuth-токен.",1,60)}
+    ${number("saveDebounceSecDefault","Save-debounce по умолчанию (сек)","Дефолтная задержка push после save (если workspace не задал свою).",0,300)}
+    ${number("watchIdleCyclesBeforeBackoff","Циклов watch до backoff","Сколько пустых watch-циклов ждать до удвоения интервала.",1,100)}
+    ${text("localBackupDir","Папка локальных бэкапов","Относительно корня workspace. Дефолт: .vscode/vscodesync-local-backup")}
+    ${number("gdrive.folderCacheTtlSec","TTL кэша Google Drive folder-id (сек)","Кэш ускоряет деревообход путей. 0 = отключить.",0,86400)}
+    ${number("onedrive.uploadSessionThresholdMB","OneDrive: порог session upload (МБ)","Выше — multipart session.",1,250)}
+    ${number("onedrive.uploadChunkMB","OneDrive: размер chunk (МБ)","Кратно 320 КБ; 4–8 на быстром канале.",0.32,60)}
+    ${number("yandex.apiTimeoutMs","Yandex: API таймаут (мс)","Метаданные / auth.",5000,300000)}
+    ${number("yandex.dataTimeoutMs","Yandex: data таймаут (мс)","Upload PUT / download GET.",10000,600000)}
+    ${number("yandex.lockedRetryDelayMs","Yandex: 423 retry (мс)","Пауза перед повтором при HTTP 423.",100,30000)}
+    ${toggle("diagnostics.profileSync","Профилировать sync","Собирать тайминги push/pull для команды «VSCodeSync: Профиль синка». Минимальный оверхед.")}
+
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="runCmd('vscodesync.cycleAutoSyncMode')">🚦 Сменить авто-режим</button>
+      <button class="btn btn-secondary" onclick="runCmd('vscodesync.profileSync')">📊 Открыть профиль синка</button>
+    </div>
   </div>
 
   <!-- ── УВЕДОМЛЕНИЯ ─────────────────────────────────────────── -->

@@ -15,6 +15,9 @@ export type ActivityKind =
   | "remove"
   | "resolve_keep_mine"
   | "resolve_take_theirs"
+  | "resolve_keep_both"
+  | "workspace_remote_deleted"
+  | "manifest_repaired"
   | "hash_migration"
   // v3 events emitted by future engine wiring; pre-registered so the
   // pure planners (v3.B/D/I/K/L) can reference these kinds without a

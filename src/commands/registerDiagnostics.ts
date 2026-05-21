@@ -27,6 +27,10 @@ import {
   peekWorkspaceInstanceLockHolder,
 } from "../core/workspaceInstanceLock.js";
 import { buildHealthCheckReport } from "../ui/healthCheckReport.js";
+import {
+  buildSyncProfileReport,
+  type SyncProfileBuffer,
+} from "../core/syncProfileBuffer.js";
 
 export interface DiagnosticsCommandsDeps {
   globalConfig: GlobalConfigManager;
@@ -50,6 +54,8 @@ export interface DiagnosticsCommandsDeps {
   ) => SyncEngine;
   /** Open VS Code folder list — usually `vscode.workspace.workspaceFolders ?? []`. */
   roots: () => readonly vscode.WorkspaceFolder[];
+  /** v0.7 — profile buffer shared with the engine factory. */
+  profileBuffer: SyncProfileBuffer;
 }
 
 export function registerDiagnosticsCommands(
@@ -66,8 +72,10 @@ export function registerDiagnosticsCommands(
     getEncKey,
     makeEngine,
     roots,
+    profileBuffer,
   } = deps;
   void registry;
+  const profileChannel = vscode.window.createOutputChannel("VSCodeSync · Profile");
 
   return [
     vscode.commands.registerCommand("vscodesync.takeSyncOwnership", async () => {
@@ -87,7 +95,8 @@ export function registerDiagnosticsCommands(
       if (choice !== "Стать основным") {
         return;
       }
-      await forceAcquireWorkspaceInstanceLock(storageDir, currentRoots);
+      const gc = await globalConfig.load();
+      await forceAcquireWorkspaceInstanceLock(storageDir, currentRoots, gc.machineName);
       refreshWorkspaceInstanceLock();
       await vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
     }),
@@ -166,6 +175,32 @@ export function registerDiagnosticsCommands(
           );
         }
       }
+    }),
+
+    vscode.commands.registerCommand("vscodesync.profileSync", () => {
+      const enabled = vscode.workspace
+        .getConfiguration("vscodesync")
+        .get<boolean>("diagnostics.profileSync", false);
+      const snap = profileBuffer.snapshot();
+      const lines = buildSyncProfileReport(snap, 15);
+      profileChannel.clear();
+      if (!enabled) {
+        profileChannel.appendLine(
+          "VSCodeSync · Profile: настройка vscodesync.diagnostics.profileSync = false — сбор отключён.",
+        );
+        profileChannel.appendLine(
+          "Включите её, выполните push/pull/sync и повторите эту команду.",
+        );
+        profileChannel.appendLine("");
+      }
+      for (const ln of lines) {
+        profileChannel.appendLine(ln);
+      }
+      profileChannel.show(true);
+    }),
+
+    new vscode.Disposable(() => {
+      profileChannel.dispose();
     }),
   ];
 }

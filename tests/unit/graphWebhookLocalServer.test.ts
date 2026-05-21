@@ -24,8 +24,13 @@ describe("graphWebhookLocalServer", () => {
           (res) => {
             const chunks: Buffer[] = [];
             res.on("data", (c: unknown) => {
-              const buf = Buffer.isBuffer(c) ? c : Buffer.from(c as ArrayBufferView | string);
-              chunks.push(buf);
+              if (Buffer.isBuffer(c)) {
+                chunks.push(c);
+              } else if (typeof c === "string") {
+                chunks.push(Buffer.from(c));
+              } else if (ArrayBuffer.isView(c)) {
+                chunks.push(Buffer.from(c.buffer, c.byteOffset, c.byteLength));
+              }
             });
             res.on("end", () => {
               resolve(Buffer.concat(chunks).toString("utf8"));

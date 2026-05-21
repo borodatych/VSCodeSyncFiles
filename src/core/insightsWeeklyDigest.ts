@@ -72,6 +72,21 @@ export function buildWeeklyDigest(input: WeeklyDigestInput): WeeklyDigest {
     remove: 0,
     resolve_keep_mine: 0,
     resolve_take_theirs: 0,
+    resolve_keep_both: 0,
+    workspace_remote_deleted: 0,
+    manifest_repaired: 0,
+    hash_migration: 0,
+    branch_mismatch_detected: 0,
+    key_rotation_started: 0,
+    key_rotation_completed: 0,
+    key_rotation_resumed: 0,
+    backup_verified: 0,
+    backup_drift_detected: 0,
+    quota_warning: 0,
+    quota_critical: 0,
+    quota_auto_pause: 0,
+    share_link_used: 0,
+    p2p_session: 0,
   };
   const fileCounts = new Map<string, number>();
   const machineCounts = new Map<string, number>();

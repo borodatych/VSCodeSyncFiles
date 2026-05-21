@@ -78,5 +78,38 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
     vscode.commands.registerCommand("vscodesync.showSyncSummary", async () => {
       await statusBar.showDashboard();
     }),
+
+    vscode.commands.registerCommand("vscodesync.cycleAutoSyncMode", async () => {
+      const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
+      const cur = cfg.get<string>("autoSyncMode", "check-only");
+      const picked = await vscode.window.showQuickPick(
+        [
+          {
+            label: "off",
+            description: "Никакой автосинхронизации. Push / Pull / Sync — только вручную.",
+            value: "off" as const,
+          },
+          {
+            label: "check-only",
+            description:
+              "Только проверять статусы (cloud_newer / pending_push / conflict). Push / Pull — вручную. Рекомендуется при работе с одним workspace на нескольких машинах.",
+            value: "check-only" as const,
+          },
+          {
+            label: "full",
+            description:
+              "Полная синхронизация: push на save (debounce), pull на open, full sync на focus, watch poll. Историческое поведение.",
+            value: "full" as const,
+          },
+        ],
+        { placeHolder: `Сейчас: ${cur}` },
+      );
+      if (!picked) return;
+      await cfg.update("autoSyncMode", picked.value, vscode.ConfigurationTarget.Global);
+      await statusBar.refresh();
+      await vscode.window.showInformationMessage(
+        `VSCodeSync · авто-режим: ${picked.label}`,
+      );
+    }),
   ];
 }

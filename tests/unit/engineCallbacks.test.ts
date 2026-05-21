@@ -160,7 +160,7 @@ describe("onNewConflict callback", () => {
     // Use a stale hash on B's local config so: base = A-version, local = B-version, cloud = A-version
     // → detectChange: "base != local && cloud == base" → push. But we want conflict:
     // Simulate by setting B's localHash to stale hash (pre-original)
-    const staleHash = await computeHash(absB, {});
+    const staleHash = await computeHash(absB, { lineEnding: "lf" });
     const wcB = await WorkspaceConfigManager.load(rootB);
     const fileEntry = wcB.files.find((f) => f.localPath === rel);
     if (fileEntry) {
@@ -181,7 +181,7 @@ describe("onNewConflict callback", () => {
     const metaDl = await provider.downloadFile(metaCloudPath(wsId));
     const meta = JSON.parse(metaDl.body.toString()) as MetaJson;
     if (meta.files[rel]) {
-      meta.files[rel] = { ...meta.files[rel], hash: "fake-base-hash", etag: undefined };
+      meta.files[rel] = { ...meta.files[rel], hash: "fake-base-hash", etag: "" };
     }
     await provider.uploadFile(metaCloudPath(wsId), Buffer.from(JSON.stringify(meta)));
 

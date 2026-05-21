@@ -212,9 +212,15 @@ export function registerVscodeSyncTaskProvider(context: vscode.ExtensionContext,
       if (folders.length === 0) {
         return [];
       }
+      // v0.17 D05 — surface the additional task kinds documented in
+      // `core/vscodeTaskDefinitions.ts` so users can wire them from
+      // `tasks.json`. `create-snapshot` is already handled by the inner
+      // runner; new kinds (repair-manifest, support-bundle) execute the
+      // corresponding registered command.
       const defs: readonly VscodeSyncTaskDefinition[] = [
         { type: VSCODESYNC_TASK_TYPE, task: "pull-all" },
         { type: VSCODESYNC_TASK_TYPE, task: "push-all" },
+        { type: VSCODESYNC_TASK_TYPE, task: "create-snapshot" },
       ];
       const out: vscode.Task[] = [];
       const multi = folders.length > 1;

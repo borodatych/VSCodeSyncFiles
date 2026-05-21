@@ -2,10 +2,9 @@
  * v2.6.7 — sanitiseTagList tests (the only pure helper in the new module).
  */
 import { describe, expect, it, vi } from "vitest";
+import { sanitiseTagList } from "../../src/startup/restoreWorkspacesTreeFilters.js";
 
 vi.mock("vscode", () => ({}));
-
-const { sanitiseTagList } = await import("../../src/startup/restoreWorkspacesTreeFilters.js");
 
 describe("sanitiseTagList", () => {
   it("returns [] for non-array inputs", () => {

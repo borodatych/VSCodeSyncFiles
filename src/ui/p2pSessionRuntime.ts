@@ -110,17 +110,23 @@ export async function openP2PSession(opts: OpenP2PSessionOptions): Promise<OpenP
   machine.start(Date.now());
 
   let dataChannelLike: unknown = null;
-  let dataChannelResolved: ((value: unknown) => void) | null = null;
-  const dataChannelPromise = new Promise<unknown>((resolve) => { dataChannelResolved = resolve; });
+  // Deferred holder pattern: TS's flow analysis can't see assignments inside
+  // a Promise executor, so a bare `let` typed as `... | null` is narrowed
+  // to `never` after construction. Putting the resolver on an object
+  // property defeats the narrowing.
+  const deferred: { resolve: (value: unknown) => void } = {
+    resolve: () => { /* replaced synchronously by the executor below */ },
+  };
+  const dataChannelPromise = new Promise<unknown>((resolve) => { deferred.resolve = resolve; });
 
   // Inviter creates the data channel immediately; invitee waits for ondatachannel.
   if (opts.role === "inviter") {
     dataChannelLike = pc.createDataChannel("vscodesync-p2p");
-    dataChannelResolved?.(dataChannelLike);
+    deferred.resolve(dataChannelLike);
   } else {
     pc.ondatachannel = (ev: { channel: unknown }): void => {
       dataChannelLike = ev.channel;
-      dataChannelResolved?.(ev.channel);
+      deferred.resolve(ev.channel);
     };
   }
 

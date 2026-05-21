@@ -25,7 +25,6 @@ import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlow
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 async function runAddToNewWorkspaceImpl(
-  globalConfig: GlobalConfigManager,
   runWithEngine: RunWithEngineFn,
   uri: vscode.Uri | undefined,
   allUris: vscode.Uri[] | undefined,
@@ -190,7 +189,7 @@ export function registerFileOperationsCommands(
   const openTrackedFileInCloudStorageAt = (target: { root: string; fsPath: string }): Promise<void> =>
     openTrackedFileInCloudStorage(registry, globalConfig, target);
   const runAddToNewWorkspace = (uri?: vscode.Uri, allUris?: vscode.Uri[]): Promise<void> =>
-    runAddToNewWorkspaceImpl(globalConfig, runWithEngine, uri, allUris);
+    runAddToNewWorkspaceImpl(runWithEngine, uri, allUris);
 
   return [
     vscode.commands.registerCommand("vscodesync.addCurrentFile", async (uri?: vscode.Uri, allUris?: vscode.Uri[]) => {
@@ -479,7 +478,7 @@ export function registerFileOperationsCommands(
         return;
       }
       await runWithEngine(async (engine) => {
-        const provider = engine.deps.provider;
+        const provider = engine.getProvider();
         const { openTimeTravelScrubber } = await import("../ui/timeTravelScrubberPanel.js");
         await openTimeTravelScrubber({
           context,

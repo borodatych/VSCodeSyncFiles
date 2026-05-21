@@ -33,6 +33,7 @@ import { newestTrackedLastSyncMs } from "../utils/workspaceLastActivity.js";
 import { evaluateLongAbsence, type LongAbsenceWorkspaceInput } from "../core/longAbsenceEvaluator.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
+import { isAutoFullSyncEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { isAutoSyncBlockedBySchedule } from "../ui/syncScheduleGate.js";
 import { guardPathsBeforeAdd } from "../ui/syncGuards.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
@@ -91,16 +92,31 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
       if (syncSessionPause.isPaused()) {
         return;
       }
+      // v0.7 — startup pull is an *automatic* action: only run when
+      // `autoSyncMode = full`. In check-only / off, fall back to a status
+      // refresh so the tree still shows what's stale, but no file moves.
+      const autoMode = parseAutoSyncMode(
+        vscode.workspace.getConfiguration(CFG_SECTION).get<string>("autoSyncMode", "check-only"),
+      );
       const provider = await tryAuthenticatedProvider(registry);
       if (!provider) {
         return;
       }
       const cfg = await globalConfig.load();
       const engine = makeEngine(folderRoot, provider, cfg.machineId, cfg.machineName);
-      verboseLog("startup", `pullAll START ${folderRoot}`);
+      verboseLog("startup", `pullAll START ${folderRoot} mode=${autoMode}`);
       statusBar.setSyncing(true);
       try {
-        await engine.pullAll();
+        if (isAutoFullSyncEnabled(autoMode)) {
+          await engine.pullAll();
+        } else if (autoMode === "check-only") {
+          // Status-only refresh — no files overwritten.
+          const wc = await WorkspaceConfigManager.load(folderRoot);
+          for (const aw of wc.activeWorkspaces) {
+            await engine.checkWorkspaceStatus(aw.workspaceId);
+          }
+        }
+        // autoMode === "off": skip entirely.
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         startupChannel.appendLine(`Pull (${folderRoot}): ${msg}`);

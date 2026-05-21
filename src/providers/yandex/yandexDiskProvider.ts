@@ -201,12 +201,23 @@ export class YandexDiskProvider implements ICloudProvider {
         retryAfterMs: ra,
       });
     }
+    // v0.17 D03 — propagate other 5xx as SERVER_ERROR so the outer
+    // `apiFetchWithRetry` wrapper can decide to retry.
+    if (r.status >= 500 && r.status < 600) {
+      throw new ProviderError("SERVER_ERROR", `Yandex Disk 5xx (${String(r.status)})`);
+    }
     if (r.ok || r.status === 304) {
       noteProviderRequestSuccess();
       noteCloudTransportSuccess();
     }
     return r;
   }
+
+  // v0.17 D03 note — yandex's `apiFetch` is not yet wrapped in
+  // `withRetry` because the provider has its own 423-locked retry loop
+  // in upload/download paths that conflicts with the generic policy.
+  // The SERVER_ERROR classification above is the prep work; the actual
+  // outer wrap is deferred until 423-locked is unified.
 
   private async getResourceJson(pathAndQuery: string): Promise<unknown> {
     const r = await this.apiFetch(pathAndQuery);
@@ -369,37 +380,51 @@ export class YandexDiskProvider implements ICloudProvider {
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     const trimmed = cloudPath.replace(/\/+$/, "");
     const apiPath = encodeURIComponent(toDiskApiPath(trimmed, this.useAppFolder));
-    const r = await this.apiFetch(`resources?path=${apiPath}&limit=1000`);
-    if (r.status === 404) {
-      return [];
-    }
-    if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
-    }
-    const j = (await r.json()) as {
-      type?: string;
-      _embedded?: {
-        items?: {
-          name?: string;
-          path?: string;
-          type?: string;
-          size?: number;
-          modified?: string;
-          md5?: string;
-          etag?: string;
-        }[];
+    // v0.8 F-007 — Yandex paginates via `offset`/`limit`. Walk until we've
+    // collected everything or hit the hard cap.
+    const HARD_CAP = 50_000;
+    const PAGE = 1000;
+    const out: FileMetadata[] = [];
+    let firstHop = true;
+    for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
+      const r = await this.apiFetch(`resources?path=${apiPath}&limit=${String(PAGE)}&offset=${String(offset)}`);
+      if (r.status === 404) {
+        return firstHop ? [] : out;
+      }
+      if (!r.ok) {
+        throw new ProviderError("NETWORK_ERROR", await r.text());
+      }
+      const j = (await r.json()) as {
+        type?: string;
+        _embedded?: {
+          total?: number;
+          items?: {
+            name?: string;
+            path?: string;
+            type?: string;
+            size?: number;
+            modified?: string;
+            md5?: string;
+            etag?: string;
+          }[];
+        };
       };
-    };
-    const items = j._embedded?.items ?? [];
-    return items.map((it) => {
-      const cp = it.path ? cloudPathFromDiskApi(it.path) : `${trimmed}/${it.name ?? ""}`;
-      return {
-        cloudPath: cp,
-        size: it.type === "file" ? it.size : undefined,
-        etag: etagFromResource(it),
-        modifiedIso: it.modified,
-      };
-    });
+      const items = j._embedded?.items ?? [];
+      for (const it of items) {
+        const cp = it.path ? cloudPathFromDiskApi(it.path) : `${trimmed}/${it.name ?? ""}`;
+        out.push({
+          cloudPath: cp,
+          size: it.type === "file" ? it.size : undefined,
+          etag: etagFromResource(it),
+          modifiedIso: it.modified,
+        });
+        if (out.length >= HARD_CAP) break;
+      }
+      firstHop = false;
+      const total = j._embedded?.total ?? items.length;
+      if (offset + items.length >= total || items.length === 0) break;
+    }
+    return out;
   }
 
   private async tryCreateFolderDiskPath(diskPathFull: string): Promise<void> {

@@ -116,11 +116,15 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<Uint8A
 }
 
 export function createWebCompression(): ICompression {
+  // Streams API typings are stricter than the runtime: our Uint8Array carries
+  // `<ArrayBufferLike>` but `writer.write()` wants `BufferSource`. Cast at
+  // the boundary — both runtimes accept a plain Uint8Array.
+  const bs = (u: Uint8Array): BufferSource => u as unknown as BufferSource;
   return {
     async gzip(data: Uint8Array): Promise<Uint8Array | undefined> {
       const cs = new CompressionStream("gzip");
       const writer = cs.writable.getWriter();
-      await writer.write(data);
+      await writer.write(bs(data));
       await writer.close();
       const gz = await collectStream(cs.readable);
       if (gz.length + GZIP_SAVINGS_THRESHOLD >= data.length) {
@@ -132,7 +136,7 @@ export function createWebCompression(): ICompression {
     async gunzip(data: Uint8Array): Promise<Uint8Array> {
       const ds = new DecompressionStream("gzip");
       const writer = ds.writable.getWriter();
-      await writer.write(data);
+      await writer.write(bs(data));
       await writer.close();
       return collectStream(ds.readable);
     },

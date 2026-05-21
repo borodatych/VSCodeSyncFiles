@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -520,6 +520,170 @@
           "minimum": 0,
           "maximum": 10080,
           "description": "%cfg.webhooks.fallbackAfterMinutes.description%"
+        },
+        "vscodesync.autoSyncMode": {
+          "type": "string",
+          "enum": ["off", "check-only", "full"],
+          "default": "check-only",
+          "markdownDescription": "%cfg.autoSyncMode.description%",
+          "enumDescriptions": [
+            "Отключить любую автоматику. Никаких push/pull/проверок без явной команды пользователя.",
+            "Только проверять состояние файлов и подсвечивать в дереве (cloud_newer / local_newer / conflict). Никаких автоматических push и pull — пользователь жмёт Sync/Push/Pull сам.",
+            "Полная автосинхронизация — push на save (debounce), pull на open, full sync на focus, watch poll. Историческое поведение."
+          ]
+        },
+        "vscodesync.sync.concurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 32,
+          "markdownDescription": "%cfg.sync.concurrency.description%"
+        },
+        "vscodesync.sync.workspaceConcurrency": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 16,
+          "markdownDescription": "%cfg.sync.workspaceConcurrency.description%"
+        },
+        "vscodesync.verifyUploadHash": {
+          "type": "string",
+          "enum": ["plaintext-only", "never"],
+          "default": "plaintext-only",
+          "markdownDescription": "%cfg.verifyUploadHash.description%",
+          "enumDescriptions": [
+            "Скачивать обратно blob после загрузки и сверять хэш — историческое поведение. Корректно, но добавляет 1 round-trip к каждому push.",
+            "Не проверять. Самый быстрый режим — полагаемся на ETag и провайдер. Подойдёт для надёжных каналов и доверенных провайдеров."
+          ]
+        },
+        "vscodesync.historyVersions": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 200,
+          "markdownDescription": "%cfg.historyVersions.description%"
+        },
+        "vscodesync.historyMode": {
+          "type": "string",
+          "enum": ["inline", "lazy", "off"],
+          "default": "inline",
+          "markdownDescription": "%cfg.historyMode.description%",
+          "enumDescriptions": [
+            "Сохранять снапшот в .history/ сразу перед каждым push (по одному GET+PUT на push).",
+            "Откладывать снапшоты в очередь, отгружать пакетом раз в N минут.",
+            "Не вести историю. Самый быстрый режим, но без отката версий."
+          ]
+        },
+        "vscodesync.historyLazyDrainMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 720,
+          "markdownDescription": "%cfg.historyLazyDrainMinutes.description%"
+        },
+        "vscodesync.metaWriteRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "markdownDescription": "%cfg.metaWriteRetries.description%"
+        },
+        "vscodesync.verifyRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "markdownDescription": "%cfg.verifyRetries.description%"
+        },
+        "vscodesync.softLockStaleHours": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 168,
+          "markdownDescription": "%cfg.softLockStaleHours.description%"
+        },
+        "vscodesync.tokenRefreshSkewMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "markdownDescription": "%cfg.tokenRefreshSkewMinutes.description%"
+        },
+        "vscodesync.saveDebounceSecDefault": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 300,
+          "markdownDescription": "%cfg.saveDebounceSecDefault.description%"
+        },
+        "vscodesync.watchIdleCyclesBeforeBackoff": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "%cfg.watchIdleCyclesBeforeBackoff.description%"
+        },
+        "vscodesync.localBackupDir": {
+          "type": "string",
+          "default": ".vscode/vscodesync-local-backup",
+          "markdownDescription": "%cfg.localBackupDir.description%"
+        },
+        "vscodesync.gdrive.folderCacheTtlSec": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "maximum": 86400,
+          "markdownDescription": "%cfg.gdrive.folderCacheTtlSec.description%"
+        },
+        "vscodesync.onedrive.uploadSessionThresholdMB": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 250,
+          "markdownDescription": "%cfg.onedrive.uploadSessionThresholdMB.description%"
+        },
+        "vscodesync.onedrive.uploadChunkMB": {
+          "type": "number",
+          "default": 1.6,
+          "minimum": 0.32,
+          "maximum": 60,
+          "markdownDescription": "%cfg.onedrive.uploadChunkMB.description%"
+        },
+        "vscodesync.yandex.apiTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 300000,
+          "markdownDescription": "%cfg.yandex.apiTimeoutMs.description%"
+        },
+        "vscodesync.yandex.dataTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 10000,
+          "maximum": 600000,
+          "markdownDescription": "%cfg.yandex.dataTimeoutMs.description%"
+        },
+        "vscodesync.yandex.lockedRetryDelayMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 100,
+          "maximum": 30000,
+          "markdownDescription": "%cfg.yandex.lockedRetryDelayMs.description%"
+        },
+        "vscodesync.diagnostics.profileSync": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%cfg.diagnostics.profileSync.description%"
+        },
+        "vscodesync.providerHashVerify": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%cfg.providerHashVerify.description%"
+        },
+        "vscodesync.hints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%cfg.hints.enabled.description%"
         }
       }
     },
@@ -1026,6 +1190,62 @@
       {
         "command": "vscodesync.toggleWatchMode",
         "title": "%cmd.toggleWatchMode.title%"
+      },
+      {
+        "command": "vscodesync.cycleAutoSyncMode",
+        "title": "%cmd.cycleAutoSyncMode.title%"
+      },
+      {
+        "command": "vscodesync.profileSync",
+        "title": "%cmd.profileSync.title%"
+      },
+      {
+        "command": "vscodesync.repairCloudManifest",
+        "title": "%cmd.repairCloudManifest.title%"
+      },
+      {
+        "command": "vscodesync.explainFileSyncState",
+        "title": "%cmd.explainFileSyncState.title%"
+      },
+      {
+        "command": "vscodesync.resolveConflictKeepBoth",
+        "title": "%cmd.resolveConflictKeepBoth.title%"
+      },
+      {
+        "command": "vscodesync.aiExplainConflict",
+        "title": "%cmd.aiExplainConflict.title%"
+      },
+      {
+        "command": "vscodesync.exportSupportBundle",
+        "title": "%cmd.exportSupportBundle.title%"
+      },
+      {
+        "command": "vscodesync.copyShareUri",
+        "title": "%cmd.copyShareUri.title%"
+      },
+      {
+        "command": "vscodesync.exportSbom",
+        "title": "%cmd.exportSbom.title%"
+      },
+      {
+        "command": "vscodesync.generateInviteLink",
+        "title": "%cmd.generateInviteLink.title%"
+      },
+      {
+        "command": "vscodesync.acceptInviteLink",
+        "title": "%cmd.acceptInviteLink.title%"
+      },
+      {
+        "command": "vscodesync.addTrustedMachine",
+        "title": "%cmd.addTrustedMachine.title%"
+      },
+      {
+        "command": "vscodesync.removeTrustedMachine",
+        "title": "%cmd.removeTrustedMachine.title%"
+      },
+      {
+        "command": "vscodesync.listTrustedMachines",
+        "title": "%cmd.listTrustedMachines.title%"
       },
       {
         "command": "vscodesync.exportWorkspaceStructure",

@@ -76,6 +76,7 @@ import { registerReadmeAutoRender } from "./commands/registerReadmeAutoRender.js
 import { registerEncryptedBundleExport } from "./commands/registerEncryptedBundleExport.js";
 import { registerAnalyticsPanel } from "./commands/registerAnalyticsPanel.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
+import { registerPhase21Bootstrap } from "./startup/registerPhase21Bootstrap.js";
 
 const CFG_SECTION = "vscodesync";
 
@@ -136,7 +137,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(activityAlertMonitor);
 
   const engineFactory = createEngineFactory();
-  const { makeEngine, notifiedConflictKeys } = engineFactory;
+  const { makeEngine, notifiedConflictKeys, profileBuffer } = engineFactory;
 
   const { logSyncActivity, logSyncStatsTransfer, logSyncCompression } = createEngineLogRefs({
     globalConfig,
@@ -376,7 +377,7 @@ export function activate(context: vscode.ExtensionContext): void {
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
       getEncKey,
       makeEngine,
-      roots,
+      roots, profileBuffer,
     }),
 
 
@@ -488,6 +489,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerObservers({ context, globalConfig, registry });
   registerScheduledSnapshotsWiring({ context, globalConfig, registry });
+
+  // v0.15 Phase 21 — wire pure helpers added in v0.8–v0.14 to user-visible commands.
+  registerPhase21Bootstrap({
+    context, globalConfig, registry, runWithEngine, makeEngine,
+    tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+  });
 }
 
 export function deactivate(): void {

@@ -26,6 +26,11 @@ import {
   storeGdriveTokens,
   type GdriveTokenBundle,
 } from "./gdriveTokens.js";
+import {
+  createGdriveFolderIdCache,
+  type IGdriveFolderIdCache,
+} from "../../core/gdriveFolderIdCache.js";
+import { withRetry } from "../../core/withRetry.js";
 
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
@@ -62,10 +67,23 @@ function buildMultipartRelated(metadata: object, content: Buffer, boundary: stri
 export class GdriveProvider implements ICloudProvider {
   readonly type: ProviderType = "gdrive";
 
+  /**
+   * v0.7 — folder id cache keyed by absolute path under the cloud root.
+   * Default TTL is 10 min; host can override via `setFolderCacheTtl()` so
+   * the `vscodesync.gdrive.folderCacheTtlSec` setting takes effect at
+   * runtime without re-creating the provider.
+   */
+  private folderCache: IGdriveFolderIdCache = createGdriveFolderIdCache({ ttlMs: 10 * 60 * 1000 });
+
   constructor(
     private readonly secrets: SecretStore,
     private readonly getGoogleClientId: () => string,
   ) {}
+
+  /** v0.7 — rebuild the folder cache with a new TTL (ms). 0 disables. */
+  setFolderCacheTtl(ttlMs: number): void {
+    this.folderCache = createGdriveFolderIdCache({ ttlMs });
+  }
 
   async isAuthenticated(): Promise<boolean> {
     const t = await readGdriveTokens(this.secrets);
@@ -128,29 +146,43 @@ export class GdriveProvider implements ICloudProvider {
   }
 
   private async driveFetch(url: string, init?: RequestInit): Promise<Response> {
-    let r: Response;
-    try {
-      r = await fetch(url, init);
-    } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
-    }
-    if (r.status === 429 || r.status === 503) {
-      const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-      noteProviderRateLimited(ra);
-      throw new ProviderError("RATE_LIMITED", `Google Drive throttled (${String(r.status)})`, {
-        retryAfterMs: ra,
-      });
-    }
-    if (r.ok || r.status === 304) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-    }
-    return r;
+    // v0.17 D03 — uniform retry envelope. We wrap each fetch attempt so
+    // transient NETWORK_ERROR / SERVER_ERROR (5xx other than 503 which is
+    // classified as RATE_LIMITED) / RATE_LIMITED (respects Retry-After)
+    // all converge through the central `withRetry` policy.
+    return withRetry(
+      { op: "gdrive.driveFetch", maxAttempts: 3, initialDelayMs: 500 },
+      async (): Promise<Response> => {
+        let r: Response;
+        try {
+          r = await fetch(url, init);
+        } catch (e) {
+          bumpOfflineFlushBackoff();
+          noteCloudTransportFailure();
+          throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+        }
+        if (r.status === 429 || r.status === 503) {
+          const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
+          noteProviderRateLimited(ra);
+          throw new ProviderError("RATE_LIMITED", `Google Drive throttled (${String(r.status)})`, {
+            retryAfterMs: ra,
+          });
+        }
+        if (r.status >= 500 && r.status < 600) {
+          throw new ProviderError("SERVER_ERROR", `Google Drive 5xx (${String(r.status)})`);
+        }
+        if (r.ok || r.status === 304) {
+          noteProviderRequestSuccess();
+          noteCloudTransportSuccess();
+        }
+        return r;
+      },
+    );
   }
 
   private async getRootFolderId(token: string): Promise<string> {
+    const cached = this.folderCache.get(CLOUD_ROOT_DIR);
+    if (cached !== undefined) return cached;
     const name = escapeDriveQueryLiteral(CLOUD_ROOT_DIR);
     const q = `name='${name}' and 'root' in parents and mimeType='${MIME_FOLDER}' and trashed=false`;
     const url = `${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=10`;
@@ -161,6 +193,7 @@ export class GdriveProvider implements ICloudProvider {
     const j = (await r.json()) as { files?: { id?: string }[] };
     const existing = j.files?.[0]?.id;
     if (existing) {
+      this.folderCache.set(CLOUD_ROOT_DIR, existing);
       return existing;
     }
     const create = await this.driveFetch(`${DRIVE}/files`, {
@@ -182,6 +215,7 @@ export class GdriveProvider implements ICloudProvider {
     if (!created.id) {
       throw new ProviderError("NETWORK_ERROR", "Google Drive: не удалось создать корневую папку");
     }
+    this.folderCache.set(CLOUD_ROOT_DIR, created.id);
     return created.id;
   }
 
@@ -197,8 +231,19 @@ export class GdriveProvider implements ICloudProvider {
       throw new ProviderError("NETWORK_ERROR", `Invalid cloud path: ${cloudPath}`);
     }
     let parentId = await this.getRootFolderId(token);
+    // v0.7 — walk via cached folder path. `accum` is the absolute path so
+    // each level can be served from the cache without re-hitting Drive.
+    let accum = CLOUD_ROOT_DIR;
     for (let i = 1; i < segments.length - 1; i += 1) {
-      parentId = await this.ensureChildFolder(token, parentId, segments[i] ?? "");
+      const seg = segments[i] ?? "";
+      accum = `${accum}/${seg}`;
+      const hit = this.folderCache.get(accum);
+      if (hit !== undefined) {
+        parentId = hit;
+      } else {
+        parentId = await this.ensureChildFolder(token, parentId, seg);
+        this.folderCache.set(accum, parentId);
+      }
     }
     const filename = segments[segments.length - 1] ?? "";
     const item = await this.findChild(token, parentId, filename);
@@ -211,9 +256,20 @@ export class GdriveProvider implements ICloudProvider {
     if (segments.length < 1 || segments[0] !== CLOUD_ROOT_DIR) {
       throw new ProviderError("NETWORK_ERROR", `Invalid folder path: ${cloudPath}`);
     }
+    const cached = this.folderCache.get(trimmed);
+    if (cached !== undefined) return cached;
     let parentId = await this.getRootFolderId(token);
+    let accum = CLOUD_ROOT_DIR;
     for (let i = 1; i < segments.length; i += 1) {
-      parentId = await this.ensureChildFolder(token, parentId, segments[i] ?? "");
+      const seg = segments[i] ?? "";
+      accum = `${accum}/${seg}`;
+      const hit = this.folderCache.get(accum);
+      if (hit !== undefined) {
+        parentId = hit;
+      } else {
+        parentId = await this.ensureChildFolder(token, parentId, seg);
+        this.folderCache.set(accum, parentId);
+      }
     }
     return parentId;
   }
@@ -268,8 +324,19 @@ export class GdriveProvider implements ICloudProvider {
       throw new ProviderError("NETWORK_ERROR", `Invalid path: ${cloudPath}`);
     }
     let parentId = await this.getRootFolderId(token);
+    // v0.7 — cached folder-path walk so deep paths don't re-resolve every
+    // upload.
+    let accum = CLOUD_ROOT_DIR;
     for (let i = 1; i < segments.length - 1; i += 1) {
-      parentId = await this.ensureChildFolder(token, parentId, segments[i] ?? "");
+      const seg = segments[i] ?? "";
+      accum = `${accum}/${seg}`;
+      const hit = this.folderCache.get(accum);
+      if (hit !== undefined) {
+        parentId = hit;
+      } else {
+        parentId = await this.ensureChildFolder(token, parentId, seg);
+        this.folderCache.set(accum, parentId);
+      }
     }
     const filename = segments[segments.length - 1] ?? "";
     const existing = await this.findChild(token, parentId, filename);
@@ -311,7 +378,9 @@ export class GdriveProvider implements ICloudProvider {
         Authorization: `Bearer ${token}`,
         "Content-Type": `multipart/related; boundary=${boundary}`,
       },
-      body,
+      // Cast through unknown: our Uint8Array view is fine at runtime; lib.dom
+      // declares BodyInit narrower than the current @types/node Buffer.
+      body: new Uint8Array(body.buffer, body.byteOffset, body.byteLength) as unknown as BodyInit,
     });
     if (!r.ok) {
       throw new ProviderError("NETWORK_ERROR", await r.text());
@@ -404,29 +473,44 @@ export class GdriveProvider implements ICloudProvider {
     const token = await this.accessToken();
     const folderPath = cloudPath.endsWith("/") ? cloudPath.slice(0, -1) : cloudPath;
     const folderId = await this.ensureFolderPath(token, folderPath);
-    const q = `'${folderId}' in parents and trashed=false`;
-    const url = `${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,size,md5Checksum,modifiedTime,mimeType)&pageSize=1000`;
-    const r = await this.driveFetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (r.status === 404) {
-      return [];
-    }
-    if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
-    }
-    const j = (await r.json()) as { files?: DriveFileSummary[] };
     const prefix = cloudPath.endsWith("/") ? cloudPath : `${cloudPath}/`;
-    const rows = j.files ?? [];
-    return rows.map((it) => {
-      const subPath = `${prefix}${it.name}`;
-      const etag = normalizeEtag(it.md5Checksum ?? it.etag);
-      const sizeNum = it.size != null ? Number(it.size) : undefined;
-      return {
-        cloudPath: subPath,
-        size: Number.isFinite(sizeNum) ? sizeNum : undefined,
-        etag,
-        modifiedIso: it.modifiedTime,
-      };
-    });
+    const out: FileMetadata[] = [];
+    // v0.8 F-007 — paginate via Drive `nextPageToken` so workspaces with
+    // >1000 children don't silently truncate. Hard cap = 50_000 entries.
+    const HARD_CAP = 50_000;
+    const q = `'${folderId}' in parents and trashed=false`;
+    let nextPageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q,
+        fields: "files(id,name,size,md5Checksum,modifiedTime,mimeType),nextPageToken",
+        pageSize: "1000",
+      });
+      if (nextPageToken !== undefined) params.set("pageToken", nextPageToken);
+      const url = `${DRIVE}/files?${params.toString()}`;
+      const r = await this.driveFetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (r.status === 404) {
+        return out;
+      }
+      if (!r.ok) {
+        throw new ProviderError("NETWORK_ERROR", await r.text());
+      }
+      const j = (await r.json()) as { files?: DriveFileSummary[]; nextPageToken?: string };
+      for (const it of j.files ?? []) {
+        const subPath = `${prefix}${it.name}`;
+        const etag = normalizeEtag(it.md5Checksum ?? it.etag);
+        const sizeNum = it.size != null ? Number(it.size) : undefined;
+        out.push({
+          cloudPath: subPath,
+          size: Number.isFinite(sizeNum) ? sizeNum : undefined,
+          etag,
+          modifiedIso: it.modifiedTime,
+        });
+        if (out.length >= HARD_CAP) return out;
+      }
+      nextPageToken = j.nextPageToken;
+    } while (nextPageToken !== undefined && nextPageToken !== "");
+    return out;
   }
 
   async createFolder(cloudPath: string): Promise<void> {

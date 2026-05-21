@@ -67,7 +67,7 @@ describe("probeSettingsSyncSession", () => {
     await probeSettingsSyncSession({ getSession: get });
     expect(get).toHaveBeenCalled();
     const lastCall = get.mock.calls[get.mock.calls.length - 1];
-    const opts = lastCall[2] as { silent?: boolean; createIfNone?: boolean };
+    const opts = (lastCall as unknown as unknown[])[2] as { silent?: boolean; createIfNone?: boolean };
     expect(opts.silent).toBe(true);
     expect(opts.createIfNone).toBe(false);
   });

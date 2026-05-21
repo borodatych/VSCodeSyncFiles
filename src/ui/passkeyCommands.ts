@@ -1,5 +1,5 @@
 /**
- * Passkey command bundle (v2.2 wiring) — registers
+ * Passkey command bundle — registers
  *   - `vscodesync.showPasskeySettings` — webview listing enrolled credentials,
  *     with rename / remove actions piped back through `onDidReceiveMessage`.
  *   - `vscodesync.removePasskey` — direct command (palette-discoverable) to
@@ -9,10 +9,10 @@
  *     the user through enroll / unlock / recover modes via InputBoxes,
  *     respecting the lockout schedule from {@link planPassphraseFlow}.
  *
- * The actual WebAuthn `navigator.credentials` calls are not implemented in
- * this iteration (they require a Chromium-backed webview surface). The
- * commands operate on the credential registry only — enroll / unlock paths
- * surface a "not yet implemented" message so the wiring is honest.
+ * WebAuthn enroll + unlock are wired through the platform adapter via
+ * `wrapDekForWebauthn` / PRF replay — both call paths land on the
+ * registry routines below. Native FIDO2 probing is best-effort and may
+ * fall back to passphrase recovery when no authenticator is available.
  */
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
@@ -157,7 +157,7 @@ async function runUnlockWithPasskey(storage: PasskeyRegistryStorage, secrets: vs
     return;
   }
 
-  const ordered = orderForDisplay(registry.entries, registry.primaryId);
+  const ordered = orderForDisplay(registry);
   const picked = await vscode.window.showQuickPick(
     ordered.map((d) => ({
       label: d.displayName,

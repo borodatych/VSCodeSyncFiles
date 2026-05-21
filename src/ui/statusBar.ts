@@ -376,6 +376,18 @@ export class SyncStatusBarController implements vscode.Disposable {
     if (offlinePending > 0 || hasStickyUnreachableHint()) {
       tooltip += `\n\n📡 Оффлайн-очередь: ${String(offlinePending)} операций (см. \`queue.json\`). Flush при восстановлении сети.`;
     }
+    // v0.7 — show the current autoSyncMode so users understand why a save
+    // didn't trigger a push (or why nothing automatic is happening).
+    const autoMode = vscode.workspace
+      .getConfiguration("vscodesync")
+      .get<string>("autoSyncMode", "check-only");
+    if (autoMode === "off") {
+      tooltip += `\n\n🚦 Авто-режим: OFF — никакой автосинхронизации. Пользуйтесь Push / Pull / Sync вручную (vscodesync.cycleAutoSyncMode для смены).`;
+    } else if (autoMode === "check-only") {
+      tooltip += `\n\n🚦 Авто-режим: только проверка статусов. Push/Pull — только вручную (vscodesync.cycleAutoSyncMode для смены).`;
+    } else {
+      tooltip += `\n\n🚦 Авто-режим: полная синхронизация (push на save, pull на open).`;
+    }
     this.item.tooltip = tooltip;
     if (conflicts > 0) {
       this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
