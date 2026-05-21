@@ -403,8 +403,45 @@ export class SyncEngine {
   private _batchCfgDirty = false;
   /** v0.7 — deferred history snapshots when `historyMode = lazy`. */
   private readonly lazyHistoryQueue: LazyHistoryEntry[] = [];
+  /**
+   * Files currently under a user-initiated pull/push/conflict-resolve.
+   * Read by `iterateTrackedFiles` (check-only and full) to skip the file
+   * while the cloud meta upload is still in flight — prevents the watcher
+   * from rolling `syncStatus` back to `cloud_newer` between
+   * `persistMutatedCfg` (local "ok") and `pushMetaJson` (cloud meta update).
+   * Pure in-memory; never persisted; cleared in the operation's `finally`.
+   */
+  private readonly inFlightOps = new Set<string>();
 
   constructor(private readonly deps: SyncEngineDeps) {}
+
+  private inFlightKey(workspaceId: string, posixRel: string): string {
+    return `${workspaceId} ${posixRel}`;
+  }
+
+  /** True while a user-initiated pull/push/conflict-resolve holds the file. */
+  private isOpInFlight(workspaceId: string, posixRel: string): boolean {
+    return this.inFlightOps.has(this.inFlightKey(workspaceId, posixRel));
+  }
+
+  /**
+   * Wrap a per-file operation so the watcher skips it for the duration.
+   * Marker is set synchronously before the operation begins and removed in
+   * `finally`, including the error path.
+   */
+  private async withInFlightOp<T>(
+    workspaceId: string,
+    posixRel: string,
+    op: () => Promise<T>,
+  ): Promise<T> {
+    const key = this.inFlightKey(workspaceId, posixRel);
+    this.inFlightOps.add(key);
+    try {
+      return await op();
+    } finally {
+      this.inFlightOps.delete(key);
+    }
+  }
 
   /** Read-only accessor for the bound provider. Used by UI helpers that
    *  need to issue raw provider calls (history scrub, cloud-open) without
@@ -2881,15 +2918,19 @@ export class SyncEngine {
           if (file.syncStatus === "conflict") return;
           const ent = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
           if (!ent) return;
-          // Soft lock: another machine is editing — mark cloud_newer if file absent or unchanged locally; block push
+          // Skip files currently under a user-initiated pull/push to avoid
+          // overwriting `syncStatus = "ok"` that was just persisted while the
+          // cloud meta upload is still in flight.
+          if (this.isOpInFlight(workspaceId, file.localPath)) {
+            return;
+          }
+          // Soft lock: another machine is editing — indication only.
+          // The actual sync status must reflect hash reality (checkOneFileStatus),
+          // not an unconditional override; otherwise a manual Pull would be
+          // immediately rolled back to "cloud_newer" on the next tick.
+          // Auto-push is blocked elsewhere (syncTriggerManager checks file.editingBy).
           if (m.editingBy && m.editingBy !== this.deps.machineId) {
-            const localCurrent = await computeHash(this.localAbs(cfgSync, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
-            if (localCurrent === "" || localCurrent === file.localHash) {
-              if (file.syncStatus !== "cloud_newer") {
-                file.syncStatus = "cloud_newer";
-                this._batchCfgDirty = true;
-              }
-            }
+            await this.checkOneFileStatus(cfgSync, file, metaNow);
             return;
           }
           if (checkOnly) {
@@ -2930,13 +2971,34 @@ export class SyncEngine {
       }
       cloudCurrent = "";
     }
-    const action = detectChange(base, localCurrent, cloudCurrent);
+    // Meta consensus already updated by another machine; our cached
+    // `file.localHash` lags behind. detectChange would call this "push"
+    // because it doesn't know `localHash` is stale — but the right
+    // verdict is "pull": cloud has changed, we're out of date.
+    // (Identical guard exists in syncOneFile:2994-3005 for the full-sync
+    //  path; check-only must mirror it or we mis-report status as
+    //  pending_push when a remote machine pushed a newer version.)
+    const consensusLagsLocally =
+      base !== undefined &&
+      base !== "" &&
+      file.localHash !== base &&
+      cloudCurrent === base &&
+      localCurrent !== cloudCurrent;
+    const action: ChangeAction = consensusLagsLocally
+      ? "pull"
+      : detectChange(base, localCurrent, cloudCurrent);
     let next: WorkspaceConfig["files"][number]["syncStatus"] = file.syncStatus;
     if (action === "push") next = "pending_push";
     else if (action === "pull") next = "cloud_newer";
     else if (action === "none") next = "ok";
     else next = "conflict";
     if (file.syncStatus !== next) {
+      verboseLog(
+        "syncEngine",
+        `checkOneFileStatus ${file.localPath}: ${String(file.syncStatus)} → ${next} ` +
+          `(base=${base?.slice(0, 8) ?? "∅"} local=${localCurrent.slice(0, 8) || "∅"} ` +
+          `cloud=${cloudCurrent.slice(0, 8) || "∅"} etag=${metaRow ? metaRow.etag.slice(0, 8) : "∅"})`,
+      );
       file.syncStatus = next;
       await this.persistMutatedCfg(cfg);
     }
@@ -3477,6 +3539,7 @@ export class SyncEngine {
     }
 
     return runWithSyncFileLock(this.deps.workspaceRoot, posixRel, "push", async () => {
+      return this.withInFlightOp(workspaceId, posixRel, async () => {
       await this.ensureWorkspaceMayUploadFiles(workspaceId);
       // v0.7 — re-use the meta we already fetched outside the lock when our
       // own etag is current. `pullMeta` will short-circuit via 304 anyway,
@@ -3709,6 +3772,7 @@ export class SyncEngine {
         throw e;
       }
     });
+    });
   }
 
   private async pushBlobRaw(cloudPath: string, abs: string): Promise<void> {
@@ -3746,6 +3810,10 @@ export class SyncEngine {
       if (e instanceof ProviderError && e.code === "NOT_FOUND") {
         return;
       }
+      warnLog(
+        "syncEngine",
+        `deleteRemoteBlobBestEffort(${cloudPath}) suppressed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -3808,6 +3876,7 @@ export class SyncEngine {
     metaIn?: MetaJson,
   ): Promise<"updated" | "already_current"> {
     return runWithSyncFileLock(this.deps.workspaceRoot, posixRel, "pull", async () => {
+    return this.withInFlightOp(workspaceId, posixRel, async () => {
     await this.ensureWorkspaceNotSuspendedNorFrozen(workspaceId);
     const ent =
       entry ?? (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -3873,13 +3942,10 @@ export class SyncEngine {
       }
     }
     const hash = await computeHash(abs, this.hashCfg(posixRel));
-    file.localHash = hash;
-    file.lastSync = new Date().toISOString();
-    file.syncStatus = "ok";
-    if (file.cloudPath !== downloadPath) {
-      file.cloudPath = downloadPath;
-    }
-    await this.persistMutatedCfg(cfg);
+    // Update cloud meta FIRST. Only after the cloud consensus is published
+    // do we mark the file locally as "ok" — otherwise a tick that fires in
+    // the window between local persist and cloud meta upload would see
+    // stale meta, fail the 3-way compare, and roll the status back.
     const priorEtag = metaRow === undefined ? "" : metaRow.etag;
     const priorVer = metaRow === undefined ? 0 : metaRow.version;
     const rowMeta: MetaEntry = {
@@ -3900,6 +3966,13 @@ export class SyncEngine {
       },
     };
     await withPullCloudMetaWriteAllowed(() => this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag));
+    file.localHash = hash;
+    file.lastSync = new Date().toISOString();
+    file.syncStatus = "ok";
+    if (file.cloudPath !== downloadPath) {
+      file.cloudPath = downloadPath;
+    }
+    await this.persistMutatedCfg(cfg);
     this.fireActivity({
       kind: "pull",
       workspaceId,
@@ -3910,6 +3983,7 @@ export class SyncEngine {
     });
     this.emitTransfer({ direction: "download", bytes: dl.body.length });
     return "updated";
+    });
     });
   }
 

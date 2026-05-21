@@ -1,5 +1,6 @@
 import type { CloudManifest, ManifestFile } from "./cloudLayout.js";
 import { sharedIgnorePatternsOrEmpty } from "./cloudLayout.js";
+import { warnLog } from "../utils/log.js";
 
 function maxVersion(a: ManifestFile, b: ManifestFile): ManifestFile {
   if (a.version > b.version) {
@@ -7,6 +8,15 @@ function maxVersion(a: ManifestFile, b: ManifestFile): ManifestFile {
   }
   if (b.version > a.version) {
     return b;
+  }
+  if (a.addedAt === b.addedAt && (a.editingBy ?? "") !== (b.editingBy ?? "")) {
+    // Same (version, addedAt) — concurrent inserts on different machines.
+    // Stable choice preferred for determinism; surface to log for diagnosis.
+    warnLog(
+      "manifestMerger",
+      `maxVersion tie-break path=${a.path} version=${String(a.version)} ` +
+        `editingByA=${a.editingBy ?? "—"} editingByB=${b.editingBy ?? "—"}`,
+    );
   }
   return a.addedAt >= b.addedAt ? a : b;
 }

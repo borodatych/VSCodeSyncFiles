@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { computeHash } from "../../src/utils/hash.js";
+import { computeHash, hashCanonicalBuffer } from "../../src/utils/hash.js";
 import { stripSyncignoreBlocks } from "../../src/utils/syncignore.js";
 import { toPosixPath } from "../../src/utils/paths.js";
 
@@ -49,5 +49,31 @@ after
 
   it("toPosixPath на Windows-стиле", () => {
     expect(toPosixPath("a\\b\\c")).toBe("a/b/c");
+  });
+
+  it("computeHash(file) == hashCanonicalBuffer(buffer) — нет рассинхрона между путями pull и check", async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-hash-sym-"));
+    const cases: { name: string; bytes: Buffer }[] = [
+      { name: "lf.js", bytes: Buffer.from("const a = 1;\nconst b = 2;\n", "utf8") },
+      { name: "crlf.js", bytes: Buffer.from("const a = 1;\r\nconst b = 2;\r\n", "utf8") },
+      {
+        name: "bom-lf.js",
+        bytes: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("x();\n", "utf8")]),
+      },
+      {
+        name: "with-syncignore.js",
+        bytes: Buffer.from(
+          "before\nvsync-ignore-start\nlocal-secret\nvsync-ignore-end\nafter\n",
+          "utf8",
+        ),
+      },
+    ];
+    for (const c of cases) {
+      const abs = path.join(dir, c.name);
+      await fs.writeFile(abs, c.bytes);
+      const fromDisk = await computeHash(abs, { lineEnding: "lf" });
+      const fromBuf = hashCanonicalBuffer(c.bytes, c.name, { lineEnding: "lf" });
+      expect(fromDisk, `mismatch for ${c.name}`).toBe(fromBuf);
+    }
   });
 });

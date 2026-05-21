@@ -102,7 +102,20 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
       return;
     }
 
-    const changed = await runQuietFullSyncAllFolders(deps);
+    let changed = false;
+    try {
+      changed = await runQuietFullSyncAllFolders(deps);
+    } catch (e) {
+      // Fail-safe: never let a single tick failure break the polling loop.
+      // The interval is cleared/reset by `applyInterval`; a thrown error
+      // here would propagate out of setInterval's callback and surface as
+      // an unhandled rejection without restarting the timer cleanly.
+      const { warnLog } = await import("../utils/log.js");
+      warnLog(
+        "watchModePoller",
+        `tick failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
 
     if (!adaptive()) {
       return;

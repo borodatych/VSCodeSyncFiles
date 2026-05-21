@@ -18,6 +18,18 @@ import { hasStickyUnreachableHint, subscribeOfflineHints } from "../core/syncOff
 import { readPassiveOnlineHint } from "../utils/readNavigatorOnline.js";
 import { loadActivityFile } from "../core/activityLog.js";
 import { sparkline, bucketHourly } from "../utils/sparkline.js";
+import { parseAutoSyncMode } from "../core/autoSyncMode.js";
+
+function autoSyncModeBadge(mode: ReturnType<typeof parseAutoSyncMode>): string {
+  switch (mode) {
+    case "off":
+      return "$(eye-closed) auto:off";
+    case "check-only":
+      return "$(eye) auto:check";
+    case "full":
+      return "$(sync) auto:full";
+  }
+}
 
 const SPARKLINE_TTL_MS = 60_000;
 let sparkCache: { storageDir: string; computedAt: number; text: string } | undefined;
@@ -73,7 +85,11 @@ function formatLastSync(iso: string | undefined): string {
   if (Number.isNaN(d.getTime())) {
     return "—";
   }
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  // Explicit 24h HH:MM — avoids AM/PM creeping into locales that toLocaleTimeString
+  // formats with 12h by default (e.g. ru-RU on some platforms).
+  const hh = d.getHours().toString().padStart(2, "0");
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 export interface SyncStatusBarDeps {
@@ -152,6 +168,11 @@ export class SyncStatusBarController implements vscode.Disposable {
       vscode.workspace.onDidSaveTextDocument((doc) => {
         const norm = doc.uri.fsPath.replace(/\\/g, "/").toLowerCase();
         if (norm.endsWith("/.vscode/vscodesync.json")) {
+          void this.refresh();
+        }
+      }),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("vscodesync.autoSyncMode")) {
           void this.refresh();
         }
       }),
@@ -358,7 +379,15 @@ export class SyncStatusBarController implements vscode.Disposable {
 
     const sparkSuffix = await buildSparkSuffix(this.deps.globalConfig.getStorageDir());
 
-    this.item.text = `${pausePrefix}${plabel}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
+    // v0.7 — surface autoSyncMode in the visible text. Tooltip already
+    // explains modes, but the badge lets users see at a glance whether a
+    // save will push or just be observed.
+    const autoModeParsed = parseAutoSyncMode(
+      vscode.workspace.getConfiguration("vscodesync").get<string>("autoSyncMode", "check-only"),
+    );
+    const autoModeBadge = `  · ${autoSyncModeBadge(autoModeParsed)}`;
+
+    this.item.text = `${pausePrefix}${plabel}${autoModeBadge}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
     let tooltip =
       loaded.length === 1 && loaded[0]
         ? this.buildTooltip(loaded[0].wc, plabel, gc.activeProvider, sessionPaused)
