@@ -915,6 +915,10 @@
         "title": "%cmd.bulkPullSelected.title%"
       },
       {
+        "command": "vscodesync.goHomePreflight",
+        "title": "%cmd.goHomePreflight.title%"
+      },
+      {
         "command": "vscodesync.syncWorkspace",
         "title": "%cmd.syncWorkspace.title%"
       },

@@ -108,6 +108,70 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       );
     }),
 
+    // F8 — pre-flight before closing the laptop. Reads tracked files,
+    // delegates verdict to pure planner, surfaces an info / warning with
+    // action buttons. Pure planner = `goHomePreflightPlanner.ts`.
+    vscode.commands.registerCommand("vscodesync.goHomePreflight", async () => {
+      const root = pickRoot();
+      if (!root) return;
+      const cfg = await WorkspaceConfigManager.load(root);
+      const { planGoHomePreflight, describeGoHomeVerdict } = await import(
+        "../core/goHomePreflightPlanner.js"
+      );
+      const verdict = planGoHomePreflight(cfg.files);
+      const headline = describeGoHomeVerdict(verdict);
+      if (verdict.kind === "clean") {
+        await vscode.window.showInformationMessage(headline);
+        return;
+      }
+      if (verdict.kind === "pending_push") {
+        const choice = await vscode.window.showWarningMessage(
+          headline,
+          "Push all",
+          "Игнорировать",
+        );
+        if (choice === "Push all") {
+          await runWithEngine(async (engine) => {
+            await engine.pushAll();
+            await vscode.window.showInformationMessage("✅ Push выполнен. Можно закрывать.");
+          });
+        }
+        return;
+      }
+      if (verdict.kind === "cloud_newer") {
+        const choice = await vscode.window.showInformationMessage(
+          headline,
+          "Bulk Pull...",
+          "Закрыть как есть",
+        );
+        if (choice === "Bulk Pull...") {
+          await vscode.commands.executeCommand("vscodesync.bulkPullSelected");
+        }
+        return;
+      }
+      if (verdict.kind === "conflict") {
+        await vscode.window.showErrorMessage(
+          headline,
+          { modal: false },
+          "Открыть Workspaces",
+        ).then((c) => {
+          if (c === "Открыть Workspaces") {
+            void vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
+          }
+        });
+        return;
+      }
+      // mixed
+      await vscode.window.showWarningMessage(
+        headline,
+        "Открыть Workspaces",
+      ).then((c) => {
+        if (c === "Открыть Workspaces") {
+          void vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
+        }
+      });
+    }),
+
     vscode.commands.registerCommand("vscodesync.pullAll", async () => {
       await runWithEngine(async (engine) => {
         await engine.pullAll();

@@ -12,6 +12,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.bulkPush",
   "vscodesync.pullAll",
   "vscodesync.bulkPullSelected",
+  "vscodesync.goHomePreflight",
   "vscodesync.syncWorkspace",
   "vscodesync.pushWorkspace",
   "vscodesync.pullWorkspace",

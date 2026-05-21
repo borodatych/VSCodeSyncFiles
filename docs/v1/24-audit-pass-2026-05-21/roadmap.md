@@ -56,7 +56,7 @@
 - [x] **F5 Auto-mode quiet hours.** `core/autoSyncModeAdaptive.ts` (pure) + settings `vscodesync.quietHours.start/end` (HH:MM с wrap через полночь). Внутри окна `check-only` → `full`; `off` и `full` нетронуты. Wired в `watchModePoller`. Unit-тесты ×10.
 - [ ] **F6 Sync rewind.** Точка восстановления workspace по timestamp: «верни всё до 14:30». Re-uses `snapshotsEngine` + `syncReplayRecorder`.
 - [ ] **F7 Telegram digest** (если включён в настройках) — раз в день: что-кто-сколько запушил. Re-uses webhook adapter из v0.6.
-- [ ] **F8 Команда «Соберись и иди»** — pre-flight перед закрытием ноутбука: пушнуть всё, проверить что нет конфликтов, показать «можно закрывать» / «есть N изменений, разрешите?». Палитра + статус-bar item.
+- [x] **F8 «Соберись и иди».** Команда `vscodesync.goHomePreflight` — pure `goHomePreflightPlanner.ts` (`clean | pending_push | cloud_newer | conflict | mixed`) → notification c кнопками действий (Push all / Bulk Pull / Открыть Workspaces). Unit-тесты ×6.
 
 ## 24.X · Wiring deferred
 
