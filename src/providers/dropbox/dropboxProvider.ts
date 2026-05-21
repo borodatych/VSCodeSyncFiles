@@ -239,7 +239,16 @@ export class DropboxProvider implements ICloudProvider {
   }
 
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
-    void options?.ifNoneMatch;
+    // Dropbox has no native ifNoneMatch; emulate via cheap `get_metadata`
+    // and compare server `rev` against the caller's last-known etag. If
+    // they match, return `notModified: true` and skip the full download —
+    // closes audit B4 (Dropbox burning bandwidth on unchanged files).
+    if (options?.ifNoneMatch) {
+      const meta = await this.getMetadata(cloudPath);
+      if (meta?.etag && meta.etag === options.ifNoneMatch) {
+        return { body: Buffer.alloc(0), etag: meta.etag, notModified: true };
+      }
+    }
     const dbPath = toDropboxPath(cloudPath);
     const apiArg = { path: dbPath };
     const token = await this.accessToken();
