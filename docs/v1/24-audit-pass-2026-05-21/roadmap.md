@@ -40,10 +40,10 @@
 
 ## 24.U · UX fixes
 
-- [ ] **U1** `package.json` keybindings — добавить `when: "workspaceFolderCount > 0"` к VSCodeSync-биндингам, чтобы не конфликтовать со встроенными Quick Open / Find.
-- [ ] **U2** `package.json` commandPalette — 18 команд с `when: false` пересмотреть: пометить нужные `when: !never` либо вынести в `viewItem` контекст, либо явно скрыть через `vscodesync._isInternalCommand`.
+- [x] **U1** ~~Проверка~~ — false positive. Единственный VSCodeSync keybinding (`Ctrl+Alt+W` → `quickSwitchWorkspace`) уже имеет корректный `when: workspaceFolderCount != 0`.
+- [x] **U2** ~~Проверка~~ — false positive. 18 команд с `when: false` в `commandPalette` — by design (программно доступны через `executeCommand`, не показываются в Quick Pick).
 - [ ] **U3** Опасные действия (`deleteWorkspaceFromCloud`, `purgeEncrypted`, `forceDetach`) — 5-секундная undo-подсказка через `withCancellableNotification` (`vscode.window.withProgress` с `cancellable: true`).
-- [ ] **U4** Quick-pick «Сменить авто-режим» — биндинг через клик по новому status-bar badge `auto:check / auto:full / auto:off`, без открытия settings.
+- [x] **U4** Dedicated mini-StatusBarItem `vscodesync.autoSyncModeStatus` (left, prio 101) — клик открывает `cycleAutoSyncMode` Quick Pick. Auto-refresh при смене настройки.
 - [ ] **U5** Tooltips/decorations — единый словарь строк (`src/ui/i18nMessages.ts`) для устранения смешения en/ru.
 
 ## 24.F · New features (scope-bounded, wired)

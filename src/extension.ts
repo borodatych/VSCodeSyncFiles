@@ -7,6 +7,7 @@ import { disposeAllGlobalQueues } from "./core/requestQueue.js";
 import { WorkspaceConfigManager } from "./core/workspaceConfigManager.js";
 import type { ProviderType } from "./core/types.js";
 import { SyncStatusBarController } from "./ui/statusBar.js";
+import { registerAutoSyncModeStatusBar } from "./ui/autoSyncModeStatusBar.js";
 import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTree.js";
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
@@ -180,6 +181,7 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
   context.subscriptions.push(statusBar);
+  registerAutoSyncModeStatusBar(context);
 
   const lockRefresher = createWorkspaceInstanceLockRefresher({ globalConfig, statusBar, roots });
   const refreshWorkspaceInstanceLock = lockRefresher.refresh;
