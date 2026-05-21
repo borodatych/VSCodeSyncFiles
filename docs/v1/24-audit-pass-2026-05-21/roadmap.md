@@ -75,8 +75,7 @@
 ## 24.D · Docs
 
 - [ ] **D1** `audit-findings.md` (этот же каталог) — полные результаты трёх аудит-агентов с file:line, для будущих ревью.
-- [ ] **D2** `docs/continuity.md` — добавить раздел «Race conditions: что мы выучили в 2026-05-21».
-- [ ] **D3** README: обновить раздел «Auto-sync modes» — добавить визуал нового status-bar badge.
+- [~] **D2/D3** Roadmap-документация Phase 24 + audit-findings полностью описаны в этом каталоге; обновление `continuity.md` и README — следующая фаза (после real-world QA новых фич, чтобы не описывать неопробованное).
 
 ---
 
