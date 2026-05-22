@@ -8,6 +8,51 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-05-22
+
+**Тост-уведомления больше не блокируют рефреш UI. После любой команды
+(Push All / Pull All / Sync / Pull / Push / Force Sync / Resolve /
+Detach / Rename / Connect / Delete и ещё ~180 других) дерево
+Workspaces и file decorations обновляются мгновенно по факту
+завершения операции, а не по закрытию toast'а пользователем.**
+
+### 🐛 Исправления
+
+- **Тосты не держат остальной UI.** В `_runWithEngine.ts:86-93` finally
+  блок с `workspacesTree.refresh()` + `fileDecorations.refresh()`
+  запускался только после возврата из callback'а `fn()`. Большинство
+  команд завершались паттерном
+  `await vscode.window.showInformationMessage("…готово")` без
+  button-аргументов — `await` ждал, пока пользователь закроет тост по
+  крестику или пока VS Code сам схлопнет его (15+ секунд). Всё это
+  время картина файлов и оттенок здоровья workspace оставались
+  устаревшими. Теперь fire-and-forget уведомления вызываются как
+  `void vscode.window.showInformationMessage(...)`: тост показывается
+  параллельно, callback возвращается мгновенно, refresh запускается
+  сразу.
+
+### ♻️ Внутреннее
+
+- **192 точечных замен `await` → `void`** в 49 файлах, найденных через
+  TypeScript Compiler API. Меняются только вызовы с **одним**
+  аргументом (без button-кнопок или `MessageOptions`). 28 вызовов с
+  кнопками (`"Открыть"`, `"Pull сейчас"`, modal-подтверждения и т.п.)
+  оставлены с `await` — там ответ пользователя реально нужен. Затронут
+  весь набор command bundle'ов: `registerWorkspaceTreeContext`,
+  `registerSyncOps`, `registerFileOperations`, `registerConflicts`,
+  `registerFileTreeContext`, `registerPhase21Commands`,
+  `registerWorkspaceLifecycle`, `registerWorkspaceMgmt`,
+  `registerWorkspaceCreate`, `registerActivitySearches`,
+  `registerDiagnostics`, `registerHashMigration`,
+  `registerHeavyMisc`, `registerOAuthDeviceCode`,
+  `registerP2PSession`, `registerPhase21Commands`,
+  `registerPrefetchCommand`, `registerSettings`,
+  `registerSmartFeaturesEngine`, `registerTemplateMarketplace`,
+  `registerEncryptedBundleExport`, `auth/providerAuthFlows` и ещё
+  ~25 UI/startup модулей.
+- `runDisconnectP2PSession` поменян с `async (): Promise<void>` на
+  обычную `function (): void` — внутри больше нет await'ов.
+
 ## [0.8.1] — 2026-05-22
 
 **7-уровневая палитра здоровья workspace и честный `lastSync` после

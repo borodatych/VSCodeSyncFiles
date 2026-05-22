@@ -70,7 +70,7 @@ export async function runShowFileHistory(
     }
 
     if (items.length === 0 && localBackups.length === 0) {
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: в облаке нет снимков истории для этого файла. Они появляются после успешного push.",
       );
       return;
@@ -276,7 +276,7 @@ export async function runAiMergeForConflict(
         notifiedConflictKeys.delete(`${workspaceId}:${posixRel}`);
         resolved = true;
 
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `✨ VSCodeSync: конфликт «${basename}» разрешён через AI. Версия запушена на облако.`,
         );
       },

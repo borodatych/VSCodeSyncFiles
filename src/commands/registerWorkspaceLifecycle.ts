@@ -95,7 +95,7 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.setWorkspaceSyncState(ws, next);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: workspace приостановлен (Suspend) — push/pull файлов отключены; манифест можно обновлять.",
           );
         },
@@ -137,7 +137,7 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.setWorkspaceSyncState(ws, next);
-          await vscode.window.showInformationMessage("VSCodeSync: workspace снова активен (Resume).");
+          void vscode.window.showInformationMessage("VSCodeSync: workspace снова активен (Resume).");
         },
         rt,
       );
@@ -194,7 +194,7 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await applyArchivedTagAndSuspend(engine, ws);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: workspace архивирован (archived + Suspend). Включите «Toggle Show Archived», чтобы видеть строку.",
           );
         },
@@ -256,7 +256,7 @@ export function registerWorkspaceLifecycleCommands(
           }
           await stripArchivedTagAndActivate(engine, ws, prior);
           await engine.pullAll(ws);
-          await vscode.window.showInformationMessage("VSCodeSync: workspace разархивирован; Pull выполнен.");
+          void vscode.window.showInformationMessage("VSCodeSync: workspace разархивирован; Pull выполнен.");
         },
         root,
       );
@@ -312,7 +312,7 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.setWorkspaceSyncState(ws, next);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: Freeze — без push/pull и без записи манифеста/_meta.",
           );
         },
@@ -355,7 +355,7 @@ export function registerWorkspaceLifecycleCommands(
         await engine.setWorkspaceSyncState(ws, next);
         await engine.repairLocalStateFromCloud(ws);
         await engine.syncWorkspace(ws);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: Freeze снят — подтянуты метаданные с облака и выполнен sync workspace.",
         );
       }, rt);
@@ -407,7 +407,7 @@ export function registerWorkspaceLifecycleCommands(
           if (localFilesAction === "Только отвязать здесь") {
             await engine.detachWorkspaceLocal(ws);
             workspacesTree.refresh();
-            await vscode.window.showInformationMessage(
+            void vscode.window.showInformationMessage(
               `VSCodeSync: workspace ${ws} отвязан локально. Облако и локальные файлы не тронуты.`,
             );
           } else if (localFilesAction === "Удалить с облака и удалить локально") {
@@ -448,7 +448,7 @@ export function registerWorkspaceLifecycleCommands(
               }
             }
             workspacesTree.refresh();
-            await vscode.window.showInformationMessage(
+            void vscode.window.showInformationMessage(
               `VSCodeSync: workspace ${ws} удалён с облака. Удалено локально: ${String(deletedCount)} файлов.`,
             );
           } else {
@@ -479,7 +479,7 @@ export function registerWorkspaceLifecycleCommands(
             workspacesTree.clearPendingDelete(ws);
             workspacesTree.invalidateRemoteCache();
             workspacesTree.refresh();
-            await vscode.window.showInformationMessage(
+            void vscode.window.showInformationMessage(
               `VSCodeSync: workspace ${ws} удалён с облака. Локальные файлы не тронуты.`,
             );
           }
@@ -515,7 +515,7 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.deleteWorkspaceFromCloud(wsId);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: зашифрованные данные workspace ${wsId} удалены с облака. Локальный конфиг отключён.`,
           );
         },

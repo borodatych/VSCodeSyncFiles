@@ -59,7 +59,7 @@ async function runInstallFromMarketplace(): Promise<void> {
   }
 
   if (entries.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: registry пуст.");
+    void vscode.window.showInformationMessage("VSCodeSync: registry пуст.");
     return;
   }
 
@@ -135,7 +135,7 @@ async function applyTemplate(rootAbs: string, manifest: WorkspaceTemplateManifes
     }
   }
 
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     `VSCodeSync: template '${manifest.name}' применён (${String(manifest.defaultFilesGlob.length)} glob, ${String(manifest.ignorePatterns.length)} ignore).`,
   );
 }

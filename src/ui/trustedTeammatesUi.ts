@@ -62,7 +62,7 @@ export function registerTrustedTeammatesCommands(
       const reg = loadRegistry(context);
       const next = addTrusted(reg, id.trim(), label.trim());
       await saveRegistry(context, next);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: машина «${label}» отмечена как доверенная. requireMachineApproval теперь пропускает её.`,
       );
     }),
@@ -72,7 +72,7 @@ export function registerTrustedTeammatesCommands(
     vscode.commands.registerCommand("vscodesync.removeTrustedMachine", async () => {
       const reg = loadRegistry(context);
       if (reg.entries.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет доверенных машин.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет доверенных машин.");
         return;
       }
       const picked = await vscode.window.showQuickPick(
@@ -87,7 +87,7 @@ export function registerTrustedTeammatesCommands(
       if (!picked) return;
       const next = removeTrusted(reg, picked.mid);
       await saveRegistry(context, next);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: машина «${picked.label}» больше не доверенная.`,
       );
     }),
@@ -97,7 +97,7 @@ export function registerTrustedTeammatesCommands(
     vscode.commands.registerCommand("vscodesync.listTrustedMachines", async () => {
       const reg = loadRegistry(context);
       if (reg.entries.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: список доверенных машин пуст.");
+        void vscode.window.showInformationMessage("VSCodeSync: список доверенных машин пуст.");
         return;
       }
       const items = reg.entries.map((e) =>

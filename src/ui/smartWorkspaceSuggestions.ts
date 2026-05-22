@@ -170,7 +170,7 @@ async function runSmartSuggestions(context: vscode.ExtensionContext, deps: Smart
           note: note.trim(),
           absolutePaths: absResolved.abs,
         });
-        await vscode.window.showInformationMessage("VSCodeSync: workspace создан, файлы добавлены в трекинг.");
+        void vscode.window.showInformationMessage("VSCodeSync: workspace создан, файлы добавлены в трекинг.");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await vscode.window.showErrorMessage(`VSCodeSync: ${msg}`);

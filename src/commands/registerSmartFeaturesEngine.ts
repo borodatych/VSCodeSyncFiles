@@ -181,7 +181,7 @@ export function registerSmartFeaturesEngineCommands(
       }
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
       if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace в этой папке.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет активных workspace в этой папке.");
         return;
       }
       const wsPick = await vscode.window.showQuickPick(

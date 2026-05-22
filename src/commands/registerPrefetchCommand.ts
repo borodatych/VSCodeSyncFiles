@@ -27,7 +27,7 @@ async function runPrefetch(): Promise<void> {
   }
   const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
   if (wc.activeWorkspaces.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: нет подключённых workspace в этой папке.",
     );
     return;
@@ -44,7 +44,7 @@ async function runPrefetch(): Promise<void> {
   });
   const plan = planPrefetchHints({ candidates });
   if (plan.toPrefetch.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: prefetch — нет кандидатов (recent threshold не пройден).",
     );
     return;
@@ -59,19 +59,19 @@ async function runPrefetch(): Promise<void> {
   };
   const result = await tryPrefetchUris(surface, { uris });
   if (result.ok) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       `VSCodeSync: prefetch — прогрето ${String(result.prefetched)} файлов.`,
     );
     return;
   }
   switch (result.reason) {
     case "api_not_available":
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: workspace.fs.prefetch недоступен в этой версии VS Code (proposed API). Включите --enable-proposed-api или обновитесь.",
       );
       return;
     case "no_uris":
-      await vscode.window.showInformationMessage("VSCodeSync: нет файлов для prefetch.");
+      void vscode.window.showInformationMessage("VSCodeSync: нет файлов для prefetch.");
       return;
     case "error":
       await vscode.window.showWarningMessage(

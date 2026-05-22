@@ -73,7 +73,7 @@ export async function runConfigurePathMapping(globalConfig: GlobalConfigManager)
         return;
       }
       await WorkspaceConfigManager.save(cfg, root);
-      await vscode.window.showInformationMessage(`VSCodeSync: для «${mn}» используется корень workspace.`);
+      void vscode.window.showInformationMessage(`VSCodeSync: для «${mn}» используется корень workspace.`);
       return;
     }
     default:
@@ -128,7 +128,7 @@ export async function runConfigurePathMapping(globalConfig: GlobalConfigManager)
   }
 
   await WorkspaceConfigManager.save(cfg, root);
-  await vscode.window.showInformationMessage(`VSCodeSync: pathMapping для «${mn}» → ${mapping[mn] ?? ""}`);
+  void vscode.window.showInformationMessage(`VSCodeSync: pathMapping для «${mn}» → ${mapping[mn] ?? ""}`);
 }
 
 function validateMapping(workspaceRoot: string, pathMapping: Record<string, string> | undefined, machineName: string): void {

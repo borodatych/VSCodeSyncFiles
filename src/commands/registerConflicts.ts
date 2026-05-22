@@ -97,7 +97,7 @@ export function registerConflictsCommands(
       }
       await runWithEngine(async (engine) => {
         await engine.resolveConflictKeepMine(fileEntry.workspaceId, rel);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `Конфликт разрешён: оставлена локальная версия «${path.basename(target.fsPath)}».`,
         );
         notifiedConflictKeys.delete(`${fileEntry.workspaceId}:${rel}`);
@@ -118,7 +118,7 @@ export function registerConflictsCommands(
       }
       await runWithEngine(async (engine) => {
         await engine.resolveConflictTakeTheirs(fileEntry.workspaceId, rel);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `Конфликт разрешён: принята облачная версия «${path.basename(target.fsPath)}».`,
         );
         notifiedConflictKeys.delete(`${fileEntry.workspaceId}:${rel}`);
@@ -183,7 +183,7 @@ export function registerConflictsCommands(
           machineName: gconf.machineName,
           provider: gconf.activeProvider ?? "onedrive",
         });
-        await vscode.window.showInformationMessage(`Принята облачная версия: ${rel}`);
+        void vscode.window.showInformationMessage(`Принята облачная версия: ${rel}`);
       }, target.root);
     }),
 
@@ -206,7 +206,7 @@ export function registerConflictsCommands(
         return;
       }
       await WorkspaceConfigManager.save(cfg, target.root);
-      await vscode.window.showInformationMessage("Флаг конфликта снят; при необходимости выполните Push.");
+      void vscode.window.showInformationMessage("Флаг конфликта снят; при необходимости выполните Push.");
       await statusBar.refresh();
       workspacesTree.refresh();
       fileDecorations.refresh();
@@ -221,7 +221,7 @@ export function registerConflictsCommands(
       const wc = await WorkspaceConfigManager.load(root);
       const conflicts = wc.files.filter((f) => f.syncStatus === "conflict");
       if (conflicts.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет конфликтов.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет конфликтов.");
         return;
       }
 
@@ -259,7 +259,7 @@ export function registerConflictsCommands(
               /* individual errors are non-fatal in batch */
             }
           }
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: разрешено ${String(conflicts.length)} конфликтов (${batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs"}).`,
           );
         });

@@ -108,7 +108,7 @@ async function runAddToNewWorkspaceImpl(
       machineName: gconf.machineName,
     });
     if (expanded.length === 0) {
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: воркспейс «${note}» создан. Нечего добавить (пусто или всё в правилах исключения).`,
       );
       return;
@@ -120,7 +120,7 @@ async function runAddToNewWorkspaceImpl(
         "Продолжить",
       );
       if (big !== "Продолжить") {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: воркспейс «${note}» создан без файлов (операция отменена).`,
         );
         return;
@@ -134,7 +134,7 @@ async function runAddToNewWorkspaceImpl(
         "Добавить",
       );
       if (ok !== "Добавить") {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: воркспейс «${note}» создан; файлы не добавлены.`,
         );
         return;
@@ -148,16 +148,16 @@ async function runAddToNewWorkspaceImpl(
         machineName: gconf.machineName,
       }))
     ) {
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: воркспейс «${note}» создан; добавление файлов отменено.`,
       );
       return;
     }
     await engine.addFiles(wid, expanded);
     if (expanded.length === 1) {
-      await vscode.window.showInformationMessage(`Воркспейс «${note}» создан; файл синхронизирован.`);
+      void vscode.window.showInformationMessage(`Воркспейс «${note}» создан; файл синхронизирован.`);
     } else {
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `Воркспейс «${note}» создан; ${String(expanded.length)} файлов синхронизировано.`,
       );
     }
@@ -279,9 +279,9 @@ export function registerFileOperationsCommands(
       await runWithEngine(async (engine) => {
         await engine.addFiles(ws, expanded);
         if (expanded.length === 1) {
-          await vscode.window.showInformationMessage("Файл добавлен и синхронизирован.");
+          void vscode.window.showInformationMessage("Файл добавлен и синхронизирован.");
         } else {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `${String(expanded.length)} файлов добавлено и синхронизировано.`,
           );
         }
@@ -327,15 +327,15 @@ export function registerFileOperationsCommands(
       await runWithEngine(async (engine) => {
         if (action === "cloud") {
           await engine.removeTrackedFiles(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage("Файл убран из синхронизации и удалён с облака.");
+          void vscode.window.showInformationMessage("Файл убран из синхронизации и удалён с облака.");
         } else if (action === "local") {
           await engine.untrackFileLocal(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "Файл отвязан на этой машине. В облаке и на других машинах остался.",
           );
         } else {
           await engine.untrackFileTombstoneOnly(fileEntry.workspaceId, [target.fsPath]);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "Файл убран у всех машин (tombstone). Blob в облаке не удалён.",
           );
         }
@@ -365,7 +365,7 @@ export function registerFileOperationsCommands(
           return;
         }
         await engine.pushFile(cfg, fileEntry.workspaceId, rel, entry);
-        await vscode.window.showInformationMessage(`Push ${rel}: готово.`);
+        void vscode.window.showInformationMessage(`Push ${rel}: готово.`);
       }, target.root);
     }),
 
@@ -389,9 +389,9 @@ export function registerFileOperationsCommands(
         }
         const result = await engine.pullFile(cfg, fileEntry.workspaceId, rel, entry);
         if (result === "already_current") {
-          await vscode.window.showInformationMessage(`${rel}: уже актуален.`);
+          void vscode.window.showInformationMessage(`${rel}: уже актуален.`);
         } else {
-          await vscode.window.showInformationMessage(`Pull ${rel}: готово.`);
+          void vscode.window.showInformationMessage(`Pull ${rel}: готово.`);
         }
       }, target.root);
     }),
@@ -464,7 +464,7 @@ export function registerFileOperationsCommands(
       await runWithEngine(async (engine) => {
         await engine.removeTrackedFiles(fromWs, [target.fsPath]);
         await engine.addFiles(toWs, [target.fsPath]);
-        await vscode.window.showInformationMessage("Файл перемещён в другой workspace.");
+        void vscode.window.showInformationMessage("Файл перемещён в другой workspace.");
       }, target.root);
     }),
 
@@ -552,7 +552,7 @@ export function registerFileOperationsCommands(
         return;
       }
       await offlineQueueStore.enqueuePush(folder.uri.fsPath, rel, tf.workspaceId, true);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: «${rel}» закреплён в начале очереди — выгрузится первым при следующем flush.`,
       );
     }),

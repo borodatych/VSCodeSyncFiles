@@ -45,7 +45,7 @@ const pendingOAuthRequests = new Map<string, PendingOAuthRequest>();
 function registerUriHandlerWeb(_context: vscode.ExtensionContext): vscode.Disposable {
   return vscode.window.registerUriHandler({
     handleUri(uri: vscode.Uri): vscode.ProviderResult<void> {
-      void (async () => {
+      (() => {
         const params = new URLSearchParams(uri.query);
         const state = params.get("state");
         const code = params.get("code");
@@ -66,7 +66,7 @@ function registerUriHandlerWeb(_context: vscode.ExtensionContext): vscode.Dispos
         }
 
         // No pending request — inform user about Desktop
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync (Web): OAuth redirect получен. Для полной авторизации используйте VS Code Desktop.`,
         );
       })();

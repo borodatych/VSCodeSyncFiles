@@ -43,7 +43,7 @@ export function registerGitignoreWatcher(context: vscode.ExtensionContext): vsco
     try {
       const next = ensureManagedBlock(content);
       await fs.writeFile(gitignorePath, next, "utf8");
-      await vscode.window.showInformationMessage("VSCodeSync: .gitignore обновлён.");
+      void vscode.window.showInformationMessage("VSCodeSync: .gitignore обновлён.");
     } catch (e) {
       await vscode.window.showErrorMessage(
         `VSCodeSync: не удалось обновить .gitignore — ${e instanceof Error ? e.message : String(e)}`,

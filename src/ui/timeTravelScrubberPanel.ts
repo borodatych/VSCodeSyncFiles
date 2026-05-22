@@ -42,7 +42,7 @@ export async function openTimeTravelScrubber(deps: TimeTravelDeps): Promise<void
     if (v) versions.push(v);
   }
   if (versions.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       `VSCodeSync: для «${deps.relPath}» в облаке нет .history записей.`,
     );
     return;

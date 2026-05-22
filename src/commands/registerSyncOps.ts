@@ -25,7 +25,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
       await runWithEngine(async (engine) => {
         await engine.pushAll();
-        await vscode.window.showInformationMessage("Push all: готово.");
+        void vscode.window.showInformationMessage("Push all: готово.");
       });
     }),
 
@@ -36,7 +36,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       }
       const cfg = await WorkspaceConfigManager.load(root);
       if (cfg.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace для push.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет активных workspace для push.");
         return;
       }
       const { planBulkPush, formatBulkPushResults } = await import("../core/bulkPushWizard.js");
@@ -52,7 +52,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       });
       const plan = planBulkPush(targets);
       if (plan.totalWorkspaces === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет workspace c файлами для push.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет workspace c файлами для push.");
         return;
       }
       const picks = await vscode.window.showQuickPick(
@@ -159,7 +159,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
           if (!r.ok) {
             throw new Error(`HTTP ${String(r.status)} ${await r.text()}`);
           }
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `Webhook digest отправлен (${format}, ${String(digest.totalEvents)} events).`,
           );
         } catch (e) {
@@ -191,7 +191,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
         })),
       );
       if (digest.totalCloudNewer === 0 && digest.totalConflicts === 0) {
-        await vscode.window.showInformationMessage(digest.headline);
+        void vscode.window.showInformationMessage(digest.headline);
         return;
       }
       const choice = await vscode.window.showInformationMessage(
@@ -224,7 +224,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       const verdict = planGoHomePreflight(cfg.files);
       const headline = describeGoHomeVerdict(verdict);
       if (verdict.kind === "clean") {
-        await vscode.window.showInformationMessage(headline);
+        void vscode.window.showInformationMessage(headline);
         return;
       }
       if (verdict.kind === "pending_push") {
@@ -236,7 +236,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
         if (choice === "Push all") {
           await runWithEngine(async (engine) => {
             await engine.pushAll();
-            await vscode.window.showInformationMessage("✅ Push выполнен. Можно закрывать.");
+            void vscode.window.showInformationMessage("✅ Push выполнен. Можно закрывать.");
           });
         }
         return;
@@ -278,7 +278,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     vscode.commands.registerCommand("vscodesync.pullAll", async () => {
       await runWithEngine(async (engine) => {
         await engine.pullAll();
-        await vscode.window.showInformationMessage("Pull all: готово.");
+        void vscode.window.showInformationMessage("Pull all: готово.");
       });
     }),
 
@@ -295,7 +295,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       const cfg = await WorkspaceConfigManager.load(root);
       const cloudNewerFiles = cfg.files.filter((f) => f.syncStatus === "cloud_newer");
       if (cloudNewerFiles.length === 0) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: нет файлов в состоянии «облако новее» — нечего скачивать.",
         );
         return;
@@ -368,7 +368,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       }
       await runWithEngine(async (engine) => {
         await engine.syncWorkspace(ws);
-        await vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
+        void vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
       });
     }),
 
@@ -383,7 +383,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       }
       await runWithEngine(async (engine) => {
         await engine.pushAll(ws);
-        await vscode.window.showInformationMessage("Push workspace: готово.");
+        void vscode.window.showInformationMessage("Push workspace: готово.");
       });
     }),
 
@@ -398,7 +398,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       }
       await runWithEngine(async (engine) => {
         await engine.pullAll(ws);
-        await vscode.window.showInformationMessage("Pull workspace: готово.");
+        void vscode.window.showInformationMessage("Pull workspace: готово.");
       });
     }),
   ];

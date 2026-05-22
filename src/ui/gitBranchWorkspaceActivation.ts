@@ -175,7 +175,7 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
       continue;
     }
     if (status === "pending") {
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: workspace активирован по ветке в режиме только чтения: эта машина ожидает подтверждения в манифесте — push отключён до одобрения на другой машине.`,
       );
       const wc = await WorkspaceConfigManager.load(root);

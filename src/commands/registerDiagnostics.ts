@@ -98,7 +98,7 @@ export function registerDiagnosticsCommands(
       const gc = await globalConfig.load();
       await forceAcquireWorkspaceInstanceLock(storageDir, currentRoots, gc.machineName);
       refreshWorkspaceInstanceLock();
-      await vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
+      void vscode.window.showInformationMessage("VSCodeSync: это окно теперь основное. Push доступен.");
     }),
 
     vscode.commands.registerCommand("vscodesync.healthCheck", async () => {
@@ -144,7 +144,7 @@ export function registerDiagnosticsCommands(
       if (picked === "Обновить _machines.json" && provider) {
         try {
           await syncMachinesRegistrySelf(provider, gcData.machineId, gcData.machineName);
-          await vscode.window.showInformationMessage("VSCodeSync: _machines.json обновлён (запись этой машины).");
+          void vscode.window.showInformationMessage("VSCodeSync: _machines.json обновлён (запись этой машины).");
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           await vscode.window.showErrorMessage(`VSCodeSync: не удалось обновить реестр — ${msg}`);
@@ -165,12 +165,12 @@ export function registerDiagnosticsCommands(
           }
         }
         if (total > 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: сброшено устаревших soft lock в манифесте: ${String(total)}`,
           );
         }
         if (total === 0 && report.staleLockTargets.length > 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: устаревших soft lock не осталось (уже сброшены или порог времени изменился). Перезапустите Health Check.",
           );
         }

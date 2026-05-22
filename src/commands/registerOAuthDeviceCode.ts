@@ -53,7 +53,7 @@ export function registerOAuthDeviceCodeCommand(
 async function runSignInDeviceCode(deps: OAuthDeviceCodeDeps): Promise<void> {
   const providers = deps.resolveProviders();
   if (providers.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: device-code sign-in пока не сконфигурирован для этого билда (нет clientId).",
     );
     return;
@@ -103,7 +103,7 @@ async function runSignInDeviceCode(deps: OAuthDeviceCodeDeps): Promise<void> {
 
   const stored = await picked.storeTokens(tokens);
   if (stored) {
-    await vscode.window.showInformationMessage(`VSCodeSync: вход через device-code (${picked.label}) выполнен.`);
+    void vscode.window.showInformationMessage(`VSCodeSync: вход через device-code (${picked.label}) выполнен.`);
   } else {
     await vscode.window.showWarningMessage("VSCodeSync: токены получены, но провайдер отклонил их сохранение.");
   }

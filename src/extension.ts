@@ -226,7 +226,7 @@ export function activate(context: vscode.ExtensionContext): void {
   > = async (workspaceId, localRoot, savedEntry, savedFiles) => {
     await runWithEngine(async (engine) => {
       await engine.repushWorkspaceToCloud(workspaceId, savedEntry, savedFiles);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: workspace «${savedEntry.workspaceNote || workspaceId}» восстановлен на облаке.`,
       );
     }, localRoot);

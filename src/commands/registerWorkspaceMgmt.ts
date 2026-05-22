@@ -70,7 +70,7 @@ export function registerWorkspaceMgmtCommands(
         }
       }
       if (items.length === 0) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: в открытых папках нет подключённых workspace.",
         );
         return;
@@ -85,7 +85,7 @@ export function registerWorkspaceMgmtCommands(
       if (!picked) return;
       await vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
       if (picked.suspended) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `«${picked.label.replace(/^\$\([^)]+\)\s*/, "")}» в режиме Suspend — нажмите Resume в дереве.`,
         );
       }
@@ -117,7 +117,7 @@ export function registerWorkspaceMgmtCommands(
       await runWithEngine(
         async (engine) => {
           await engine.detachWorkspaceLocal(ws);
-          await vscode.window.showInformationMessage("Workspace отключён локально.");
+          void vscode.window.showInformationMessage("Workspace отключён локально.");
         },
         undefined,
       );
@@ -145,7 +145,7 @@ export function registerWorkspaceMgmtCommands(
       }
       await runWithEngine(async (engine) => {
         await engine.renameWorkspaceNote(ws, note.trim());
-        await vscode.window.showInformationMessage("Название обновлено в облаке и локально.");
+        void vscode.window.showInformationMessage("Название обновлено в облаке и локально.");
       });
     }),
 
@@ -172,7 +172,7 @@ export function registerWorkspaceMgmtCommands(
         }
         const tags = raw.split(",").map((s) => s.trim());
         await engine.setWorkspaceTags(ws, tags);
-        await vscode.window.showInformationMessage("Теги в облачном манифесте обновлены.");
+        void vscode.window.showInformationMessage("Теги в облачном манифесте обновлены.");
       });
     }),
 
@@ -195,7 +195,7 @@ export function registerWorkspaceMgmtCommands(
       const provider = gc.activeProvider ?? "onedrive";
       const link = `vscode://borodatych.vscodesyncfiles/connect?provider=${encodeURIComponent(provider)}&workspaceId=${encodeURIComponent(pick.workspaceId)}`;
       await vscode.env.clipboard.writeText(link);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: link скопирован в буфер обмена. Откройте его на другой машине, чтобы подключить workspace «${pick.workspaceNote}».`,
       );
     }),

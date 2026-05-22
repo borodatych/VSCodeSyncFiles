@@ -147,13 +147,13 @@ async function runEnrollPasskey(storage: PasskeyRegistryStorage, secrets: vscode
   const prfNote = result.prfB64Url
     ? `PRF extension активна.${rewrapNote}`
     : "PRF extension недоступна — DEK rewrap пропущен.";
-  await vscode.window.showInformationMessage(`VSCodeSync: passkey добавлен. ${prfNote}`);
+  void vscode.window.showInformationMessage(`VSCodeSync: passkey добавлен. ${prfNote}`);
 }
 
 async function runUnlockWithPasskey(storage: PasskeyRegistryStorage, secrets: vscode.SecretStorage): Promise<void> {
   const registry = await storage.load();
   if (registry.entries.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkeys. Запустите Enroll passkey.");
+    void vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkeys. Запустите Enroll passkey.");
     return;
   }
 
@@ -214,7 +214,7 @@ async function runUnlockWithPasskey(storage: PasskeyRegistryStorage, secrets: vs
     unwrapNote = " Envelope ещё не создан — запустите Enroll passkey.";
   }
 
-  await vscode.window.showInformationMessage(`VSCodeSync: passkey ceremony OK.${unwrapNote}`);
+  void vscode.window.showInformationMessage(`VSCodeSync: passkey ceremony OK.${unwrapNote}`);
 }
 
 function bytesToB64Url(b: Buffer): string {
@@ -250,7 +250,7 @@ async function runShowPasskeySettings(
       const registry = await storage.load();
       if (action.kind === "remove") {
         await storage.save(removeCredential(registry, action.id));
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: passkey ${action.id.slice(0, 8)}… removed.`,
         );
       } else {
@@ -283,7 +283,7 @@ async function runRemovePasskey(storage: PasskeyRegistryStorage): Promise<void> 
   const registry = await storage.load();
   const ordered = orderForDisplay(registry);
   if (ordered.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkey.");
+    void vscode.window.showInformationMessage("VSCodeSync: нет зарегистрированных passkey.");
     return;
   }
   const picked = await vscode.window.showQuickPick(
@@ -310,7 +310,7 @@ async function runRemovePasskey(storage: PasskeyRegistryStorage): Promise<void> 
     credentialCount: Math.max(0, before - 1),
     removedPrimary: wasPrimary,
   });
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     `VSCodeSync: passkey ${picked.id.slice(0, 8)}… удалён.`,
   );
 }
@@ -332,7 +332,7 @@ async function runPassphraseFallback(): Promise<void> {
     mode,
     attemptsInWindow: 0,
   });
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     "VSCodeSync: passphrase fallback wiring шипит план шагов; реальная enroll/unlock реализация — следующая итерация (gated behind WebAuthn deriveWebauthnKek).",
   );
 }

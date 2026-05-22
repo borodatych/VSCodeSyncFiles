@@ -146,7 +146,7 @@ export async function exportWorkspaceStructure(workspaceRoot: string, machineNam
     exportedBy: machineName,
   };
   await fs.writeFile(uri.fsPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await vscode.window.showInformationMessage(`Портативная структура сохранена: ${uri.fsPath}`);
+  void vscode.window.showInformationMessage(`Портативная структура сохранена: ${uri.fsPath}`);
 }
 
 /** Полный дамп локального кэша (schema 1) — для переноса между чек-аутами той же машины / бэкапа. */
@@ -168,7 +168,7 @@ export async function exportWorkspaceStructureFullCache(workspaceRoot: string): 
     ...(cfg.pathMapping !== undefined ? { pathMapping: cfg.pathMapping } : {}),
   };
   await fs.writeFile(uri.fsPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await vscode.window.showInformationMessage(`Локальный кэш экспортирован: ${uri.fsPath}`);
+  void vscode.window.showInformationMessage(`Локальный кэш экспортирован: ${uri.fsPath}`);
 }
 
 async function importLitePortable(
@@ -236,7 +236,7 @@ async function importLitePortable(
     const tracked = new Set(cfg.files.filter((f) => f.workspaceId === lite.sourceWorkspaceId).map((f) => f.localPath));
     const toAdd = resolved.filter((r) => !tracked.has(r.rel)).map((r) => r.abs);
     if (toAdd.length === 0) {
-      await vscode.window.showInformationMessage("VSCodeSync: все файлы из списка уже в синхронизации.");
+      void vscode.window.showInformationMessage("VSCodeSync: все файлы из списка уже в синхронизации.");
       return;
     }
     if (
@@ -249,7 +249,7 @@ async function importLitePortable(
       return;
     }
     await engine.addFiles(lite.sourceWorkspaceId, toAdd);
-    await vscode.window.showInformationMessage(`VSCodeSync: добавлено файлов: ${String(toAdd.length)}.`);
+    void vscode.window.showInformationMessage(`VSCodeSync: добавлено файлов: ${String(toAdd.length)}.`);
     return;
   }
 
@@ -274,7 +274,7 @@ async function importLitePortable(
       }
       await engine.addFiles(lite.sourceWorkspaceId, toAdd);
     }
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: workspace подключён с облака; при конфликтах контента используйте дерево синхронизации и «Diff с облаком».",
     );
     return;
@@ -296,7 +296,7 @@ async function importLitePortable(
     return;
   }
   await engine.addFiles(newId, absPaths);
-  await vscode.window.showInformationMessage(`VSCodeSync: создан workspace ${newId}, файлы добавлены в синхронизацию.`);
+  void vscode.window.showInformationMessage(`VSCodeSync: создан workspace ${newId}, файлы добавлены в синхронизацию.`);
 }
 
 export async function importWorkspaceStructure(workspaceRoot: string, deps: WorkspaceStructureIoDeps): Promise<void> {
@@ -340,5 +340,5 @@ export async function importWorkspaceStructure(workspaceRoot: string, deps: Work
   }
   await backupLocalConfig(workspaceRoot);
   await WorkspaceConfigManager.save(next, workspaceRoot);
-  await vscode.window.showInformationMessage("vscodesync.json восстановлен из полного экспорта кэша.");
+  void vscode.window.showInformationMessage("vscodesync.json восстановлен из полного экспорта кэша.");
 }

@@ -61,7 +61,7 @@ export function registerVscodeSyncUriHandler(context: vscode.ExtensionContext): 
           // Surface the Workspaces tree view via the registered focus
           // command (vscodesync.focusWorkspacesView, see package.json).
           await vscode.commands.executeCommand("vscodesync.focusWorkspacesView");
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: открыт workspace ${action.workspaceId} (если подключён локально).`,
           );
           break;

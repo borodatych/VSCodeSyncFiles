@@ -75,7 +75,7 @@ export function registerFileTreeContextCommands(
             return;
           }
           await engine.pushFile(cfg, el.workspaceId, el.localPath, entry);
-          await vscode.window.showInformationMessage(`Push ${el.localPath}: готово.`);
+          void vscode.window.showInformationMessage(`Push ${el.localPath}: готово.`);
         }, rootPath);
       },
     ),
@@ -96,9 +96,9 @@ export function registerFileTreeContextCommands(
           }
           const result = await engine.pullFile(cfg, el.workspaceId, el.localPath, entry);
           if (result === "already_current") {
-            await vscode.window.showInformationMessage(`${el.localPath}: уже актуален.`);
+            void vscode.window.showInformationMessage(`${el.localPath}: уже актуален.`);
           } else {
-            await vscode.window.showInformationMessage(`Pull ${el.localPath}: готово.`);
+            void vscode.window.showInformationMessage(`Pull ${el.localPath}: готово.`);
           }
         }, rootPath);
       },
@@ -151,7 +151,7 @@ export function registerFileTreeContextCommands(
         machineName: gconf.machineName,
         provider: gconf.activeProvider ?? "onedrive",
       });
-      await vscode.window.showInformationMessage("Конфликт снят (локально); при необходимости выполните Push.");
+      void vscode.window.showInformationMessage("Конфликт снят (локально); при необходимости выполните Push.");
       await statusBar.refresh();
       workspacesTree.refresh();
       fileDecorations.refresh();
@@ -190,7 +190,7 @@ export function registerFileTreeContextCommands(
           machineName: gconf.machineName,
           provider: gconf.activeProvider ?? "onedrive",
         });
-        await vscode.window.showInformationMessage(`Принята облачная версия: ${el.localPath}`);
+        void vscode.window.showInformationMessage(`Принята облачная версия: ${el.localPath}`);
       }, rootPath);
     }),
 
@@ -237,7 +237,7 @@ export function registerFileTreeContextCommands(
           machineName: gconf.machineName,
           provider: gconf.activeProvider ?? "onedrive",
         });
-        await vscode.window.showInformationMessage(`Force Sync выполнен: ${el.localPath}`);
+        void vscode.window.showInformationMessage(`Force Sync выполнен: ${el.localPath}`);
       }, rootPath);
       workspacesTree.refresh();
       fileDecorations.refresh();

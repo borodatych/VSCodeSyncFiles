@@ -60,7 +60,7 @@ export function registerP2PSessionCommands(deps: P2PSessionCommandsDeps): vscode
 
   return [
     vscode.commands.registerCommand("vscodesync.startP2PSession", () => runStartP2PSession(deps)),
-    vscode.commands.registerCommand("vscodesync.disconnectP2PSession", () => runDisconnectP2PSession(deps)),
+    vscode.commands.registerCommand("vscodesync.disconnectP2PSession", () => { runDisconnectP2PSession(deps); }),
   ];
 }
 
@@ -173,22 +173,22 @@ async function runStartP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
       attachFileReceiver(result.channel, {
         resolveWorkspaceRoot: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
       });
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: P2P session ${sessionId.trim()} открыта с ${peerMachineId.trim()}.`,
       );
     },
   );
 }
 
-async function runDisconnectP2PSession(deps: P2PSessionCommandsDeps): Promise<void> {
+function runDisconnectP2PSession(deps: P2PSessionCommandsDeps): void {
   const primary = deps.registry.primary();
   if (!primary) {
-    await vscode.window.showInformationMessage("VSCodeSync: нет активной P2P сессии.");
+    void vscode.window.showInformationMessage("VSCodeSync: нет активной P2P сессии.");
     return;
   }
   deps.registry.remove(primary.id);
   deps.mirrorRegistry?.unbind(primary.id);
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     `VSCodeSync: P2P сессия ${primary.id} закрыта.`,
   );
 }

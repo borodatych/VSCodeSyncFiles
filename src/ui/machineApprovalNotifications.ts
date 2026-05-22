@@ -125,7 +125,7 @@ async function pollOnce(deps: MachineApprovalNotifierDeps): Promise<void> {
             picked === "Разрешить" ? "active" : "blocked",
           );
           await rememberHandled(deps.extensionContext, pid);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             picked === "Разрешить"
               ? `VSCodeSync: машина «${row.machineName}» одобрена (active).`
               : `VSCodeSync: машина «${row.machineName}» заблокирована.`,

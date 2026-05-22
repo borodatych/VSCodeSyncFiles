@@ -30,7 +30,7 @@ export function registerSarifExportCommand(deps: SarifExportDeps): vscode.Dispos
 async function runExport(storageDir: string): Promise<void> {
   const log = await loadConflictLog(storageDir);
   if (log.entries.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: heatmap пустой — нечего экспортировать в SARIF.",
     );
     return;

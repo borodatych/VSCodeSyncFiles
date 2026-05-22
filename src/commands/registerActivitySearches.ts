@@ -41,7 +41,7 @@ export function registerActivitySearchCommands(
       });
       if (!name?.trim()) return;
       const entry = await upsertSavedSearch(context, name.trim(), filter);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: фильтр «${entry.name}» сохранён.`,
       );
     }),
@@ -49,7 +49,7 @@ export function registerActivitySearchCommands(
     vscode.commands.registerCommand("vscodesync.activityApplySavedSearch", async () => {
       const items = listSavedSearches(context);
       if (items.length === 0) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: нет сохранённых фильтров. Примените фильтр в Activity Feed и сохраните его.",
         );
         return;
@@ -82,7 +82,7 @@ export function registerActivitySearchCommands(
     vscode.commands.registerCommand("vscodesync.activityDeleteSavedSearch", async () => {
       const items = listSavedSearches(context);
       if (items.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет сохранённых фильтров.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет сохранённых фильтров.");
         return;
       }
       type Pick = vscode.QuickPickItem & { id: string };
@@ -93,7 +93,7 @@ export function registerActivitySearchCommands(
       if (!picked) return;
       const ok = await deleteSavedSearch(context, picked.id);
       if (ok) {
-        await vscode.window.showInformationMessage(`VSCodeSync: «${picked.label}» удалён.`);
+        void vscode.window.showInformationMessage(`VSCodeSync: «${picked.label}» удалён.`);
       }
     }),
 
@@ -102,7 +102,7 @@ export function registerActivitySearchCommands(
       async () => {
         const items = listSavedSearches(context);
         if (items.length === 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: нет сохранённых фильтров. Сначала сохраните фильтр.",
           );
           return;
@@ -121,7 +121,7 @@ export function registerActivitySearchCommands(
         });
         if (!chosen) return;
         await setAlertingFilterIds(context, chosen.map((c) => c.id));
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           chosen.length === 0
             ? "VSCodeSync: alerting отключён."
             : `VSCodeSync: alerting активен для ${String(chosen.length)} фильтр${chosen.length === 1 ? "а" : "ов"}.`,

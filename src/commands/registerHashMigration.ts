@@ -121,7 +121,7 @@ export function registerHashMigrationCommands(
       }
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
       if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет активных workspace.");
         return;
       }
       const nowMs = Date.now();
@@ -204,7 +204,7 @@ export function registerHashMigrationCommands(
       }
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
       if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активных workspace.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет активных workspace.");
         return;
       }
 
@@ -215,7 +215,7 @@ export function registerHashMigrationCommands(
       }
       const plan = planBlake3MigrationTasks(reports);
       if (plan.totalTasks === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: BLAKE3 уже заполнен для всех файлов.");
+        void vscode.window.showInformationMessage("VSCodeSync: BLAKE3 уже заполнен для всех файлов.");
         return;
       }
 
@@ -267,7 +267,7 @@ export function registerHashMigrationCommands(
       }
       channel.show(true);
 
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: BLAKE3 backfill завершён — ${String(totalApplied)} обновлено${totalDrift > 0 ? `, ${String(totalDrift)} drift` : ""}.`,
       );
     }),

@@ -41,14 +41,14 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
         return;
       }
       await cfg.update("notificationLevel", picked.value, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(`VSCodeSync: уровень уведомлений — ${picked.label}`);
+      void vscode.window.showInformationMessage(`VSCodeSync: уровень уведомлений — ${picked.label}`);
     }),
 
     vscode.commands.registerCommand("vscodesync.showStatus", async () => {
       const cfg = await globalConfig.load();
       const p = await registry.getActive();
       const name = (p?.type ?? cfg.activeProvider ?? "none") as string;
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync · ${cfg.machineName} · провайдер: ${name}`,
       );
     }),
@@ -63,11 +63,11 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
       await cfg.update("telemetry", !cur, vscode.ConfigurationTarget.Global);
       const vscodeOff = !vscode.env.isTelemetryEnabled;
       if (cur) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: расширение больше не отправляет события (vscodesync.telemetry): выкл.",
         );
       } else {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           vscodeOff
             ? "VSCodeSync: телеметрия расширения включена. Чтобы события уходили в Microsoft / инструменты разработчика, включите телеметрию в настройках VS Code. Внешняя отправка — только при непустом vscodesync.telemetryIngestUrl."
             : "VSCodeSync: телеметрия расширения включена. События без путей к файлам; внешний endpoint — только при заданном vscodesync.telemetryIngestUrl.",
@@ -107,7 +107,7 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
       if (!picked) return;
       await cfg.update("autoSyncMode", picked.value, vscode.ConfigurationTarget.Global);
       await statusBar.refresh();
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync · авто-режим: ${picked.label}`,
       );
     }),

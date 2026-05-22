@@ -81,7 +81,7 @@ export function registerAnalyticsPanel(deps: RegisterAnalyticsPanelDeps): vscode
 
     try {
       await host.init(bridgeWebviewUri);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync · Analytics: DuckDB-WASM ready. Use `host.execSql(...)` " +
           "via the analytics surface (work in progress) to query activity / stats.",
       );

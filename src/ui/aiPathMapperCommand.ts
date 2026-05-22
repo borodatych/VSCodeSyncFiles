@@ -74,13 +74,13 @@ export async function runAiPathMapper(cancellationToken?: vscode.CancellationTok
     }
   }
   if (Object.keys(configs).length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: не найдено конфиг-файлов для анализа.");
+    void vscode.window.showInformationMessage("VSCodeSync: не найдено конфиг-файлов для анализа.");
     return;
   }
 
   const suspicious = findSuspiciousPaths({ oldRoot, newRoot, configs });
   if (suspicious.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: подозрительных абсолютных путей не найдено.");
+    void vscode.window.showInformationMessage("VSCodeSync: подозрительных абсолютных путей не найдено.");
     return;
   }
 
@@ -124,7 +124,7 @@ export async function runAiPathMapper(cancellationToken?: vscode.CancellationTok
 
   const edits = parseRemapEdits(response);
   if (edits.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: AI не вернул валидных правок.");
+    void vscode.window.showInformationMessage("VSCodeSync: AI не вернул валидных правок.");
     return;
   }
   // Apply per-file and present a confirmation prompt before writing.
@@ -156,7 +156,7 @@ export async function runAiPathMapper(cancellationToken?: vscode.CancellationTok
       }
     }
   }
-  await vscode.window.showInformationMessage(`VSCodeSync: применено ${String(edits.length)} правок.`);
+  void vscode.window.showInformationMessage(`VSCodeSync: применено ${String(edits.length)} правок.`);
 }
 
 /**

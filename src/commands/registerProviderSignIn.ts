@@ -119,7 +119,7 @@ export function registerProviderSignInCommands(
       await globalConfig.set("activeProvider", "yandex");
       await globalConfig.save();
       workspacesTree.setActiveCloudProvider("yandex");
-      await vscode.window.showInformationMessage("Яндекс Диск: токен сохранён.");
+      void vscode.window.showInformationMessage("Яндекс Диск: токен сохранён.");
       await statusBar.refresh();
       workspacesTree.refresh();
       fileDecorations.refresh();

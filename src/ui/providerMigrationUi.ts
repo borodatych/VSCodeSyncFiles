@@ -193,7 +193,7 @@ export function registerProviderMigrationCommand(context: vscode.ExtensionContex
             },
           );
           await deps.refreshUi();
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: данные на ${labelForProviderType(sourceType)} удалены. Рабочая копия — на ${labelForProviderType(targetType)}.`,
           );
         } catch (e) {
@@ -203,7 +203,7 @@ export function registerProviderMigrationCommand(context: vscode.ExtensionContex
           );
         }
       } else {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: старый провайдер не очищался. На исходном облаке — бэкап: VSCodeSyncFiles/.snapshots/${snapName}/`,
         );
       }

@@ -48,7 +48,7 @@ async function runExport(): Promise<void> {
   }
   const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
   if (wc.activeWorkspaces.length === 0 || wc.files.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: нет отслеживаемых файлов в текущей папке — нечего экспортировать.",
     );
     return;
@@ -84,7 +84,7 @@ async function runExport(): Promise<void> {
     return;
   }
 
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     `VSCodeSync: bundle сохранён в ${target.fsPath} (${formatBytes(writtenBytes)}). ` +
     "Передайте файл и passphrase отдельно по разным каналам.",
   );

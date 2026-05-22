@@ -99,7 +99,7 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
         }
         await engine.setWorkspaceGitBranch(ws, branch);
         void applyBranchPolicyForRoot(root, gitBranchActivationDeps);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           branch === ""
             ? "VSCodeSync: привязка git branch снята; workspace всегда активен."
             : "VSCodeSync: gitBranch записан в облачный манифест и кэш локально.",
@@ -138,7 +138,7 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
       if (mode.value === "normal") {
         await runWithEngine(async (engine) => {
           await engine.repairLocalStateFromCloud();
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync Repair: ETag манифеста и _meta, имя workspace подтянуты с облака.",
           );
         });
@@ -166,7 +166,7 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
           async () => {
             const found = await engine.repairByCloudScan(pick.workspaceId);
             if (found.length === 0) {
-              await vscode.window.showInformationMessage(
+              void vscode.window.showInformationMessage(
                 `VSCodeSync Repair Scan: в облаке нет файлов для workspace «${pick.label}».`,
               );
               return;
@@ -178,7 +178,7 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
             );
             if (doPull === "Pull сейчас") {
               await engine.pullAll(pick.workspaceId);
-              await vscode.window.showInformationMessage("VSCodeSync Repair: Pull завершён.");
+              void vscode.window.showInformationMessage("VSCodeSync Repair: Pull завершён.");
             }
           },
         );
@@ -232,7 +232,7 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
             (acc, w) => acc + w.files.filter((f) => f.action === "conflict" || f.action === "conflict_pending").length,
             0,
           );
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `Preview Sync: push ${String(nPush)} · pull ${String(nPull)} · конфликты ${String(nConf)}. Подробности — панель Output «VSCodeSync · Preview».`,
           );
         },

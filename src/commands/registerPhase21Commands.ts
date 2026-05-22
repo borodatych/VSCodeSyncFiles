@@ -136,7 +136,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       try {
         const body = Buffer.from(`${JSON.stringify(plan.manifest, null, 2)}\n`, "utf8");
         await provider.uploadFile(manifestCloudPath(picked.ws.workspaceId), body);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: облачный манифест восстановлен (${String(plan.rebuiltFileCount)} файлов).`,
         );
       } catch (e) {
@@ -227,7 +227,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       await deps.runWithEngine(async (engine: SyncEngine) => {
         await engine.resolveConflictKeepBoth(fileEntry.workspaceId, posixRel);
       }, folder.uri.fsPath);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: keep-both — облачная версия сохранена как `.conflict-<machine>-<ts>` рядом. Локальная — pending push.",
       );
     }),
@@ -271,7 +271,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       void normaliseConflictExplanation;
       // Fallback: copy prompt to clipboard for the user to paste elsewhere.
       await vscode.env.clipboard.writeText(`${prompt.system}\n\n${prompt.user}`);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: LM недоступна. Промпт скопирован в clipboard — вставьте в Copilot Chat / ChatGPT.",
       );
     }),
@@ -346,7 +346,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
         posixRel,
       });
       await vscode.env.clipboard.writeText(link);
-      await vscode.window.showInformationMessage(`VSCodeSync: ссылка скопирована.\n${link}`);
+      void vscode.window.showInformationMessage(`VSCodeSync: ссылка скопирована.\n${link}`);
     }),
   );
 
@@ -438,7 +438,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
         ttlHours: ttlChoice.ttl,
       });
       await vscode.env.clipboard.writeText(link);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: invite link скопирован.\n${link}`,
       );
     }),

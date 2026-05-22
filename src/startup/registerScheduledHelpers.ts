@@ -230,7 +230,7 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
       statusBar.setSyncing(true);
       try {
         await applyArchivedTagAndSuspend(engine, workspaceId);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: «${workspaceNote.trim() || workspaceId}» архивирован (archived + Suspend).`,
         );
       } catch (e) {
@@ -290,7 +290,7 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
       statusBar.setSyncing(true);
       try {
         await applyArchivedTagAndSuspend(engine, workspaceId);
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: «${workspaceNote.trim() || workspaceId}» архивирован (archived + Suspend).`,
         );
       } catch (e) {

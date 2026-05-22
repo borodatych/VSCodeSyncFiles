@@ -34,7 +34,7 @@ export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
 
   const snapshots = await listWorkspaceSnapshots(provider, workspaceId);
   if (snapshots.length < 2) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       `VSCodeSync: для diff нужно минимум 2 snapshot'а в этом workspace (сейчас ${String(snapshots.length)}).`,
     );
     return;
@@ -60,7 +60,7 @@ export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
 
   const allFiles = unionSnapshotFiles(left.files, right.files);
   if (allFiles.length === 0) {
-    await vscode.window.showInformationMessage("VSCodeSync: оба snapshot'а пустые.");
+    void vscode.window.showInformationMessage("VSCodeSync: оба snapshot'а пустые.");
     return;
   }
   const filePick = await vscode.window.showQuickPick(allFiles, {
@@ -80,7 +80,7 @@ export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
     rightContent: rightBuf?.toString("utf8") ?? "",
   });
   if (plan.identical) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       `VSCodeSync: ${filePick} идентичен между «${left.name}» и «${right.name}».`,
     );
     return;

@@ -434,7 +434,7 @@ export function openActivityFeedPanel(
           });
           if (uri) {
             await fs.writeFile(uri.fsPath, body, "utf8");
-            await vscode.window.showInformationMessage(`VSCodeSync: экспорт сохранён — ${uri.fsPath}`);
+            void vscode.window.showInformationMessage(`VSCodeSync: экспорт сохранён — ${uri.fsPath}`);
           }
         }
       },

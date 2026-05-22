@@ -58,7 +58,7 @@ export function registerWorkspaceTreeContextCommands(
             return;
           }
           await engine.pushAll(el.workspaceId);
-          await vscode.window.showInformationMessage(`Push workspace (${el.note}): готово.`);
+          void vscode.window.showInformationMessage(`Push workspace (${el.note}): готово.`);
         }, rootPath);
       },
     ),
@@ -82,7 +82,7 @@ export function registerWorkspaceTreeContextCommands(
             return;
           }
           await engine.pullAll(el.workspaceId);
-          await vscode.window.showInformationMessage(`Pull workspace (${el.note}): готово.`);
+          void vscode.window.showInformationMessage(`Pull workspace (${el.note}): готово.`);
         }, rootPath);
       },
     ),
@@ -106,7 +106,7 @@ export function registerWorkspaceTreeContextCommands(
             return;
           }
           await engine.syncWorkspace(el.workspaceId);
-          await vscode.window.showInformationMessage(`Sync (${el.note}): готово.`);
+          void vscode.window.showInformationMessage(`Sync (${el.note}): готово.`);
         }, rootPath);
       },
     ),
@@ -130,7 +130,7 @@ export function registerWorkspaceTreeContextCommands(
         await runWithEngine(
           async (engine) => {
             await engine.detachWorkspaceLocal(ws);
-            await vscode.window.showInformationMessage("Workspace отключён локально.");
+            void vscode.window.showInformationMessage("Workspace отключён локально.");
           },
           rootPath,
         );
@@ -154,7 +154,7 @@ export function registerWorkspaceTreeContextCommands(
         }
         await runWithEngine(async (engine) => {
           await engine.renameWorkspaceNote(el.workspaceId, note.trim());
-          await vscode.window.showInformationMessage("Название обновлено в облаке и локально.");
+          void vscode.window.showInformationMessage("Название обновлено в облаке и локально.");
         }, el.folderRoot.fsPath);
       },
     ),
@@ -179,7 +179,7 @@ export function registerWorkspaceTreeContextCommands(
           for (const s of local.summaryLines) {
             lines.push(`  · ${s}`);
           }
-          await vscode.window.showInformationMessage(lines.join("\n"));
+          void vscode.window.showInformationMessage(lines.join("\n"));
         }, rootPath);
       },
     ),
@@ -196,7 +196,7 @@ export function registerWorkspaceTreeContextCommands(
           await runWithEngine(async (engine) => {
             await engine.attachCloudWorkspace(el.workspaceId);
             const label = el.workspaceNote.trim().length > 0 ? el.workspaceNote : el.workspaceId;
-            await vscode.window.showInformationMessage(
+            void vscode.window.showInformationMessage(
               `VSCodeSync: подключён workspace «${label}» (${el.workspaceId})`,
             );
           }, el.anchorFolder.fsPath);
@@ -243,7 +243,7 @@ export function registerWorkspaceTreeContextCommands(
         }
         workspacesTree.invalidateRemoteCache();
         workspacesTree.refresh();
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           `VSCodeSync: workspace «${label}» (${el.workspaceId}) удалён с облака.`,
         );
       },
@@ -322,7 +322,7 @@ export function registerWorkspaceTreeContextCommands(
         }
         const tags = el.tags;
         if (tags.length === 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: у workspace нет тегов в локальном кэше — sync или Repair State.",
           );
           return;

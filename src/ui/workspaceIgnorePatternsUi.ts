@@ -164,7 +164,7 @@ export async function runEditWorkspaceIgnorePatterns(deps: EditWorkspaceIgnoreDe
       workspaceId,
       normalizeIgnorePatternLinesFromText(edited),
     );
-    await vscode.window.showInformationMessage("VSCodeSync: локальные ignorePatterns сохранены в vscodesync.json.");
+    void vscode.window.showInformationMessage("VSCodeSync: локальные ignorePatterns сохранены в vscodesync.json.");
     return;
   }
 
@@ -198,5 +198,5 @@ export async function runEditWorkspaceIgnorePatterns(deps: EditWorkspaceIgnoreDe
       );
     },
   );
-  await vscode.window.showInformationMessage("VSCodeSync: shared ignore patterns обновлены в манифесте workspace.");
+  void vscode.window.showInformationMessage("VSCodeSync: shared ignore patterns обновлены в манифесте workspace.");
 }

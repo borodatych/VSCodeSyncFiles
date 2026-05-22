@@ -89,7 +89,7 @@ export function registerWorkspaceCreateCommands(
             }
           }
           if (uris.length === 0) {
-            await vscode.window.showInformationMessage(`VSCodeSync: файлы по шаблону не найдены. Workspace создан: ${wid}.`);
+            void vscode.window.showInformationMessage(`VSCodeSync: файлы по шаблону не найдены. Workspace создан: ${wid}.`);
           } else {
             const cfg2 = vscode.workspace.getConfiguration(CFG_SECTION);
             const warnThreshold = cfg2.get<number>("batchAddWarnThreshold", 50);
@@ -100,17 +100,17 @@ export function registerWorkspaceCreateCommands(
                 "Добавить",
               );
               if (ok !== "Добавить") {
-                await vscode.window.showInformationMessage(`Workspace создан: ${wid} (без файлов).`);
+                void vscode.window.showInformationMessage(`Workspace создан: ${wid} (без файлов).`);
                 return;
               }
             }
             await engine.addFiles(wid, uris.map((u) => u.fsPath));
-            await vscode.window.showInformationMessage(
+            void vscode.window.showInformationMessage(
               `Workspace «${note}» создан и добавлено ${String(uris.length)} файлов.`,
             );
           }
         } else {
-          await vscode.window.showInformationMessage(`Workspace создан: ${wid}`);
+          void vscode.window.showInformationMessage(`Workspace создан: ${wid}`);
         }
       });
     }),
@@ -119,7 +119,7 @@ export function registerWorkspaceCreateCommands(
       await runWithEngine(async (engine, root, gc) => {
         const list = await engine.listRemoteWorkspaceSummaries();
         if (list.length === 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: в облаке не найдено ни одного workspace (папка VSCodeSyncFiles пуста или нет доступа).",
           );
           return;
@@ -139,7 +139,7 @@ export function registerWorkspaceCreateCommands(
           }));
 
         if (items.length === 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             "VSCodeSync: все доступные workspace уже подключены в этом проекте.",
           );
           return;
@@ -221,7 +221,7 @@ export function registerWorkspaceCreateCommands(
         }
 
         if (connected > 0) {
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: подключено ${String(connected)} workspace(ов).`,
           );
         }

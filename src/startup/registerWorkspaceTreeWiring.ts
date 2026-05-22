@@ -79,7 +79,7 @@ export function registerWorkspaceTreeWiring(
           await engine.removeTrackedFiles(s.workspaceId, [abs]);
           await engine.addFiles(targetWorkspaceId, [abs]);
         }
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           sources.length === 1
             ? "Файл перемещён в другой workspace."
             : `Перемещено файлов: ${String(sources.length)}.`,

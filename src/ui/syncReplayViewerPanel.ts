@@ -42,7 +42,7 @@ export async function runOpenSyncReplayViewer(
 ): Promise<void> {
   const files = await listReplayFiles(storageDir);
   if (files.length === 0) {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       "VSCodeSync: нет сохранённых записей. Запустите «Start Sync Recording», воспроизведите кейс, остановите запись.",
     );
     return;

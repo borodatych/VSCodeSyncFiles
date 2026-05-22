@@ -86,5 +86,5 @@ export async function runInstallWorkspaceTemplate(): Promise<void> {
     skipped.length === 0
       ? `Создано ${String(written.length)} файл(ов).`
       : `Создано ${String(written.length)}, пропущено ${String(skipped.length)} существующих.`;
-  await vscode.window.showInformationMessage(`VSCodeSync · template «${template.title}» — ${summary}`);
+  void vscode.window.showInformationMessage(`VSCodeSync · template «${template.title}» — ${summary}`);
 }

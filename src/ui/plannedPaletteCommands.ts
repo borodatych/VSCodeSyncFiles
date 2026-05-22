@@ -73,7 +73,7 @@ export function registerPlannedPaletteCommands(
       }
       await refreshGlobal();
       if (next) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: пауза (только эта сессия). Автосинхронизация отключена; ручные Push/Pull и Quick Transfer доступны.",
         );
       }
@@ -86,11 +86,11 @@ export function registerPlannedPaletteCommands(
       syncSessionPause.setPaused(false);
       await extras.runAfterSessionResume?.();
       await refreshGlobal();
-      await vscode.window.showInformationMessage("VSCodeSync: Resume — пауза снята.");
+      void vscode.window.showInformationMessage("VSCodeSync: Resume — пауза снята.");
     }),
     vscode.commands.registerCommand("vscodesync.enableWatchMode", async () => {
       await configuration().update("watchMode", true, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: watchMode включён — фоновый полный sync по интервалу (см. watchIntervalSeconds); на глобальной паузе опрос останавливается.",
       );
     }),
@@ -170,7 +170,7 @@ export function registerPlannedPaletteCommands(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: создание снапшота…", cancellable: false },
         async () => {
           const finalName = await createWorkspaceSnapshot(provider, root, wsId, nameInput, gc.machineName);
-          await vscode.window.showInformationMessage(`VSCodeSync: снапшот «${finalName}» создан.`);
+          void vscode.window.showInformationMessage(`VSCodeSync: снапшот «${finalName}» создан.`);
           try {
             const snapshots = await listWorkspaceSnapshots(provider, wsId);
             const plan = planSnapshotRetention({ snapshots, retentionDays, maxPerWorkspace });
@@ -222,7 +222,7 @@ export function registerPlannedPaletteCommands(
 
       const snapshots = await listWorkspaceSnapshots(provider, workspaceId);
       if (snapshots.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: снапшотов не найдено.");
+        void vscode.window.showInformationMessage("VSCodeSync: снапшотов не найдено.");
         return;
       }
 
@@ -261,7 +261,7 @@ export function registerPlannedPaletteCommands(
           );
           progress.report({ message: "Восстановление файлов…" });
           const result = await restoreWorkspaceSnapshot(provider, root, wsIdRestore, picked.name, gc.machineName);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `VSCodeSync: восстановлено ${String(result.restoredCount)} файлов из снапшота «${picked.label}».`,
           );
         },
@@ -269,13 +269,13 @@ export function registerPlannedPaletteCommands(
     }),
     vscode.commands.registerCommand("vscodesync.disableWatchMode", async () => {
       await configuration().update("watchMode", false, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage("VSCodeSync: watchMode выключен.");
+      void vscode.window.showInformationMessage("VSCodeSync: watchMode выключен.");
     }),
     vscode.commands.registerCommand("vscodesync.toggleWatchMode", async () => {
       const cfg = configuration();
       const next = !cfg.get<boolean>("watchMode", false);
       await cfg.update("watchMode", next, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(`VSCodeSync: watchMode — ${next ? "вкл" : "выкл"}.`);
+      void vscode.window.showInformationMessage(`VSCodeSync: watchMode — ${next ? "вкл" : "выкл"}.`);
     }),
     vscode.commands.registerCommand("vscodesync.openStats", () => {
       openStatsDashboardPanel(context, extras.globalConfig.getStorageDir());
@@ -416,7 +416,7 @@ export function registerPlannedPaletteCommands(
       const batteryThr = pick.value === "battery" || pick.value === "all" ? (pick.thr ?? 30) : 0;
       await cfg.update("pauseOnMeteredConnection", meter, vscode.ConfigurationTarget.Global);
       await cfg.update("pauseBatteryThreshold", batteryThr, vscode.ConfigurationTarget.Global);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync auto-pause: metered=${meter ? "on" : "off"}, battery<${String(batteryThr)}%${batteryThr === 0 ? " (off)" : ""}.`,
       );
     }),
@@ -466,7 +466,7 @@ export function registerPlannedPaletteCommands(
       const nodePath = await import("node:path");
       await mkdir(nodePath.dirname(uri.fsPath), { recursive: true });
       await writeFile(uri.fsPath, blob);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         "VSCodeSync: ключ экспортирован. Сохраните файл в безопасном месте — без него расшифровать данные невозможно.",
       );
     }),
@@ -497,7 +497,7 @@ export function registerPlannedPaletteCommands(
         const blob = await readFile(fileUri.fsPath);
         const key = await importKeyWithPassword(blob, password);
         await storeEncryptionKey(secrets, key);
-        await vscode.window.showInformationMessage("VSCodeSync: ключ шифрования импортирован и сохранён.");
+        void vscode.window.showInformationMessage("VSCodeSync: ключ шифрования импортирован и сохранён.");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await vscode.window.showErrorMessage(`VSCodeSync: ошибка импорта ключа — ${msg}`);
@@ -659,7 +659,7 @@ export function registerPlannedPaletteCommands(
       }
       const target = await runCloudExportFlow(provider, "Целевая папка для экспорта");
       if (target) {
-        await vscode.window.showInformationMessage(`VSCodeSync: экспортировано в ${target}.`);
+        void vscode.window.showInformationMessage(`VSCodeSync: экспортировано в ${target}.`);
       }
     }),
     vscode.commands.registerCommand("vscodesync.importWorkspaceStructure", async () => {
@@ -691,19 +691,19 @@ export function registerPlannedPaletteCommands(
     vscode.commands.registerCommand("vscodesync.startSyncRecording", async () => {
       const { startRecording, isRecording } = await import("./syncReplayRecorderState.js");
       if (isRecording()) {
-        await vscode.window.showInformationMessage("VSCodeSync: запись уже идёт. Stop, чтобы остановить.");
+        void vscode.window.showInformationMessage("VSCodeSync: запись уже идёт. Stop, чтобы остановить.");
         return;
       }
       const gc = await extras.globalConfig.load();
       const { sessionId } = startRecording(extras.globalConfig.getStorageDir(), gc.machineName);
-      await vscode.window.showInformationMessage(
+      void vscode.window.showInformationMessage(
         `VSCodeSync: запись sync-сессии началась (id: ${sessionId.slice(0, 8)}…).`,
       );
     }),
     vscode.commands.registerCommand("vscodesync.stopSyncRecording", async () => {
       const { stopRecording, isRecording } = await import("./syncReplayRecorderState.js");
       if (!isRecording()) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет активной записи.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет активной записи.");
         return;
       }
       const fp = await stopRecording();
@@ -727,7 +727,7 @@ export function registerPlannedPaletteCommands(
       }
       const wc = await WorkspaceConfigManager.load(root);
       if (wc.activeWorkspaces.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: нет привязанных workspace'ов.");
+        void vscode.window.showInformationMessage("VSCodeSync: нет привязанных workspace'ов.");
         return;
       }
       // Build samples from manifest paths + activity push counts (last 30 days).
@@ -749,7 +749,7 @@ export function registerPlannedPaletteCommands(
       const { rankGarbageCandidates, suggestIgnorePatterns } = await import("../core/aiGarbageTrackedDetector.js");
       const candidates = rankGarbageCandidates(samples);
       if (candidates.length === 0) {
-        await vscode.window.showInformationMessage("VSCodeSync: подозрительных tracked-файлов не найдено.");
+        void vscode.window.showInformationMessage("VSCodeSync: подозрительных tracked-файлов не найдено.");
         return;
       }
       const channel = vscode.window.createOutputChannel("VSCodeSync · garbage detector");
@@ -771,7 +771,7 @@ export function registerPlannedPaletteCommands(
       );
       if (choice === "Скопировать") {
         await vscode.env.clipboard.writeText(patterns.join("\n"));
-        await vscode.window.showInformationMessage("VSCodeSync: паттерны скопированы в clipboard.");
+        void vscode.window.showInformationMessage("VSCodeSync: паттерны скопированы в clipboard.");
       }
     }),
     vscode.commands.registerCommand("vscodesync.showStorageReport", async () => {
@@ -822,7 +822,7 @@ export function registerPlannedPaletteCommands(
       const { getHotZones } = await import("./conflictHeatmapStoreFs.js");
       const zones = await getHotZones(extras.globalConfig.getStorageDir(), 1);
       if (zones.length === 0) {
-        await vscode.window.showInformationMessage(
+        void vscode.window.showInformationMessage(
           "VSCodeSync: ещё нет записанных разрешений конфликтов.",
         );
         return;
@@ -887,7 +887,7 @@ async function runCloudExportFlow(
   const { planWorkspaceExport, escapingPaths } = await import("../core/workspaceExportPlan.js");
   const plan = planWorkspaceExport(parsed.value, target);
   if (plan.empty) {
-    await vscode.window.showInformationMessage("VSCodeSync: workspace не содержит файлов.");
+    void vscode.window.showInformationMessage("VSCodeSync: workspace не содержит файлов.");
     return undefined;
   }
   const escapes = escapingPaths(plan);

@@ -129,5 +129,5 @@ export async function runActiveProviderSwitch(p: RunActiveProviderSwitchParams):
   await p.globalConfig.save();
   p.workspacesTree.setActiveCloudProvider(picked.type);
   await p.refreshStatusAndPanels();
-  await vscode.window.showInformationMessage(`VSCodeSync: активный провайдер — ${labelForProviderType(picked.type)}.`);
+  void vscode.window.showInformationMessage(`VSCodeSync: активный провайдер — ${labelForProviderType(picked.type)}.`);
 }

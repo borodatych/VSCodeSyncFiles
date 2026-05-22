@@ -118,7 +118,7 @@ export async function runMergeWorkspaces(deps: MergeWorkspacesDeps): Promise<voi
         });
       },
     );
-    await vscode.window.showInformationMessage("VSCodeSync: workspace объединены.");
+    void vscode.window.showInformationMessage("VSCodeSync: workspace объединены.");
     await deps.refreshAfterLocalConfigChange?.();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

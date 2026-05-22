@@ -101,7 +101,7 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     await globalConfig.save();
     workspacesTree.setActiveCloudProvider("onedrive");
     refreshCloudWebhooks();
-    await vscode.window.showInformationMessage("OneDrive: токены сохранены.");
+    void vscode.window.showInformationMessage("OneDrive: токены сохранены.");
     await refreshAll();
   };
 
@@ -139,7 +139,7 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     await globalConfig.set("activeProvider", "gdrive");
     await globalConfig.save();
     workspacesTree.setActiveCloudProvider("gdrive");
-    await vscode.window.showInformationMessage("Google Drive: токены сохранены.");
+    void vscode.window.showInformationMessage("Google Drive: токены сохранены.");
     await refreshAll();
     refreshCloudWebhooks();
   };
@@ -179,7 +179,7 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     await globalConfig.set("activeProvider", "dropbox");
     await globalConfig.save();
     workspacesTree.setActiveCloudProvider("dropbox");
-    await vscode.window.showInformationMessage("Dropbox: токены сохранены.");
+    void vscode.window.showInformationMessage("Dropbox: токены сохранены.");
     await refreshAll();
     refreshCloudWebhooks();
   };
@@ -224,7 +224,7 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     await globalConfig.set("activeProvider", "yandex");
     await globalConfig.save();
     workspacesTree.setActiveCloudProvider("yandex");
-    await vscode.window.showInformationMessage("Яндекс Диск: токены сохранены.");
+    void vscode.window.showInformationMessage("Яндекс Диск: токены сохранены.");
     await refreshAll();
     refreshCloudWebhooks();
   };
