@@ -71,6 +71,14 @@ const VERIFY_RETRIES_DEFAULT = 3;
 const TOMBSTONE_PURGE_DAYS_DEFAULT = 30;
 const FILE_CONCURRENCY_DEFAULT = 1;
 const WORKSPACE_CONCURRENCY_DEFAULT = 1;
+/**
+ * When a no-op sync confirms that local and cloud already match, refresh
+ * `file.lastSync` to "now" if the existing value is older than this. Keeps
+ * background watch-tick I/O down (skips when already fresh) while ensuring
+ * a user-initiated Push All / Pull All / Sync revives the workspace health
+ * indicator even when nothing was actually transferred.
+ */
+const LAST_SYNC_REFRESH_THROTTLE_MS = 5 * 60_000;
 
 /**
  * Minimal glob matcher for conflict rules.
@@ -3286,7 +3294,13 @@ export class SyncEngine {
       return false;
     }
     if (action === "none") {
-      if (file.localHash !== localCurrentHash || file.syncStatus !== "ok") {
+      const lastMs = Date.parse(file.lastSync);
+      const lastSyncStale =
+        !Number.isFinite(lastMs) ||
+        Date.now() - lastMs >= LAST_SYNC_REFRESH_THROTTLE_MS;
+      const hashOrStatusDrifted =
+        file.localHash !== localCurrentHash || file.syncStatus !== "ok";
+      if (hashOrStatusDrifted || lastSyncStale) {
         file.localHash = localCurrentHash;
         file.lastSync = new Date().toISOString();
         file.syncStatus = "ok";

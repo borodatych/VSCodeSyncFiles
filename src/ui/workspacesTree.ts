@@ -7,6 +7,7 @@ import {
   workspaceHealthFromLocalCfg,
   type WorkspaceHealthLevel,
 } from "./workspaceHealthLocal.js";
+import { workspaceHealthThemeColor } from "./workspaceHealthThemeColor.js";
 import { workspaceTreeContextValue } from "./workspaceTreeContext.js";
 import type { ManifestMachineCacheEntry, ProviderType, WorkspaceSyncState } from "../core/types.js";
 import { formatMachinePresenceLines } from "./workspaceMachinePresence.js";
@@ -392,7 +393,10 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         item.contextValue = "vscodeSync.workspaceLoading";
       } else {
         item.description = `${shortWorkspaceId(element.workspaceId)}${tagPart}`.slice(0, 96);
-        item.iconPath = new vscode.ThemeIcon("cloud");
+        item.iconPath = new vscode.ThemeIcon(
+          "cloud",
+          workspaceHealthThemeColor(element.health.level),
+        );
         item.contextValue = workspaceTreeContextValue(element.syncState, element.tags);
       }
       item.id = `ws:${element.folderRoot.fsPath}:${element.workspaceId}`;

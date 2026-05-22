@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -704,6 +704,43 @@
         }
       }
     },
+    "colors": [
+      {
+        "id": "vscodeSync.health.conflict",
+        "description": "Workspace tree cloud icon — files in conflict (manual resolution required).",
+        "defaults": { "dark": "#DA3633", "light": "#CF222E", "highContrast": "#FF0000", "highContrastLight": "#B30000" }
+      },
+      {
+        "id": "vscodeSync.health.editing",
+        "description": "Workspace tree cloud icon — soft-lock held by another machine.",
+        "defaults": { "dark": "#DAAA3F", "light": "#9A6700", "highContrast": "#FFD700", "highContrastLight": "#7A5200" }
+      },
+      {
+        "id": "vscodeSync.health.noData",
+        "description": "Workspace tree cloud icon — no tracked files or no valid lastSync (cold state).",
+        "defaults": { "dark": "#54AEFF", "light": "#0969DA", "highContrast": "#00BFFF", "highContrastLight": "#003F8F" }
+      },
+      {
+        "id": "vscodeSync.health.staleDeep",
+        "description": "Workspace tree cloud icon — all files in sync, but max(lastSync) > 14 days (very-very dark green).",
+        "defaults": { "dark": "#0E4019", "light": "#022A0F", "highContrast": "#003300", "highContrastLight": "#001A07" }
+      },
+      {
+        "id": "vscodeSync.health.staleOk",
+        "description": "Workspace tree cloud icon — all files in sync, 48 h ≤ max(lastSync) ≤ 14 d (dark green).",
+        "defaults": { "dark": "#1A6B33", "light": "#044F1E", "highContrast": "#005500", "highContrastLight": "#02340F" }
+      },
+      {
+        "id": "vscodeSync.health.recent",
+        "description": "Workspace tree cloud icon — all files in sync, 12 h ≤ max(lastSync) < 48 h (medium green).",
+        "defaults": { "dark": "#2DA44E", "light": "#116329", "highContrast": "#00AA00", "highContrastLight": "#055A1B" }
+      },
+      {
+        "id": "vscodeSync.health.fresh",
+        "description": "Workspace tree cloud icon — all files in sync, max(lastSync) < 12 h (bright green).",
+        "defaults": { "dark": "#3FB950", "light": "#1A7F37", "highContrast": "#00FF00", "highContrastLight": "#0E7A2D" }
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {

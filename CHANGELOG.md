@@ -8,6 +8,62 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-22
+
+**7-уровневая палитра здоровья workspace и честный `lastSync` после
+no-op push. Жёлтый кружок теперь не «врёт» — Push All с результатом
+«0 push, 0 pull» обновляет timestamp подтверждения, индикатор честно
+переключается на свежий зелёный.**
+
+### ✨ Новое
+
+- **7 уровней индикатора здоровья workspace** вместо 3-х.
+  `WorkspaceHealthLevel` расширен: `conflict | editing | noData |
+  staleDeep | staleOk | recent | fresh`. Зелёный спектр получил **4
+  оттенка** по возрасту последней синхронизации:
+  - `fresh` (яркий) — `max(lastSync) < 12 ч`
+  - `recent` (средний) — `12 ч ≤ max < 48 ч`
+  - `staleOk` (тёмный) — `48 ч ≤ max ≤ 14 дн.`
+  - `staleDeep` (очень тёмный) — `max > 14 дн.`
+  Жёлтый зарезервирован за soft-lock от другой машины (`editing`),
+  красный — за конфликтами (`conflict`). Случаи «нет файлов» и «нет
+  валидной `lastSync` ни у одного файла» объединены в синий `noData`
+  (холодное состояние «нет данных для оценки»).
+- **Tinted cloud-иконка в Workspaces tree.** Эмодзи в title (🔴🟡🔵🟢)
+  даёт грубый сигнал, оттенок зелёного передаётся через `ThemeColor`
+  на самой облачной иконке слева. Все четыре зелёных оттенка плюс
+  conflict/editing/noData зарегистрированы в `package.json`
+  (`contributes.colors`) — пользователь может переопределить через
+  `workbench.colorCustomizations`. Дефолты подобраны для dark/light/
+  highContrast/highContrastLight тем.
+
+### 🐛 Исправления
+
+- **Push All «0 push / 0 pull» больше не оставляет workspace жёлтым.**
+  В ветке `action === "none"` (хеши локально и в облаке уже совпадают)
+  движок ранее обновлял `file.lastSync` **только** если `localHash`
+  или `syncStatus` рассинхронизированы. На уже-синкнутом workspace
+  это означало, что `max(lastSync)` старел сам по себе и через 24 ч
+  workspace загорался жёлтым — даже если пользователь только что
+  сделал Push All и услышал «всё ок, 0 передач». Теперь добавлен
+  throttle `LAST_SYNC_REFRESH_THROTTLE_MS = 5 мин`: при подтверждении
+  идентичности с облаком `lastSync` обновляется, если предыдущее
+  значение старше 5 минут. Фоновый watch-tick по-прежнему не пишет
+  `vscodesync.json` при каждом проходе (защита от write-storm), а
+  Push All / Pull All / Sync «омолаживают» оттенок.
+
+### ♻️ Внутреннее
+
+- `workspaceHealthLocal.ts` остался pure-helper (без импорта `vscode`)
+  — отвечает за level + summaryLines + `workspaceHealthColorId`
+  (строковый mapping). Создание `vscode.ThemeColor` вынесено в тонкий
+  wrapper `workspaceHealthThemeColor.ts`, чтобы pure-модуль
+  юнит-тестировался без рантайма расширения.
+- `tests/unit/workspaceHealthLocal.test.ts` переписан под 7 уровней:
+  14 кейсов, включая boundary-тесты на 12 ч / 48 ч / 14 дн и
+  проверки приоритетов (`conflict` бьёт `editing+staleDeep`,
+  `editing` бьёт `staleDeep`).
+
 ## [0.8.0] — 2026-05-21
 
 **Audit-pass релиз. Pull rollback гонка закрыта; UX-фичи вокруг ручного

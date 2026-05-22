@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import { workspaceHealthFromLocalCfg } from "../../src/ui/workspaceHealthLocal.js";
 import type { WorkspaceConfig } from "../../src/core/types.js";
 
-describe("workspaceHealthFromLocalCfg", () => {
+const HOUR_MS = 3600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+describe("workspaceHealthFromLocalCfg (7-level palette)", () => {
   const base = (files: WorkspaceConfig["files"]): WorkspaceConfig => ({
     activeWorkspaces: [{ workspaceId: "w1", workspaceNote: "N" }],
     files,
   });
 
-  it("red when any conflict", () => {
+  it("conflict when any file has syncStatus === conflict", () => {
     const wc = base([
       {
         localPath: "a.ts",
@@ -19,48 +22,13 @@ describe("workspaceHealthFromLocalCfg", () => {
         syncStatus: "conflict",
       },
     ]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("red");
-    expect(workspaceHealthFromLocalCfg(wc, "w1").summaryLines[0]).toContain("a.ts");
+    const r = workspaceHealthFromLocalCfg(wc, "w1");
+    expect(r.level).toBe("conflict");
+    expect(r.summaryLines[0]).toContain("a.ts");
   });
 
-  it("green when recent sync and no files edge", () => {
-    const wc = base([]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("green");
-  });
-
-  it("green when last sync < 24h", () => {
-    const t = new Date(Date.now() - 3 * 3600_000).toISOString();
-    const wc = base([
-      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
-    ]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("green");
-  });
-
-  it("yellow when last sync >= 24h and <= 7d", () => {
-    const t = new Date(Date.now() - 2 * 24 * 3600_000).toISOString();
-    const wc = base([
-      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
-    ]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("yellow");
-  });
-
-  it("red when last sync > 7d", () => {
-    const t = new Date(Date.now() - 8 * 24 * 3600_000).toISOString();
-    const wc = base([
-      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
-    ]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("red");
-  });
-
-  it("yellow when lastSync invalid", () => {
-    const wc = base([
-      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: "", localHash: "h" },
-    ]);
-    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("yellow");
-  });
-
-  it("yellow when file has active soft lock from another machine", () => {
-    const t = new Date(Date.now() - 1 * 3600_000).toISOString();
+  it("editing when another machine holds soft-lock", () => {
+    const t = new Date(Date.now() - HOUR_MS).toISOString();
     const wc = base([
       {
         localPath: "locked.ts",
@@ -72,9 +40,119 @@ describe("workspaceHealthFromLocalCfg", () => {
         editingByName: "work",
       },
     ]);
-    const result = workspaceHealthFromLocalCfg(wc, "w1");
-    expect(result.level).toBe("yellow");
-    expect(result.summaryLines[0]).toContain("locked.ts");
-    expect(result.summaryLines[0]).toContain("work");
+    const r = workspaceHealthFromLocalCfg(wc, "w1");
+    expect(r.level).toBe("editing");
+    expect(r.summaryLines[0]).toContain("locked.ts");
+    expect(r.summaryLines[0]).toContain("work");
+  });
+
+  it("noData when workspace has no tracked files", () => {
+    const r = workspaceHealthFromLocalCfg(base([]), "w1");
+    expect(r.level).toBe("noData");
+    expect(r.summaryLines[0]).toContain("Нет отслеживаемых");
+  });
+
+  it("noData when lastSync is invalid for every file", () => {
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: "", localHash: "h" },
+    ]);
+    const r = workspaceHealthFromLocalCfg(wc, "w1");
+    expect(r.level).toBe("noData");
+    expect(r.summaryLines[0]).toContain("lastSync");
+  });
+
+  it("fresh when max(lastSync) is under 12 h", () => {
+    const t = new Date(Date.now() - 3 * HOUR_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("fresh");
+  });
+
+  it("fresh just under the 12 h boundary", () => {
+    const t = new Date(Date.now() - (12 * HOUR_MS - 60_000)).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("fresh");
+  });
+
+  it("recent when 12 h ≤ max(lastSync) < 48 h", () => {
+    const t = new Date(Date.now() - 24 * HOUR_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("recent");
+  });
+
+  it("recent at the 12 h boundary (inclusive)", () => {
+    const t = new Date(Date.now() - 12 * HOUR_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("recent");
+  });
+
+  it("staleOk when 48 h ≤ max(lastSync) ≤ 14 d", () => {
+    const t = new Date(Date.now() - 5 * DAY_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("staleOk");
+  });
+
+  it("staleOk at the 48 h boundary (inclusive)", () => {
+    const t = new Date(Date.now() - 48 * HOUR_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("staleOk");
+  });
+
+  it("staleDeep when max(lastSync) > 14 d", () => {
+    const t = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("staleDeep");
+  });
+
+  it("staleDeep at the 14 d boundary (inclusive)", () => {
+    const t = new Date(Date.now() - 14 * DAY_MS).toISOString();
+    const wc = base([
+      { localPath: "x.ts", workspaceId: "w1", cloudPath: "p", lastSync: t, localHash: "h" },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("staleDeep");
+  });
+
+  it("conflict beats every other category", () => {
+    const t = new Date(Date.now() - HOUR_MS).toISOString();
+    const wc = base([
+      {
+        localPath: "a.ts",
+        workspaceId: "w1",
+        cloudPath: "p",
+        lastSync: t,
+        localHash: "h",
+        syncStatus: "conflict",
+        editingBy: "other",
+      },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("conflict");
+  });
+
+  it("editing beats noData and stale shades when no conflict", () => {
+    const t = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    const wc = base([
+      {
+        localPath: "a.ts",
+        workspaceId: "w1",
+        cloudPath: "p",
+        lastSync: t,
+        localHash: "h",
+        editingBy: "other",
+      },
+    ]);
+    expect(workspaceHealthFromLocalCfg(wc, "w1").level).toBe("editing");
   });
 });
