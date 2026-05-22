@@ -18,8 +18,12 @@ import {
   URI_COMMAND_WHITELIST,
 } from "../core/vscodesyncUriParser.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 
-export function registerVscodeSyncUriHandler(context: vscode.ExtensionContext): void {
+export function registerVscodeSyncUriHandler(
+  context: vscode.ExtensionContext,
+  globalConfig: GlobalConfigManager,
+): void {
   const handler: vscode.UriHandler = {
     handleUri: async (uri: vscode.Uri): Promise<void> => {
       // VS Code passes `vscode-insiders://<ext-id>/<...>` as
@@ -38,6 +42,40 @@ export function registerVscodeSyncUriHandler(context: vscode.ExtensionContext): 
       if (host === "invite") {
         const fullLink = `vscodesync://invite/${segments.slice(1).join("/")}`;
         await vscode.commands.executeCommand("vscodesync.acceptInviteLink", fullLink);
+        return;
+      }
+      // v0.8.3 — `vscode://borodatych.vscodesyncfiles/connect?workspaceId=…&provider=…`
+      // short link to the cloud-workspace attach flow. Merged from a second
+      // registerUriHandler in registerOnboardingFlow that broke activate() in
+      // strict hosts (VibeIDE) because VS Code allows only one UriHandler per
+      // extension — the second call threw "Protocol handler already registered".
+      if (host === "connect") {
+        const params = new URLSearchParams(uri.query);
+        const workspaceId = params.get("workspaceId")?.trim();
+        const providerParam = params.get("provider")?.trim();
+        if (!workspaceId) return;
+        const choice = await vscode.window.showInformationMessage(
+          `VSCodeSync: получен link для workspace ${workspaceId}${providerParam ? ` (${providerParam})` : ""}. Подключить?`,
+          "Подключить",
+          "Открыть провайдер-онбординг",
+          "Отмена",
+        );
+        if (choice === "Открыть провайдер-онбординг") {
+          await vscode.commands.executeCommand("vscodesync.startOnboarding");
+          return;
+        }
+        if (choice === "Подключить") {
+          if (providerParam) {
+            const gc = await globalConfig.load();
+            if (
+              gc.activeProvider !== providerParam &&
+              ["onedrive", "gdrive", "yandex", "dropbox"].includes(providerParam)
+            ) {
+              await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+            }
+          }
+          await vscode.commands.executeCommand("vscodesync.connectCloudWorkspace");
+        }
         return;
       }
       if (host !== "workspace" && host !== "command") {

@@ -124,38 +124,11 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
     });
   })();
 
-  context.subscriptions.push(
-    vscode.window.registerUriHandler({
-      handleUri(uri: vscode.Uri): void {
-        void (async () => {
-          if (uri.path !== "/connect") return;
-          const params = new URLSearchParams(uri.query);
-          const workspaceId = params.get("workspaceId")?.trim();
-          const providerParam = params.get("provider")?.trim();
-          if (!workspaceId) return;
-          const choice = await vscode.window.showInformationMessage(
-            `VSCodeSync: получен link для workspace ${workspaceId}${providerParam ? ` (${providerParam})` : ""}. Подключить?`,
-            "Подключить",
-            "Открыть провайдер-онбординг",
-            "Отмена",
-          );
-          if (choice === "Открыть провайдер-онбординг") {
-            await vscode.commands.executeCommand("vscodesync.startOnboarding");
-            return;
-          }
-          if (choice === "Подключить") {
-            if (providerParam) {
-              const gc = await globalConfig.load();
-              if (gc.activeProvider !== providerParam && ["onedrive", "gdrive", "yandex", "dropbox"].includes(providerParam)) {
-                await vscode.commands.executeCommand("vscodesync.setActiveProvider");
-              }
-            }
-            await vscode.commands.executeCommand("vscodesync.connectCloudWorkspace");
-          }
-        })();
-      },
-    }),
-  );
+  // v0.8.3 — `vscode://borodatych.vscodesyncfiles/connect?…` URI handler
+  // moved into the single dispatcher in `vscodeSyncUriHandler.ts`. Two
+  // separate `registerUriHandler` calls in one extension hit VS Code's
+  // "one UriHandler per extension" limit and threw "Protocol handler
+  // already registered" in strict hosts (VibeIDE), failing activate().
 
   return {
     fireTimelineChange: () => { timelineProvider.fireChange(); },

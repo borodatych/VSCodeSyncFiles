@@ -51,7 +51,7 @@ export function registerPhase21Bootstrap(deps: Phase21BootstrapDeps): void {
     context,
     globalConfig: deps.globalConfig,
   }));
-  registerVscodeSyncUriHandler(context);
+  registerVscodeSyncUriHandler(context, deps.globalConfig);
   context.subscriptions.push(registerGitignoreWatcher(context));
   context.subscriptions.push(registerConnectivityProbeWidget({
     context,

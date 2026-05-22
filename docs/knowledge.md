@@ -2,6 +2,38 @@
 
 ---
 
+## [архитектура] UI-refresh chain после команд: три отдельных задержки
+
+**Контекст:** жалоба пользователя «после первого Push All картина файлов не обновляется, после второго — обновляется». При расследовании выяснилось, что технически бага нет — `vscodesync.json` уже на диске свежий к моменту возврата из `engine.pushAll()`. Видимая «задержка» — это сумма трёх независимых факторов в UI-цепочке refresh, каждый со своими async-границами.
+
+**Суть:** между «engine закончил» и «значок ✓ на месте» есть ТРИ слоя:
+
+1. **Batched cfg writes в engine.** `syncEngine.ts:400-545` — внутри `withBatchedCfgWrites` все `persistMutatedCfg(c)` НЕ пишут на диск, только ставят `_batchCfgDirty = true`. Реальный `saveCfg` дёргается ОДИН раз в `finally` обёртки. К моменту `await engine.pushAll()` → диск уже свежий (правильно).
+
+2. **Tree refresh debounced на 150 мс.** `workspacesTree.ts:187-195`:
+   ```ts
+   refresh(): void {
+     if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer);
+     this.refreshTimer = setTimeout(() => this._onDidChange.fire(undefined), 150);
+   }
+   ```
+   Каждый новый `refresh()` сбрасывает таймер. Если в этом окне приходит ещё refresh — отсчёт начинается заново. Watch poller-tick / другие источники могут продлевать окно.
+
+3. **File decoration provider — асинхронный с recomputation хешa.** `fileDecorations.ts:58-115`. На каждый файл provider делает: `await WorkspaceConfigManager.load()` (5–50 ms) + `await computeHash(uri.fsPath)` (10–500 ms на средний файл). На workspace из 24 файлов — 24 параллельные async-цепочки. Каждый новый `fileDecorations.refresh()` (= `emitter.fire(undefined)`) cancel'ит pending promises (через `token.isCancellationRequested` на стр.76) и запустит новые. Если refresh'ы идут чаще, чем successfully завершается provider — значки висят в неопределённом состоянии.
+
+**Кэша в `WorkspaceConfigManager.load()` нет** (`workspaceConfigManager.ts:37-53` — каждый вызов читает с диска). Это правильно: позволяет mгновенно видеть свежий json после `saveCfg`.
+
+**Применение:**
+
+- Если пользователь жалуется на «UI не обновляется» после команды — сначала проверять, какой именно индикатор (tree node colour / file decoration significk / cloud icon tint). Это разные подсистемы, разные задержки.
+- Если жалоба про **file decoration** (`✓` / `↑` / `↓` / `⚠` рядом с именами файлов): помнить про async hash recompute. На больших workspace до 1-2 секунд после refresh.
+- Если жалоба про **tree** (цвет workspace, статус): помнить про 150 мс debounce.
+- Прежде чем чинить, попросить пользователя подождать 2-3 сек после команды без действий. Если за это время картина обновилась — это асинхронная природа provider'а, не баг.
+- Не «оптимизировать» через убирание debounce — он защищает от refresh-storm при многократных событиях (file watcher + scheduled poller + manual refresh могут срабатывать одновременно).
+- Если реально нужно ускорить — кэшировать `computeHash` результаты в decoration provider (~1 сек TTL); сейчас этого нет.
+
+---
+
 ## [архитектура] Логгер decoupled от vscode
 
 **Контекст:** при создании centralised logger через `OutputChannel` и импорте его из `src/utils/log.ts` сборка CLI падала с `Could not resolve "vscode"` — CLI бандл (`cli/src/main.ts`) транзитивно тянул `log.ts` через провайдеры (yandexDiskProvider).

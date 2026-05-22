@@ -8,6 +8,49 @@ no carry on 9). See `CLAUDE.md` for build versioning rules.
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-05-22
+
+**Критический фикс активации. Расширение регистрировало два
+`vscode.window.registerUriHandler` подряд в одной активации, ловило
+«Protocol handler already registered for extension» и не запускалось
+в строгих хостах (например VibeIDE — собственный fork VS Code). Также
+URI-shortcut `vscode://borodatych.vscodesyncfiles/connect?...` для
+share-link onboarding де-факто не работал на desktop'е с момента
+введения второго handler'а.**
+
+### 🐛 Исправления
+
+- **Двойная регистрация UriHandler ломала activate().** VS Code API
+  допускает **один** `vscode.window.registerUriHandler` на расширение.
+  Второй вызов бросает `Error: Protocol handler already registered for
+  extension <id>`. Marketplace-сборка VS Code эту ошибку проглатывала
+  тихо, VibeIDE — нет, и вся `activate()` валилась. Симптом в логе
+  хоста: `Activating extension 'borodatych.vscodesyncfiles' failed:
+  Protocol handler already registered for extension [object Object]`.
+- **`/connect` URI-shortcut фактически не работал.** Из-за того что
+  inline-handler в `registerOnboardingFlow.ts` стоял в `subscriptions`
+  ВТОРЫМ после `registerVscodeSyncUriHandler` в `registerPhase21Boot
+  strap.ts`, он не регистрировался — а первый handler неизвестные
+  сегменты (`connect` не входил в `workspace|command|invite`) гасил
+  warning'ом «ссылка с неизвестным сегментом». Результат: ни один
+  `vscode://borodatych.vscodesyncfiles/connect?workspaceId=…&provider=…`
+  link не доходил до диалога подключения после онбординга.
+
+### ♻️ Внутреннее
+
+- Все три URI-shape'а (`workspace/...`, `command/...`, `invite/...`,
+  `connect?...`) объединены в **один** диспетчер в `src/ui/vscodeSync
+  UriHandler.ts`. Сигнатура `registerVscodeSyncUriHandler` теперь
+  принимает `globalConfig: GlobalConfigManager` — нужен для
+  `/connect`-ветки (проверка `activeProvider` перед вызовом
+  `setActiveProvider`).
+- В `src/startup/registerOnboardingFlow.ts` удалены 30 строк inline
+  `registerUriHandler({...})` — оставлен short comment с пояснением
+  причины слияния.
+- В `src/startup/registerPhase21Bootstrap.ts:54` вызов
+  `registerVscodeSyncUriHandler(context)` →
+  `registerVscodeSyncUriHandler(context, deps.globalConfig)`.
+
 ## [0.8.2] — 2026-05-22
 
 **Тост-уведомления больше не блокируют рефреш UI. После любой команды
