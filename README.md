@@ -38,20 +38,6 @@
 
 ---
 
-## Что нового в v0.6
-
-- **Панель аналитики** — `VSCodeSync: Открыть панель аналитики` открывает встроенный DuckDB для SQL-запросов по `activity.json` / `stats.json`.
-- **P2P sync (experimental)** — `VSCodeSync: Начать P2P-сессию` создаёт зашифрованный канал между двумя машинами; manifest всё ещё через облако (authoritative), файлы летят напрямую через WebRTC. Включается через `vscodesync.p2p.experimental`.
-- **Passkey / WebAuthn** — `Зарегистрировать passkey` оборачивает DEK в WebAuthn-производный KEK; `Разлок ключа через passkey` восстанавливает через биометрию или hardware key. Опциональный fallback — passphrase или recovery codes.
-- **Локальный LLM для AI-merge** — endpoint настраивается через `vscodesync.aiMerge.endpointModel` (`vscode-lm` / `ollama` / `lm-studio` / custom URL). Ваши файлы могут не покидать машину.
-- **SARIF export** — `VSCodeSync: Экспортировать конфликты в SARIF` выгружает heatmap конфликтов в формате, который поддерживают GitHub Advanced Security, SonarQube, любой SARIF-совместимый инструмент.
-- **Зашифрованный бандл** — `VSCodeSync: Экспортировать зашифрованный бандл` создаёт `.vscsbundle` файл для офлайн-переноса воркспейса (passphrase-protected, AES-256-GCM).
-- **BLAKE3 миграция** — опциональный апгрейд канонического хэша с SHA-256 на BLAKE3 (5–15× быстрее на больших файлах). Dual-hash transition без поломки совместимости.
-
-Полный список — см. [CHANGELOG.md](CHANGELOG.md).
-
----
-
 ## Поддерживаемые провайдеры
 
 | Провайдер | Способ авторизации |
