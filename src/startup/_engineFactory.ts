@@ -21,6 +21,8 @@ import { encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { SyncEngine } from "../core/syncEngine.js";
 import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js";
 import { wrapWithQueue } from "../core/queuedProvider.js";
+import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
+import { warnLog } from "../utils/log.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ActiveWorkspaceEntry, TrackedFile } from "../core/types.js";
 import type { ActivityEventInput } from "../core/activityLog.js";
@@ -452,14 +454,34 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
           "Продолжить без snapshot",
         );
         if (choice === undefined) return false;
-        if (choice === "Создать snapshot и продолжить") {
-          try {
-            await vscode.commands.executeCommand("vscodesync.createSnapshot");
-          } catch {
-            /* user-cancelled snapshot is non-fatal — they explicitly opted to proceed */
-          }
+        if (choice === "Продолжить без snapshot") return true;
+
+        // The snapshot is created directly rather than through the command, so
+        // its outcome is actually known. Invoking `vscodesync.createSnapshot`
+        // returned nothing useful — a cancelled or failed snapshot was swallowed
+        // and the destructive operation went ahead under a comment claiming the
+        // user "explicitly opted to proceed". They opted to proceed *with a
+        // snapshot*; that button exists for the safety net, not the wording.
+        try {
+          await createWorkspaceSnapshot(
+            provider,
+            workspaceRoot,
+            workspaceId,
+            `auto-pre-mass-change-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+            machineName,
+          );
+          return true;
+        } catch (e: unknown) {
+          const reason = e instanceof Error ? e.message : String(e);
+          warnLog("massChangeGuard", `snapshot failed for ${workspaceId}: ${reason}`);
+          const afterFailure = await vscode.window.showWarningMessage(
+            `VSCodeSync: снапшот не создан (${reason}). Продолжить массовое изменение без него?`,
+            { modal: true },
+            "Продолжить без snapshot",
+          );
+          // Anything other than the explicit confirmation aborts.
+          return afterFailure === "Продолжить без snapshot";
         }
-        return true;
       },
       onRemoteWorkspaceDeleted: (
         workspaceId: string,
