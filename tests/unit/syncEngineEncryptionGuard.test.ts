@@ -43,6 +43,7 @@ function makeEngine(opts: {
     provider: providerStub(),
     machineId: "m1",
     machineName: "test-machine",
+    trigger: "user",
     encryptionRequired: opts.encryptionRequired,
     encrypt: opts.withKey === true ? identity : undefined,
     decrypt: opts.withKey === true ? identity : undefined,

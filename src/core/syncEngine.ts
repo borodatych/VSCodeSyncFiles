@@ -48,6 +48,7 @@ import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/sync
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
 import { isDeltaSyncEligible } from "./deltaSyncGate.js";
+import { assertMutationAllowed, mutationPolicy, type MutationOp, type SyncTrigger } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
 import {
   isPullMetaCloudWriteActive,
@@ -223,6 +224,16 @@ export interface SyncEngineDeps {
   provider: ICloudProvider;
   machineId: string;
   machineName: string;
+  /**
+   * Who this engine acts for — the single mutation checkpoint (F2).
+   *
+   * Required on purpose. `encKey` was optional and 17 of the 24 construction
+   * sites never passed it, which turned encryption off without a word; an
+   * optional trigger would fail the same way, defaulting to the permissive
+   * answer. Required makes the compiler ask every construction site whether it
+   * is a human or a timer.
+   */
+  trigger: SyncTrigger;
   /** Лимит размера одного файла (байт). Не задан или 0 — без лимита (тесты). */
   maxFileSizeBytes?: number;
   /** Нормализация строк при хэше; по умолчанию `lf` (тесты). */
@@ -315,8 +326,13 @@ export interface SyncEngineDeps {
   onQuotaExhausted?: (workspaceId: string, posixRel: string, providerLabel: string) => void;
   /**
    * Called when a locally-attached workspace is detected as deleted on the cloud by another machine
-   * (manifest NOT_FOUND). The workspace is auto-detached locally before this callback fires.
+   * (manifest NOT_FOUND).
    * UI layer should notify the user and optionally offer to re-upload via `repushWorkspaceToCloud`.
+   *
+   * `detached` says whether the local workspace and its tracking were actually
+   * removed. A background run only reports the finding — dropping tracking is a
+   * mutation, so it waits for the user. The two cases need different wording:
+   * "detached locally" is a statement of fact in one and a lie in the other.
    */
   onRemoteWorkspaceDeleted?: (
     workspaceId: string,
@@ -324,6 +340,7 @@ export interface SyncEngineDeps {
     workspaceRoot: string,
     savedEntry: ActiveWorkspaceEntry,
     savedFiles: TrackedFile[],
+    detached: boolean,
   ) => void;
   /**
    * Called after a file is successfully written to disk during pull.
@@ -497,6 +514,25 @@ export class SyncEngine {
 
   constructor(private readonly deps: SyncEngineDeps) {}
 
+  /**
+   * The mutation checkpoint (F2). First statement of every method listed in
+   * `MutationOp`; throws `MutationDeniedError` when an automatic source tries
+   * to move data. The policy is imported, not injected — see `syncPolicy.ts`.
+   */
+  /** Non-throwing form, for the few places that skip work instead of failing. */
+  private mayMutate(op: MutationOp): boolean {
+    return mutationPolicy(op, this.deps.trigger) === "allow";
+  }
+
+  private assertMayMutate(op: MutationOp): void {
+    if (this.mayMutate(op)) return;
+    // Refusing a background source is the extension behaving correctly, so it
+    // is a diagnostic line and not an error toast. Without it the symptom reads
+    // as "the extension does nothing" with no trace of why.
+    warnLog("syncPolicy", `deny ${op} (trigger=${this.deps.trigger})`);
+    assertMutationAllowed(op, this.deps.trigger);
+  }
+
   private inFlightKey(workspaceId: string, posixRel: string): string {
     return `${workspaceId}\u0000${posixRel}`;
   }
@@ -634,6 +670,7 @@ export class SyncEngine {
 
   /** v0.7 — execute queued history snapshots from a prior drain. */
   async runDeferredHistorySnapshots(entries: readonly LazyHistoryEntry[]): Promise<void> {
+    this.assertMayMutate("runDeferredHistorySnapshots");
     for (const e of entries) {
       try {
         await this.snapshotHistoryNow(e.workspaceId, e.posixRel, e.oldCloudPath);
@@ -841,6 +878,7 @@ export class SyncEngine {
    * Returns the list of discovered file paths (posix-relative to workspace root).
    */
   async repairByCloudScan(workspaceId: string): Promise<string[]> {
+    this.assertMayMutate("repairByCloudScan");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const root = workspaceRootPath(workspaceId);
     const listed = await this.deps.provider.listFolder(root);
@@ -940,6 +978,7 @@ export class SyncEngine {
    * трекинг файлов из манифеста и sync (pull при необходимости).
    */
   async attachCloudWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("attachCloudWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg0 = await this.loadCfg();
     if (cfg0.activeWorkspaces.some((w) => w.workspaceId === workspaceId)) {
@@ -1126,6 +1165,7 @@ export class SyncEngine {
   }
 
   async createWorkspace(workspaceNote: string, providerType: CloudManifest["providerType"]): Promise<string> {
+    this.assertMayMutate("createWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const workspaceId = randomBytes(4).toString("hex");
     const now = new Date().toISOString();
@@ -1170,6 +1210,22 @@ export class SyncEngine {
 
   /** Только локально: убрать workspace и его трекинг (облако не изменяется). */
   async detachWorkspaceLocal(workspaceId: string): Promise<void> {
+    this.assertMayMutate("detachWorkspaceLocal");
+    await this.detachWorkspaceLocalInternal(workspaceId);
+  }
+
+  /**
+   * Ungated body of {@link detachWorkspaceLocal}.
+   *
+   * Detach is reachable two ways: as a user command, and as the engine's own
+   * reaction to a manifest that answered NOT_FOUND. The gate therefore sits on
+   * the public entry point, and internal callers use this after deciding for
+   * themselves — `deleteWorkspaceFromCloud` and `forcePullWorkspace` because
+   * they are already past their own checkpoint, `syncWorkspace` because it asks
+   * `mayMutate` first, the check-only branch having deliberately skipped the
+   * checkpoint.
+   */
+  private async detachWorkspaceLocalInternal(workspaceId: string): Promise<void> {
     const cfg = await this.loadCfg();
     const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
     if (ix < 0) {
@@ -1187,13 +1243,14 @@ export class SyncEngine {
    * Ignores Suspend/Freeze — destructive op.
    */
   async deleteWorkspaceFromCloud(workspaceId: string): Promise<void> {
+    this.assertMayMutate("deleteWorkspaceFromCloud");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     if (!cfg.activeWorkspaces.some((w) => w.workspaceId === workspaceId)) {
       throw new Error("workspace не подключён к этому проекту");
     }
     await this.deleteCloudFilesOnly(workspaceId);
-    await this.detachWorkspaceLocal(workspaceId);
+    await this.detachWorkspaceLocalInternal(workspaceId);
   }
 
   /**
@@ -1205,6 +1262,7 @@ export class SyncEngine {
    * so deleteCloudFolderRecursive alone would miss .vscodesync-workspace.json.
    */
   async deleteCloudFilesOnly(workspaceId: string): Promise<void> {
+    this.assertMayMutate("deleteCloudFilesOnly");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.deleteCloudFolderRecursive(workspaceRootPath(workspaceId));
     // Explicitly delete known dot-prefixed files that listFolder may skip
@@ -1224,6 +1282,7 @@ export class SyncEngine {
    * Used for rollback when cloud deletion fails after early local detach.
    */
   async restoreWorkspaceLocal(entry: ActiveWorkspaceEntry, files: TrackedFile[]): Promise<void> {
+    this.assertMayMutate("restoreWorkspaceLocal");
     const cfg = await this.loadCfg();
     if (!cfg.activeWorkspaces.some((w) => w.workspaceId === entry.workspaceId)) {
       cfg.activeWorkspaces.push(entry);
@@ -1246,6 +1305,7 @@ export class SyncEngine {
     savedEntry: ActiveWorkspaceEntry,
     savedFiles: TrackedFile[],
   ): Promise<void> {
+    this.assertMayMutate("repushWorkspaceToCloud");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.restoreWorkspaceLocal(savedEntry, savedFiles);
     const cfg = await this.loadCfg();
@@ -1318,6 +1378,7 @@ export class SyncEngine {
     targetWorkspaceId: string,
     options: { deleteSourceWorkspace?: boolean } = {},
   ): Promise<void> {
+    this.assertMayMutate("mergeWorkspaces");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const deleteSourceWorkspace = options.deleteSourceWorkspace ?? false;
     if (sourceWorkspaceId === targetWorkspaceId) {
@@ -1518,6 +1579,7 @@ export class SyncEngine {
 
   /** Обновить название workspace в облачном манифесте и в `vscodesync.json`. */
   async renameWorkspaceNote(workspaceId: string, newNote: string): Promise<void> {
+    this.assertMayMutate("renameWorkspaceNote");
     const note = newNote.trim();
     if (!note) {
       throw new Error("Название не может быть пустым");
@@ -1563,6 +1625,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceGitBranch(workspaceId: string, gitBranchRaw: string): Promise<void> {
+    this.assertMayMutate("setWorkspaceGitBranch");
     const branch = gitBranchRaw.trim();
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1613,6 +1676,7 @@ export class SyncEngine {
     targetMachineId: string,
     next: "active" | "blocked",
   ): Promise<void> {
+    this.assertMayMutate("setMachineManifestStatus");
     await this.ensureNotFrozenForCloudWrites(workspaceId);
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1659,6 +1723,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceTags(workspaceId: string, tags: string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceTags");
     const normalized = [...new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))];
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1681,6 +1746,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceSharedIgnorePatterns(workspaceId: string, patterns: string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceSharedIgnorePatterns");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const normalized = normalizeIgnorePatternStrings(patterns);
     const cfg = await this.loadCfg();
@@ -1779,6 +1845,7 @@ export class SyncEngine {
    * @returns Number of files updated.
    */
   async clearStaleManifestEditingLocks(workspaceId: string): Promise<number> {
+    this.assertMayMutate("clearStaleManifestEditingLocks");
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -1824,6 +1891,7 @@ export class SyncEngine {
    * Non-fatal: if manifest write fails, lock is not set (graceful degradation).
    */
   async setSoftLock(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("setSoftLock");
     verboseLog("softlock", `set START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
       return;
@@ -1869,6 +1937,7 @@ export class SyncEngine {
    * Should be called when user closes the file or finishes Push.
    */
   async clearSoftLock(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("clearSoftLock");
     verboseLog("softlock", `clear START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
       return;
@@ -1916,6 +1985,7 @@ export class SyncEngine {
    * Не выполняет push/pull файлов.
    */
   async repairLocalStateFromCloud(workspaceId?: string): Promise<void> {
+    this.assertMayMutate("repairLocalStateFromCloud");
     const cfg = await this.loadCfg();
     const list = workspaceId
       ? cfg.activeWorkspaces.filter((w) => w.workspaceId === workspaceId)
@@ -1974,6 +2044,7 @@ export class SyncEngine {
   }
 
   async addFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("addFiles");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -2079,6 +2150,7 @@ export class SyncEngine {
 
   /** Удалить файлы из трекинга: blob в облаке, строка в `_meta`, tombstone в манифесте, запись в локальном кэше. */
   async removeTrackedFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("removeTrackedFiles");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -2196,6 +2268,7 @@ export class SyncEngine {
 
   /** Remove file tracking only from local vscodesync.json. Cloud manifest and blob are untouched. */
   async untrackFileLocal(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("untrackFileLocal");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -2210,6 +2283,7 @@ export class SyncEngine {
    * but do NOT delete the cloud blob. Removes from meta + local config.
    */
   async untrackFileTombstoneOnly(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("untrackFileTombstoneOnly");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -2285,6 +2359,7 @@ export class SyncEngine {
    * manifest entry with renamedFrom/renamedAt markers.
    */
   async renameTrackedFile(workspaceId: string, oldAbsPath: string, newAbsPath: string): Promise<void> {
+    this.assertMayMutate("renameTrackedFile");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -2664,6 +2739,7 @@ export class SyncEngine {
    * Resolve a conflict by keeping the local (mine) version: push local file to cloud, clear conflict status.
    */
   async resolveConflictKeepMine(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("resolveConflictKeepMine");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -2687,6 +2763,7 @@ export class SyncEngine {
    * Resolve a conflict by accepting the cloud (theirs) version: pull cloud file, clear conflict status.
    */
   async resolveConflictTakeTheirs(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("resolveConflictTakeTheirs");
     await this.ensureWorkspaceNotSuspendedNorFrozen(workspaceId);
     const cfg = await this.loadCfg();
     const file = this.findTracked(cfg, workspaceId, posixRel);
@@ -2721,6 +2798,7 @@ export class SyncEngine {
    * push doesn't lose the local-only edits either.
    */
   async resolveConflictKeepBoth(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("resolveConflictKeepBoth");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -2781,6 +2859,7 @@ export class SyncEngine {
     ifMatch: string | undefined,
     retries = 3,
   ): Promise<string | undefined> {
+    this.assertMayMutate("putManifest");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureNotFrozenForCloudWrites(workspaceId);
     try {
@@ -2844,6 +2923,7 @@ export class SyncEngine {
     workspaceId: string,
     tasks: { relPath: string; existingSha256: string }[],
   ): Promise<{ applied: number; skippedMissing: number; skippedDrift: number; skippedAlreadyDone: number }> {
+    this.assertMayMutate("applyHashBlake3Backfill");
     const cfg = await WorkspaceConfigManager.load(this.deps.workspaceRoot);
     const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!ent) {
@@ -2923,6 +3003,7 @@ export class SyncEngine {
   }
 
   private async pushMetaJson(workspaceId: string, meta: MetaJson, ifMatch: string | undefined): Promise<string> {
+    this.assertMayMutate("pushMetaJson");
     if (isSecondaryWorkspaceInstanceReadOnly() && !isPullMetaCloudWriteActive()) {
       rejectIfSecondaryWorkspaceInstanceReadOnly();
     }
@@ -2955,10 +3036,21 @@ export class SyncEngine {
   }
 
   async syncWorkspace(workspaceId: string, options?: { checkOnly?: boolean }): Promise<void> {
+    // Check-only is the detector: it reads the manifest, hashes locally and
+    // records statuses, which is exactly what a background pass is allowed to
+    // do. Everything else in here moves file bytes, so only that half is gated.
+    if (options?.checkOnly !== true) {
+      this.assertMayMutate("syncWorkspace");
+    }
     // v0.7 — opportunistically drain any deferred history snapshots queued
     // by `historyMode = lazy` since the last sync. Cheap when the queue is
     // empty; bounded by `historyVersions` per file otherwise.
-    if (this.lazyHistoryQueue.length > 0) {
+    //
+    // Uploading those snapshots is a cloud write, and it used to happen before
+    // the check-only branch was even considered — so a background status pass
+    // pushed history blobs. The queue is left intact for the next user-driven
+    // sync rather than drained and dropped.
+    if (this.mayMutate("runDeferredHistorySnapshots") && this.lazyHistoryQueue.length > 0) {
       const drained = this.drainLazyHistoryQueue();
       try {
         await this.runDeferredHistorySnapshots(drained);
@@ -2978,17 +3070,26 @@ export class SyncEngine {
       // can no longer be mistaken for a deletion.
       //
       // Manifest is gone from cloud — regardless of whether the folder has leftover content,
-      // treat this as intentional deletion by another machine. Auto-detach locally and let
-      // the user decide: remove locally (default) or re-upload to cloud.
+      // treat this as intentional deletion by another machine.
+      //
+      // Detaching drops the workspace and every one of its tracked entries from
+      // the local config. On the check-only path that ran unconditionally, so a
+      // background status tick destroyed local tracking state on the strength of
+      // a NOT_FOUND from the cloud. The finding is reported either way; only a
+      // user-triggered run acts on it.
       const savedEntry = { ...entry };
       const savedFiles = cfg.files.filter((f) => f.workspaceId === workspaceId);
-      await this.detachWorkspaceLocal(workspaceId);
+      const detached = this.mayMutate("detachWorkspaceLocal");
+      if (detached) {
+        await this.detachWorkspaceLocalInternal(workspaceId);
+      }
       this.deps.onRemoteWorkspaceDeleted?.(
         workspaceId,
         entry.workspaceNote,
         this.deps.workspaceRoot,
         savedEntry,
         savedFiles,
+        detached,
       );
       return;
     }
@@ -3212,6 +3313,7 @@ export class SyncEngine {
     meta: MetaJson,
     entry: ActiveWorkspaceEntry,
   ): Promise<void> {
+    this.assertMayMutate("syncOneFile");
     const metaRow = meta.files[file.localPath];
     const base = metaRow === undefined ? undefined : metaRow.hash;
     const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
@@ -3524,6 +3626,7 @@ export class SyncEngine {
     workspaceId?: string,
     onProgress?: (ev: PushAllProgressEvent) => void,
   ): Promise<PushAllResult[]> {
+    this.assertMayMutate("pushAll");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     const ids = workspaceId
@@ -3616,6 +3719,7 @@ export class SyncEngine {
   }
 
   async pullAll(workspaceId?: string): Promise<void> {
+    this.assertMayMutate("pullAll");
     const ids = workspaceId
       ? [workspaceId]
       : this.workspaceIdsForCurrentProvider((await this.loadCfg()).activeWorkspaces);
@@ -3632,6 +3736,7 @@ export class SyncEngine {
   /** Force-pulls every tracked file from cloud, bypassing soft locks and detectChange.
    * Runs the same manifest/adopt/prune prep as syncWorkspace; skips conflict files only. */
   private async forcePullWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("forcePullWorkspace");
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -3641,13 +3746,19 @@ export class SyncEngine {
     if (!manifest) {
       const savedEntry = { ...entry };
       const savedFiles = cfg.files.filter((f) => f.workspaceId === workspaceId);
-      await this.detachWorkspaceLocal(workspaceId);
+      // Reached only from `forcePullWorkspace`, which is gated, so the trigger
+      // is always "user" here — but ask the policy rather than assume it.
+      const detached = this.mayMutate("detachWorkspaceLocal");
+      if (detached) {
+        await this.detachWorkspaceLocalInternal(workspaceId);
+      }
       this.deps.onRemoteWorkspaceDeleted?.(
         workspaceId,
         entry.workspaceNote,
         this.deps.workspaceRoot,
         savedEntry,
         savedFiles,
+        detached,
       );
       return;
     }
@@ -3706,6 +3817,7 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean },
   ): Promise<void> {
+    this.assertMayMutate("pushFile");
     this.assertEncryptionReady();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const ent =
@@ -4124,6 +4236,7 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     metaIn?: MetaJson,
   ): Promise<"updated" | "already_current"> {
+    this.assertMayMutate("pullFile");
     this.assertEncryptionReady();
     return runWithSyncFileLock(this.deps.workspaceRoot, posixRel, "pull", async () => {
     return this.withInFlightOp(workspaceId, posixRel, async () => {

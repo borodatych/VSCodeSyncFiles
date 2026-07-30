@@ -8,9 +8,11 @@
  * for tests and for multi-window safety.
  *
  * The contract is intentionally narrow:
- *   - `makeEngine(root, provider, machineId, machineName, encKey?)` →
+ *   - `makeEngine(root, provider, machineId, machineName, trigger)` →
  *     `SyncEngine`. Reads the current `vscode` workspace configuration on
- *     every call (matches the old behaviour).
+ *     every call (matches the old behaviour). `trigger` says whether a human
+ *     or a timer is behind this engine and is required — see `syncPolicy.ts`
+ *     for why nothing here may default it.
  *   - `setRefs(refs)` lets `activate()` plug in the activity / stats /
  *     compression / tree-refresh / repush callbacks once they exist.
  *   - `notifiedConflictKeys` is exposed because `registerConflictsCommands`
@@ -20,6 +22,7 @@ import * as vscode from "vscode";
 import { encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { SyncEngine } from "../core/syncEngine.js";
 import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { wrapWithQueue } from "../core/queuedProvider.js";
 import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
 import { warnLog } from "../utils/log.js";
@@ -89,6 +92,7 @@ export interface EngineFactory {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   /**
    * Re-read the encryption key into the factory cache. Must be awaited during
@@ -174,6 +178,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ): SyncEngine {
     const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
     const mb = cfg.get<number>("maxFileSizeMB", 5);
@@ -195,6 +200,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       provider: wrapWithQueue(provider),
       machineId,
       machineName,
+      trigger,
       maxFileSizeBytes: maxB > 0 ? maxB : undefined,
       lineEnding,
       // VSCodeSync v1 supports UTF-8 only; surface BOM / invalid UTF-8.
@@ -489,6 +495,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
         rootForRepush: string,
         savedEntry: ActiveWorkspaceEntry,
         savedFiles: TrackedFile[],
+        detached: boolean,
       ) => {
         if (warnedRemoteDeletedKeys.has(workspaceId)) {
           return;
@@ -497,13 +504,25 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
         refs.treeRefresh?.();
         const label = workspaceNote.trim().length > 0 ? `«${workspaceNote}»` : workspaceId;
         void (async () => {
-          const choice = await vscode.window.showWarningMessage(
-            `VSCodeSync: workspace ${label} удалён с облака другой машиной — отключён локально. Файлы на диске сохранены.`,
-            "Залить на облако",
-            "Открыть Activity Feed",
-          );
+          // A background pass reports the deletion but leaves the local
+          // workspace alone, so the two cases get different wording and a
+          // different set of actions.
+          const choice = detached
+            ? await vscode.window.showWarningMessage(
+                `VSCodeSync: workspace ${label} удалён с облака другой машиной — отключён локально. Файлы на диске сохранены.`,
+                "Залить на облако",
+                "Открыть Activity Feed",
+              )
+            : await vscode.window.showWarningMessage(
+                `VSCodeSync: workspace ${label} удалён с облака другой машиной. Локальный трекинг и файлы не тронуты — решите, что делать.`,
+                "Залить на облако",
+                "Отключить локально",
+                "Открыть Activity Feed",
+              );
           if (choice === "Залить на облако") {
             void refs.repushDeletedWorkspace?.(workspaceId, rootForRepush, savedEntry, savedFiles);
+          } else if (choice === "Отключить локально") {
+            void vscode.commands.executeCommand("vscodesync.detachWorkspace");
           } else if (choice === "Открыть Activity Feed") {
             void vscode.commands.executeCommand("vscodesync.openActivityFeed");
           }

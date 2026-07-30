@@ -135,7 +135,7 @@ export function registerOneDriveWebhookLifecycle(
       try {
         const relay = await createAndStartSmeeRelay(() => {
           recordWebhookPushNotification();
-          void runQuietFullSyncAllFolders({ ...syncDeps, bypassSchedule: true });
+          void runQuietFullSyncAllFolders({ ...syncDeps, trigger: "auto" });
         });
         tunnelRelay = relay;
         notificationUrl = relay.channelUrl;
@@ -207,7 +207,7 @@ export function registerOneDriveWebhookLifecycle(
                 recordWebhookPushNotification();
                 void runQuietFullSyncAllFolders({
                   ...syncDeps,
-                  bypassSchedule: true,
+                  trigger: "auto",
                 });
               },
             });

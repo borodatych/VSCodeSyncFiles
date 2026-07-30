@@ -61,6 +61,9 @@ export function createCliSyncEngine(
     provider,
     machineId,
     machineName,
+    // Every CLI invocation is someone typing a command. There is no background
+    // scheduler in the CLI, so nothing here may be "auto".
+    trigger: "user",
     maxFileSizeBytes: maxB > 0 ? maxB : undefined,
     lineEnding,
     encodingLint: true,

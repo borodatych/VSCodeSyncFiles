@@ -17,7 +17,7 @@ import type { CloudManifest } from "../../src/core/cloudLayout.js";
 async function setupBase() {
   const provider = new MockCloudProvider("onedrive");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-track-"));
-  const engine = new SyncEngine({ workspaceRoot: root, provider, machineId: "M1", machineName: "test" });
+  const engine = new SyncEngine({ workspaceRoot: root, provider, machineId: "M1", machineName: "test", trigger: "user" });
   const wsId = await engine.createWorkspace("track-test", "onedrive");
   return { provider, root, engine, wsId };
 }

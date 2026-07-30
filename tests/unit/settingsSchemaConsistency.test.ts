@@ -71,6 +71,14 @@ function configReads(sources: string[]): Set<string> {
     /\.update\s*\(\s*["'`]([A-Za-z0-9_.]+)["'`]/g,
     /affectsConfiguration\s*\(\s*["'`]([A-Za-z0-9_.]+)["'`]/g,
   ];
+  // Keys named through a module constant rather than spelled inline. Without
+  // this the gate reads "not wired" as soon as a call site follows the
+  // no-hardcode rule, which is the wrong lesson to teach. Anchored on
+  // `getConfiguration` so that `globalState.get(KEY)` and `secrets.get(KEY)`,
+  // which are not settings at all, do not resolve into phantom keys.
+  const viaConst = [
+    /getConfiguration\s*\([^)]*\)\s*\.get\s*(?:<[^>]*>)?\s*\(\s*([A-Z][A-Z0-9_]*)\b/g,
+  ];
   const out = new Set<string>();
   for (const txt of sources) {
     for (const re of patterns) {
@@ -78,6 +86,14 @@ function configReads(sources: string[]): Set<string> {
       let m: RegExpExecArray | null;
       while ((m = re.exec(txt)) !== null) {
         out.add(m[1].replace(new RegExp(`^${CONFIG_SECTION}\\.`), ""));
+      }
+    }
+    for (const re of viaConst) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(txt)) !== null) {
+        const decl = new RegExp(`const\\s+${m[1]}\\s*=\\s*["'\`]([A-Za-z0-9_.]+)["'\`]`).exec(txt);
+        if (decl) out.add(decl[1].replace(new RegExp(`^${CONFIG_SECTION}\\.`), ""));
       }
     }
   }
@@ -98,7 +114,6 @@ const UNWIRED: Record<string, string> = {
   "vscodesync.ai.sessionSummary.enabled": "флаг AI-сводки не читается — этап 6",
   "vscodesync.ai.suggestWorkspaceTags.enabled": "флаг AI-тегов не читается — этап 6",
   "vscodesync.ai.pathMapper.enabled": "флаг AI path mapper не читается — этап 6",
-  "vscodesync.passkey.peerRegistrySync": "синхронизация реестра passkey не подключена — этап 6",
   "vscodesync.historyLazyDrainMinutes": "отложенный drain истории не подключён — этап 1",
   "vscodesync.tokenRefreshSkewMinutes": "запас на обновление токена не подключён — этап 4 (E4)",
   "vscodesync.saveDebounceSecDefault": "дефолт дебаунса сохранения не подключён — этап 3",

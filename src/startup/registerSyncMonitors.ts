@@ -14,6 +14,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
@@ -36,7 +37,7 @@ export interface SyncMonitorsDeps {
   fileDecorations: SyncFileDecorationController;
   scheduleDeferredStore: SyncScheduleDeferredStore;
   offlineQueueStore: SyncOfflineQueueStore;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
 }
 
 export function registerSyncMonitors(deps: SyncMonitorsDeps): void {
@@ -82,6 +83,7 @@ export function registerSyncMonitors(deps: SyncMonitorsDeps): void {
     statusBar,
     offlineQueue: offlineQueueStore,
     refreshUi: refreshUiPlain,
+    trigger: "auto",
   });
 
   registerSyncScheduleTransition(context, {
@@ -93,6 +95,7 @@ export function registerSyncMonitors(deps: SyncMonitorsDeps): void {
       statusBar,
       offlineQueue: offlineQueueStore,
       refreshUi: refreshUiWithStatus,
+      trigger: "auto",
     },
     statusBar,
   });
@@ -106,5 +109,6 @@ export function registerSyncMonitors(deps: SyncMonitorsDeps): void {
     makeEngine,
     statusBar,
     refreshUi: refreshUiWithStatus,
+    trigger: "auto",
   });
 }

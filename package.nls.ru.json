@@ -226,6 +226,7 @@
   "cfg.pauseBatteryThreshold.description": "Процент батареи — ниже этого приостанавливать sync (0 — отключено)",
   "cfg.webhooks.tunnelEnabled.description": "Запустить встроенный smee.io туннель для webhooks при включённом режиме Watch + webhooks. Туннель даёт публичный URL для OneDrive/Google Drive без белого IP.",
   "cfg.gitBranchAutoSync.description": "При смене git-ветки: Suspend для VSCodeSync workspace'ов с другим gitBranch в манифесте; активация и sync для совпадающих. Требует расширение Git и настройку gitBranch (команда Set Git Branch for Workspace).",
+  "cfg.tasks.allowFileMutations.description": "Разрешить задачам «vscodesync» отправлять, скачивать и создавать снапшоты. По умолчанию выключено: задача с `runOn: folderOpen` запускается сама, а VS Code не даёт расширению отличить такой запуск от запущенного вами.",
   "cfg.watchMode.description": "Режим наблюдения (фоновый sync — фаза Reliability)",
   "cfg.watchIntervalSeconds.description": "Интервал опроса в watch mode (сек)",
   "cfg.watchMaxIntervalSeconds.description": "Максимальный интервал backoff watch mode (сек)",

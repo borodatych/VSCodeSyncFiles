@@ -15,6 +15,7 @@ import { rejectIfSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspac
 import type { WorkspacesTreeProvider } from "./workspacesTree.js";
 import { labelForProviderType } from "./activeProviderSwitch.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 
 const ALL: ProviderType[] = ["onedrive", "gdrive", "yandex", "dropbox"];
 
@@ -47,7 +48,7 @@ export interface ProviderMigrationDeps {
   registry: ProviderRegistry;
   globalConfig: GlobalConfigManager;
   workspacesTree: WorkspacesTreeProvider;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
   signInOneDrive: () => Promise<void>;
   signInGoogleDrive: () => Promise<void>;
   signInDropbox: () => Promise<void>;
@@ -163,7 +164,7 @@ export function registerProviderMigrationCommand(context: vscode.ExtensionContex
 
           const gc = await deps.globalConfig.load();
           for (const folder of vscode.workspace.workspaceFolders ?? []) {
-            const engine = deps.makeEngine(folder.uri.fsPath, targetProv, gc.machineId, gc.machineName);
+            const engine = deps.makeEngine(folder.uri.fsPath, targetProv, gc.machineId, gc.machineName, "user");
             await engine.repairLocalStateFromCloud();
           }
 

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
@@ -24,17 +25,18 @@ import { verboseLog } from "../utils/log.js";
 export interface QuietFullSyncAllFoldersDeps {
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
   statusBar: { setSyncing: (on: boolean) => void; refresh: () => Promise<void> };
   refreshUi: () => void;
-  /** When true, ignore `syncSchedule` automatic blocking (manual sync / deferred flush). */
-  bypassSchedule?: boolean;
-  /** When true, ignore metered/battery auto-pause (explicit manual sync). */
-  bypassAutoPause?: boolean;
   /** When set, full sync failures from transport errors enqueue for later flush. */
   offlineQueue?: SyncOfflineQueueStore;
-  /** When true, allow full sync even when rate-limited (manual / webhook path). */
-  bypassRateLimit?: boolean;
+  /**
+   * Who asked. Required, like every other trigger declaration — the four
+   * `bypass*` parameters this replaces were optional, so forgetting one silently
+   * meant "obey the gates" while passing one silently meant "ignore them", and
+   * nothing in the type said which callers were entitled to do that.
+   */
+  trigger: SyncTrigger;
 }
 
 /**
@@ -46,34 +48,36 @@ export interface QuietFullSyncAllFoldersDeps {
  * `engine.syncWorkspace` — statuses are updated but no file moves.
  * When `off`, the function returns immediately without any work.
  *
- * Callers that need to bypass the gate (manual user-driven sync,
- * deferred-flush, webhook-driven sync) should pass `bypassAutoSyncMode: true`.
+ * The four `bypass*` parameters this used to carry are gone: policy that an
+ * argument can disable is not policy. Every one of them meant the same thing —
+ * "a human asked for this, so the automatic gates do not apply" — and that is
+ * now said once, by `trigger`. `bypassAutoSyncMode` was in fact passed by
+ * nobody at all; its intent ("a manual sync forces a full pass even in
+ * check-only mode") survives as the `trigger === "user"` branch below.
  */
-export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps & { bypassAutoSyncMode?: boolean }): Promise<boolean> {
+export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps): Promise<boolean> {
   if (!vscode.workspace.isTrusted) {
     return false;
   }
+  const byUser = d.trigger === "user";
   const autoMode = parseAutoSyncMode(
     vscode.workspace.getConfiguration("vscodesync").get<string>("autoSyncMode", "check-only"),
   );
-  const allowFull = d.bypassAutoSyncMode === true || isAutoFullSyncEnabled(autoMode);
-  const allowCheck = d.bypassAutoSyncMode === true || isAutoCheckEnabled(autoMode);
-  if (!allowCheck) {
+  const allowFull = byUser || isAutoFullSyncEnabled(autoMode);
+  if (!byUser && !isAutoCheckEnabled(autoMode)) {
     return false;
   }
-  if (!d.bypassRateLimit && isAutoSyncBlockedByRateLimit()) {
+  if (!byUser && isAutoSyncBlockedByRateLimit()) {
     return false;
   }
-  // v0.18 W5 — skip silently when the connectivity probe says we're
-  // offline. Manual user-driven sync calls pass `bypassRateLimit` and
-  // also bypass this check.
-  if (!d.bypassRateLimit && isCloudConnectivityOffline()) {
+  // v0.18 W5 — skip silently when the connectivity probe says we're offline.
+  if (!byUser && isCloudConnectivityOffline()) {
     return false;
   }
-  if (!d.bypassSchedule && isAutoSyncBlockedBySchedule()) {
+  if (!byUser && isAutoSyncBlockedBySchedule()) {
     return false;
   }
-  if (!d.bypassAutoPause && syncAutoPause.isActive()) {
+  if (!byUser && syncAutoPause.isActive()) {
     return false;
   }
   const folders = vscode.workspace.workspaceFolders ?? [];
@@ -100,7 +104,7 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps 
       if (wc.activeWorkspaces.length === 0) {
         continue;
       }
-      const engine = d.makeEngine(folder.uri.fsPath, p, mc.machineId, mc.machineName);
+      const engine = d.makeEngine(folder.uri.fsPath, p, mc.machineId, mc.machineName, d.trigger);
       const fresh = await WorkspaceConfigManager.load(folder.uri.fsPath);
       for (const aw of fresh.activeWorkspaces) {
         if (allowFull) {

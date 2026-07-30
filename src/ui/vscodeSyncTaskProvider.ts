@@ -4,12 +4,31 @@
 
 import * as vscode from "vscode";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { resolveDefaultWorkspaceRootFsPath } from "../utils/workspaceRootResolver.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
+
+const CFG = "vscodesync";
+
+/**
+ * Tasks are the one entry point that can move data without a human present.
+ *
+ * `"runOptions": {"runOn": "folderOpen"}` is a standard VS Code feature, and a
+ * `vscodesync` task carrying it used to reach `pushAll` / `pullAll` with no
+ * policy gate whatsoever — no `autoSyncMode`, no pause, no read-only check.
+ * VS Code hands the provider no signal distinguishing that autostart from a
+ * task the user picked from the Run Task menu, so the trigger cannot be
+ * inferred per run.
+ *
+ * The setting is that missing consent, given once and in advance: while it is
+ * off (the default) mutating tasks refuse to run, and turning it on is the
+ * user's explicit authorisation of the autostart along with everything else.
+ */
+const CFG_TASKS_ALLOW_FILE_MUTATIONS = "tasks.allowFileMutations";
 
 export const VSCODESYNC_TASK_TYPE = "vscodesync" as const;
 
@@ -31,7 +50,7 @@ export interface VscodeSyncTaskProviderDeps {
   runWithEngine: (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
     workspaceRoot?: string,
-    options?: { showErrorDialog?: boolean },
+    options?: { showErrorDialog?: boolean; trigger?: SyncTrigger },
   ) => Promise<void>;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
 }
@@ -100,6 +119,17 @@ async function runVscodeSyncTask(
 
   const kind = def.task;
 
+  // Every task kind here moves data: push, pull, and create-snapshot all write.
+  // See `CFG_TASKS_ALLOW_FILE_MUTATIONS` for why the gate is a setting.
+  if (!vscode.workspace.getConfiguration(CFG).get<boolean>(CFG_TASKS_ALLOW_FILE_MUTATIONS, false)) {
+    throw new TaskExit(
+      4,
+      `Задачи «${VSCODESYNC_TASK_TYPE}» не изменяют файлы, пока выключена настройка ` +
+        `«${CFG}.${CFG_TASKS_ALLOW_FILE_MUTATIONS}». Включите её, если сознательно разрешаете ` +
+        "задачам (в том числе автозапускаемым через runOn: folderOpen) отправлять и скачивать файлы.",
+    );
+  }
+
   switch (kind) {
     case "push-all":
     case "pull-all": {
@@ -123,7 +153,7 @@ async function runVscodeSyncTask(
           await engine.pullAll(wsHint);
         },
         root,
-        { showErrorDialog: false },
+        { showErrorDialog: false, trigger: "user" },
       );
       return;
     }
@@ -162,7 +192,7 @@ async function runVscodeSyncTask(
           await engine.pullAll(wsId);
         },
         root,
-        { showErrorDialog: false },
+        { showErrorDialog: false, trigger: "user" },
       );
       return;
     }
@@ -193,7 +223,7 @@ async function runVscodeSyncTask(
           await createWorkspaceSnapshot(provider, r, wsId, name, (await gc.load()).machineName);
         },
         root,
-        { showErrorDialog: false },
+        { showErrorDialog: false, trigger: "user" },
       );
       return;
     }

@@ -16,6 +16,7 @@ import { EXTENSION_ID } from "../core/extensionIdentity.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
@@ -76,6 +77,7 @@ export interface Phase21CommandsDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   /** Sync profiler samples — written into the support bundle. */
   profileBuffer: SyncProfileBuffer;
@@ -124,7 +126,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       );
       if (!picked) return;
       const gc = await deps.globalConfig.load();
-      const engine = deps.makeEngine(folder.uri.fsPath, provider, gc.machineId, gc.machineName);
+      const engine = deps.makeEngine(folder.uri.fsPath, provider, gc.machineId, gc.machineName, "user");
       // Scan cloud, gather files + machines.
       const cloudFilePaths = await engine.listCloudWorkspaceFiles(picked.ws.workspaceId).catch(() => [] as string[]);
       let machines: Awaited<ReturnType<typeof parseMachinesRegistry>> = [];

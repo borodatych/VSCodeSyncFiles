@@ -5,6 +5,7 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { normalizeIgnorePatternStrings, normalizeIgnorePatternLinesFromText } from "../utils/ignorePatternNormalize.js";
 import { resolveWorkspaceRootForPaletteCommand } from "../utils/workspaceRootResolver.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
@@ -95,6 +96,7 @@ export interface EditWorkspaceIgnoreDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
 }
 
@@ -174,7 +176,7 @@ export async function runEditWorkspaceIgnorePatterns(deps: EditWorkspaceIgnoreDe
     return;
   }
   const gc = await deps.globalConfig.load();
-  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
+  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "user");
   const initialArr = await engine.readSharedIgnorePatterns(workspaceId);
   const edited = await vscode.window.showInputBox({
     title: "Общие sharedIgnorePatterns (облачный манифест)",

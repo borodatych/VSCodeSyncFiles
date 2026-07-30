@@ -15,6 +15,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { RunWithEngineFn } from "../commands/registerWorkspaceLifecycle.js";
 import type { SyncProfileBuffer } from "../core/syncProfileBuffer.js";
 import { registerPhase21Commands } from "../commands/registerPhase21Commands.js";
@@ -36,6 +37,7 @@ export interface Phase21BootstrapDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   /** Sync profiler samples — forwarded to the support bundle export. */
   profileBuffer: SyncProfileBuffer;

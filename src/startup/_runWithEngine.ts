@@ -11,6 +11,7 @@
 import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { ensureProvider } from "../commands/_providerFactory.js";
@@ -33,6 +34,7 @@ export interface RunWithEngineDeps {
     provider: import("../providers/cloudProviderTypes.js").ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
 }
 
@@ -42,7 +44,7 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
   return async (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
     workspaceRoot?: string,
-    options?: { showErrorDialog?: boolean },
+    options?: { showErrorDialog?: boolean; trigger?: SyncTrigger },
   ): Promise<void> => {
     const n = ++seq;
     verboseLog("rwe", `#${String(n)} START fn=${fn.name || "(anon)"}`);
@@ -56,7 +58,10 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
       return;
     }
     const cfg = await globalConfig.load();
-    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName);
+    // This wrapper is the command path, so "user" is its contract, not a
+    // convenience default — see the option's doc comment. Non-command callers
+    // (the task provider) pass their own trigger.
+    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, options?.trigger ?? "user");
     statusBar.setSyncing(true);
     let failure: unknown;
     try {

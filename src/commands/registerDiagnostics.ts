@@ -18,6 +18,7 @@ import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
@@ -49,6 +50,7 @@ export interface DiagnosticsCommandsDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   /** Open VS Code folder list — usually `vscode.workspace.workspaceFolders ?? []`. */
   roots: () => readonly vscode.WorkspaceFolder[];
@@ -113,7 +115,7 @@ export function registerDiagnosticsCommands(
         provider,
         machineId: gcData.machineId,
         machineName: gcData.machineName,
-        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName),
+        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, "user"),
         offlineQueue: offlineQueueStore,
         scheduleDeferred: scheduleDeferredStore,
       });
@@ -151,7 +153,7 @@ export function registerDiagnosticsCommands(
         let total = 0;
         for (const t of report.staleLockTargets) {
           try {
-            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName);
+            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, "user");
             total += await eng.clearStaleManifestEditingLocks(t.workspaceId);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);

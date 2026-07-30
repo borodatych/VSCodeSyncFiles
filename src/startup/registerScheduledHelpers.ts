@@ -17,6 +17,7 @@ import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
@@ -56,6 +57,7 @@ export interface ScheduledHelpersDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
 }
 
@@ -99,7 +101,7 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         return;
       }
       const cfg = await globalConfig.load();
-      const engine = makeEngine(folderRoot, provider, cfg.machineId, cfg.machineName);
+      const engine = makeEngine(folderRoot, provider, cfg.machineId, cfg.machineName, "auto");
       verboseLog("startup", `pullAll START ${folderRoot} mode=${autoMode}`);
       statusBar.setSyncing(true);
       try {
@@ -222,7 +224,9 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         return;
       }
       const gc = await globalConfig.load();
-      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName);
+      // The prompt is scheduled, but this hook runs only after the user chose
+      // to archive — `workspaceInactiveArchive.ts:118`.
+      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName, "user");
       statusBar.setSyncing(true);
       try {
         await applyArchivedTagAndSuspend(engine, workspaceId);
@@ -254,7 +258,9 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         throw new Error("Нет авторизованного провайдера");
       }
       const gc = await globalConfig.load();
-      const engine = makeEngine(folderRoot, provider, gc.machineId, gc.machineName);
+      // Reached only after the user typed a workspace name in the suggestion
+      // prompt — `smartWorkspaceSuggestions.ts:168`.
+      const engine = makeEngine(folderRoot, provider, gc.machineId, gc.machineName, "user");
       const t = gc.activeProvider ?? "onedrive";
       const wid = await engine.createWorkspace(note, t);
       const wc = await WorkspaceConfigManager.load(folderRoot);
@@ -280,7 +286,9 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         return;
       }
       const gc = await globalConfig.load();
-      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName);
+      // Same shape as `onArchive`: the user picked the archive option —
+      // `smartWorkspaceSuggestions.ts:230`.
+      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName, "user");
       statusBar.setSyncing(true);
       try {
         await applyArchivedTagAndSuspend(engine, workspaceId);

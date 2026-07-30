@@ -422,6 +422,11 @@
           "default": true,
           "description": "%cfg.gitBranchAutoSync.description%"
         },
+        "vscodesync.tasks.allowFileMutations": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.tasks.allowFileMutations.description%"
+        },
         "vscodesync.watchMode": {
           "type": "boolean",
           "default": false,

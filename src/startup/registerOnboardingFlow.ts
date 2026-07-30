@@ -20,6 +20,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ProviderType } from "../core/types.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
@@ -45,6 +46,7 @@ export interface OnboardingFlowDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   workspaceFolders: () => readonly vscode.WorkspaceFolder[];
 }
@@ -115,7 +117,8 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
     registerHealthAutoCheck(context, {
       globalConfig,
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-      createEngine: (root, p) => makeEngine(root, p, gcInit.machineId, gcInit.machineName),
+      // Automatic health check — read-only (`healthCheckWorkspace`).
+      createEngine: (root, p) => makeEngine(root, p, gcInit.machineId, gcInit.machineName, "auto"),
       activeProvider: gcInit.activeProvider,
       machineId: gcInit.machineId,
       machineName: gcInit.machineName,

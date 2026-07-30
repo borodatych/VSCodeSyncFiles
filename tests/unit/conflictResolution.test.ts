@@ -23,7 +23,7 @@ import type { ConflictRule } from "../../src/core/types.js";
 async function setupBase() {
   const provider = new MockCloudProvider("onedrive");
   const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-a-"));
-  const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A" });
+  const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A", trigger: "user" });
   const wid = await engineA.createWorkspace("conflict-test", "onedrive");
   const rel = "src/config.ts";
   const absA = path.join(rootA, "src", "config.ts");
@@ -107,7 +107,7 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
     rootA = rA;
     rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
 
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
     await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
 
     // Trigger syncWorkspace so conflict is detected
@@ -130,7 +130,7 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
     rootA = rA;
     rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
 
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
     await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
 
     await engineB.syncWorkspace(wid);
@@ -160,6 +160,7 @@ async function setupWithRules(conflictRules: ConflictRule[]) {
     provider,
     machineId: "B",
     machineName: "B",
+    trigger: "user",
     conflictRules,
   });
   await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
@@ -247,6 +248,7 @@ describe("tombstone purge", () => {
       provider,
       machineId: "A",
       machineName: "A",
+      trigger: "user",
       tombstonePurgeDays: 1,
     });
 
@@ -286,6 +288,7 @@ describe("tombstone purge", () => {
       provider,
       machineId: "A",
       machineName: "A",
+      trigger: "user",
       tombstonePurgeDays: 30,
     });
 

@@ -43,13 +43,14 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
         );
         if (!choice || choice === "Ничего") continue;
         if (choice === "Убрать из синхронизации") {
+          // Both branches run only after the user answered the prompt above.
           await runWithEngine(async (engine) => {
             await engine.removeTrackedFiles(fileEntry.workspaceId, [fsPath]);
-          }, root);
+          }, root, { trigger: "user" });
         } else {
           await runWithEngine(async (engine) => {
             await engine.pullAll(fileEntry.workspaceId);
-          }, root);
+          }, root, { trigger: "user" });
         }
       }
     }),
@@ -66,14 +67,16 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
         const newFolder = vscode.workspace.getWorkspaceFolder(newUri);
         if (newFolder?.uri.fsPath !== root) {
           // Moved outside workspace — untrack locally
+          // A rename is the user acting on their own file; the event is VS Code
+          // reporting it, not the extension deciding to move anything.
           await runWithEngine(async (engine) => {
             await engine.untrackFileLocal(fileEntry.workspaceId, [oldUri.fsPath]);
-          }, root);
+          }, root, { trigger: "user" });
           continue;
         }
         await runWithEngine(async (engine) => {
           await engine.renameTrackedFile(fileEntry.workspaceId, oldUri.fsPath, newUri.fsPath);
-        }, root);
+        }, root, { trigger: "user" });
       }
     }),
   );
@@ -103,9 +106,11 @@ function registerSoftLockLifecycle(
       relPath: rel,
       lastActivityMs: Date.now(),
     });
+    // Opening or editing a file is the user being present in it — that is what
+    // a soft lock announces. The 10-minute refresh below is a timer and says so.
     await runWithEngine(async (engine) => {
       await engine.setSoftLock(fileEntry.workspaceId, rel);
-    }, root, { showErrorDialog: false });
+    }, root, { showErrorDialog: false, trigger: "user" });
   };
 
   const clearSoftLockForUri = async (uri: vscode.Uri): Promise<void> => {
@@ -114,7 +119,7 @@ function registerSoftLockLifecycle(
     softLockRegistry.delete(uri.fsPath);
     await runWithEngine(async (engine) => {
       await engine.clearSoftLock(entry.workspaceId, entry.relPath);
-    }, entry.root, { showErrorDialog: false });
+    }, entry.root, { showErrorDialog: false, trigger: "user" });
   };
 
   const heartbeatHandle = setInterval(() => {
@@ -122,14 +127,20 @@ function registerSoftLockLifecycle(
     for (const [fsPath, entry] of softLockRegistry) {
       if (now - entry.lastActivityMs > SOFT_LOCK_TIMEOUT_MS) {
         softLockRegistry.delete(fsPath);
+        // Both branches below are the interval firing, not the user. They write
+        // `editingBy` in the cloud manifest, so under the mutation policy they
+        // are refused and logged: a lock stops being refreshed once the user
+        // stops touching the file, and readers already treat locks older than
+        // `softLockStaleMs` as stale. Removing Soft-Lock from automatic paths
+        // outright is finding B4.
         void runWithEngine(async (engine) => {
           await engine.clearSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false });
+        }, entry.root, { showErrorDialog: false, trigger: "auto" });
       } else if (now - entry.lastActivityMs > SOFT_LOCK_HEARTBEAT_MS) {
         // Refresh cloud lock without resetting the inactivity timer — only real edits do that.
         void runWithEngine(async (engine) => {
           await engine.setSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false });
+        }, entry.root, { showErrorDialog: false, trigger: "auto" });
       }
     }
   }, SOFT_LOCK_HEARTBEAT_MS);

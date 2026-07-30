@@ -19,6 +19,7 @@ import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 
 export interface WebhookLifecyclesDeps {
@@ -34,6 +35,7 @@ export interface WebhookLifecyclesDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
 }
 
@@ -60,10 +62,11 @@ export function registerWebhookLifecycles(deps: WebhookLifecyclesDeps): WebhookL
   const webhookSyncDeps: QuietFullSyncAllFoldersDeps = {
     globalConfig,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    makeEngine: (root, provider, machineId, machineName) =>
-      makeEngine(root, provider, machineId, machineName),
+    makeEngine,
     statusBar,
     offlineQueue: offlineQueueStore,
+    // A cloud push notification says "something changed there", not "sync now".
+    trigger: "auto",
     refreshUi: () => {
       workspacesTree.refresh();
       fileDecorations.refresh();

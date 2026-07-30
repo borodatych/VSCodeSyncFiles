@@ -32,7 +32,7 @@ describe("onPurgeLostFiles callback", () => {
     roots.push(rootA, rootB);
 
     // Setup
-    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A" });
+    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A", trigger: "user" });
     const wsId = await engineA.createWorkspace("purge-test", "onedrive");
     const absA = path.join(rootA, "watch.ts");
     await fs.writeFile(absA, "content", "utf8");
@@ -45,6 +45,7 @@ describe("onPurgeLostFiles callback", () => {
       provider,
       machineId: "B",
       machineName: "B",
+      trigger: "user",
       onPurgeLostFiles: (items) => { lostItems.push(...items); },
     });
     await engineB.attachCloudWorkspace(wsId);
@@ -89,14 +90,14 @@ describe("adoptManifestFilesFromCloud with renamedFrom via syncWorkspace", () =>
     roots.push(rootA, rootB);
 
     // Machine A: add file
-    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A" });
+    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A", trigger: "user" });
     const wsId = await engineA.createWorkspace("rename-test", "onedrive");
     const absOld = path.join(rootA, "old.ts");
     await fs.writeFile(absOld, "hello", "utf8");
     await engineA.addFiles(wsId, [absOld]);
 
     // Machine B connects (adopts old.ts)
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
     await engineB.attachCloudWorkspace(wsId);
 
     const wcBBefore = await WorkspaceConfigManager.load(rootB);
@@ -134,7 +135,7 @@ describe("onNewConflict callback", () => {
     roots.push(rootA, rootB);
 
     // A creates workspace and file
-    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A" });
+    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A", trigger: "user" });
     const wsId = await engineA.createWorkspace("cb-test", "onedrive");
     const rel = "conflict.ts";
     const absA = path.join(rootA, rel);
@@ -148,6 +149,7 @@ describe("onNewConflict callback", () => {
       provider,
       machineId: "B",
       machineName: "B",
+      trigger: "user",
       onNewConflict: (_ws, _note, relPath) => { conflictFired.push(relPath); },
     });
     await engineB.attachCloudWorkspace(wsId);

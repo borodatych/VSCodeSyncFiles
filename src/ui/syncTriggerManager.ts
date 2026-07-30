@@ -7,6 +7,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "../core/pathMapping.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { isIgnoredSyncTriggerPath, resolveSaveDebounceMs } from "../core/syncTriggerLogic.js";
 import {
@@ -62,7 +63,7 @@ const execFileAsync = promisify(execFile);
 export interface SyncTriggerManagerDeps {
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
   statusBar: Pick<SyncStatusBarController, "setSyncing" | "refresh">;
   refreshUi: () => void;
   scheduleDeferred: SyncScheduleDeferredStore;
@@ -223,7 +224,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       return;
     }
     const mc = await deps.globalConfig.load();
-    const engine = deps.makeEngine(root, p, mc.machineId, mc.machineName);
+    const engine = deps.makeEngine(root, p, mc.machineId, mc.machineName, "auto");
     deps.statusBar.setSyncing(true);
     try {
       await fn(engine);
@@ -261,6 +262,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       statusBar: deps.statusBar,
       offlineQueue: deps.offlineQueue,
       refreshUi: deps.refreshUi,
+      trigger: "auto",
     });
   };
 

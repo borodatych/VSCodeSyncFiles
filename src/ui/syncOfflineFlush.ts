@@ -49,9 +49,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
   if (hadFull) {
     await runQuietFullSyncAllFolders({
       ...deps,
-      bypassSchedule: true,
-      bypassAutoPause: true,
-      bypassRateLimit: true,
+      trigger: "auto",
     });
   }
 
@@ -102,7 +100,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
     for (let opIx = 0; opIx < fileOps.length; opIx += 1) {
       const item = fileOps[opIx];
       const root = item.root;
-      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName);
+      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, "auto");
       const cfg = await WorkspaceConfigManager.load(root);
       const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === item.workspaceId);
       if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {

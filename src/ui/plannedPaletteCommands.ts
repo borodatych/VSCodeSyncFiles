@@ -19,6 +19,7 @@ import { planSnapshotRetention } from "../core/snapshotRetentionPlan.js";
 import { exportKeyWithPassword, importKeyWithPassword, generateEncryptionKey, encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { readEncryptionKey, storeEncryptionKey } from "../core/encryptionKey.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { WorkspacesTreeProvider } from "./workspacesTree.js";
 import { runConfigurePathMapping } from "./configurePathMapping.js";
@@ -42,6 +43,7 @@ export interface PlannedPaletteExtras {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   refreshAfterLocalConfigChange?: () => void | Promise<void>;
   /** After global session pause ends: preview plan + optional full sync. */

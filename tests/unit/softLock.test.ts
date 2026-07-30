@@ -24,8 +24,8 @@ describe("SyncEngine — Soft Lock", () => {
     const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-softlock-b-"));
     roots.push(rootA, rootB);
 
-    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "machine-a", machineName: "A" });
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "machine-b", machineName: "B" });
+    const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "machine-a", machineName: "A", trigger: "user" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "machine-b", machineName: "B", trigger: "user" });
 
     // Create workspace on A
     const wsId = await engineA.createWorkspace("test-ws", "onedrive");

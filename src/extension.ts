@@ -231,7 +231,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(
         `VSCodeSync: workspace «${savedEntry.workspaceNote || workspaceId}» восстановлен на облаке.`,
       );
-    }, localRoot);
+    }, localRoot, { trigger: "user" }); // "Залить на облако" in the remote-deletion toast.
     workspacesTree.invalidateRemoteCache();
     workspacesTree.refresh();
     await statusBar.refresh();
@@ -408,7 +408,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerFileLifecycleEvents({ context, runWithEngine });
   const tap = () => tryAuthenticatedProvider(registry);
-  const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName); };
+  const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName, "user"); };
   context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig, mirrorRegistry: p2pMirrorRegistry, logSyncActivity }), ...registerOAuthDeviceCodeCommand({ context, resolveProviders: () => resolveDeviceCodeProviders(context) }), ...registerTemplateMarketplace(), ...registerPrefetchCommand());
 
   registerPlannedPaletteCommands(context, {

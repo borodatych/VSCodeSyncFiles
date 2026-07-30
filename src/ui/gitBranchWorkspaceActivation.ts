@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { WorkspaceConfig } from "../core/types.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
@@ -68,6 +69,7 @@ export interface GitBranchAutoActivationDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   offlineQueue?: SyncOfflineQueueStore;
   refreshUi: () => void | Promise<void>;
@@ -106,7 +108,7 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
     return;
   }
   const gc = await deps.globalConfig.load();
-  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
+  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "auto");
 
   const toSuspend: string[] = [];
   const toActivate: string[] = [];

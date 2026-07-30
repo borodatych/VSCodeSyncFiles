@@ -199,7 +199,7 @@ export function registerGoogleDriveWebhookLifecycle(
                 recordWebhookPushNotification();
                 void runQuietFullSyncAllFolders({
                   ...syncDeps,
-                  bypassSchedule: true,
+                  trigger: "auto",
                 });
               },
             });

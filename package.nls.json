@@ -218,6 +218,7 @@
   "cfg.webhooks.fallbackAfterMinutes.description": "Watch Mode: if no push notifications arrive within this many minutes, fall back to interval polling and warn. 0 = never fall back due to silence (only while subscription is active).",
   "cfg.webhooks.tunnelEnabled.description": "Run the built-in smee.io tunnel for webhooks when Watch Mode + webhooks are on. Gives a public URL for OneDrive / Google Drive without a static IP.",
   "cfg.gitBranchAutoSync.description": "On git branch switch: Suspend VSCodeSync workspaces whose manifest gitBranch differs; activate + sync the matching ones. Requires the Git extension and gitBranch set per workspace (Set Git Branch for Workspace).",
+  "cfg.tasks.allowFileMutations.description": "Allow `vscodesync` tasks to push, pull and snapshot. Off by default: a task with `runOn: folderOpen` runs itself, and VS Code gives the extension no way to tell that apart from a task you started.",
   "cfg.watchMode.description": "Watch Mode (background sync — Reliability phase)",
   "cfg.watchIntervalSeconds.description": "Watch Mode polling interval (seconds)",
   "cfg.watchMaxIntervalSeconds.description": "Maximum back-off interval in Watch Mode (seconds)",

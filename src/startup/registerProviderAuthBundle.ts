@@ -13,6 +13,7 @@ import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { createProviderAuthFlows } from "../auth/providerAuthFlows.js";
 import { registerProviderMigrationCommand } from "../ui/providerMigrationUi.js";
@@ -25,7 +26,7 @@ export interface ProviderAuthBundleDeps {
   statusBar: SyncStatusBarController;
   fileDecorations: SyncFileDecorationController;
   refreshCloudWebhooks: () => void;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
 }
 
 export type ProviderAuthFlowsHandle = ReturnType<typeof createProviderAuthFlows>;
