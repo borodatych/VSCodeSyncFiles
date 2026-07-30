@@ -11,6 +11,7 @@ import {
 } from "./webhookChannelCoordinator.js";
 import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { effectiveAutoSyncMode } from "../core/autoSyncModeAdaptive.js";
+import { verboseLog, warnLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
 
@@ -30,6 +31,8 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
   let timer: ReturnType<typeof setInterval> | undefined;
   let idleCycles = 0;
   let currentMs = 0;
+  /** True while a tick is in flight — see the overlap guard in `applyInterval`. */
+  let tickRunning = false;
   let prevWebhookPollingSuppressed: boolean | undefined;
 
   // EWMA of inter-save intervals — informs how aggressively to scale up
@@ -59,7 +62,17 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
     currentMs = ms;
     _currentWatchIntervalMs = ms;
     timer = setInterval(() => {
-      void tick();
+      // Guard against overlap: a tick slower than the interval used to start a
+      // second one on top of the first, and each of those held the status-bar
+      // spinner and the request queue.
+      if (tickRunning) {
+        verboseLog("watch", "предыдущий тик ещё идёт — пропускаю");
+        return;
+      }
+      tickRunning = true;
+      void tick().finally(() => {
+        tickRunning = false;
+      });
     }, ms);
   };
 
@@ -117,7 +130,6 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
       // The interval is cleared/reset by `applyInterval`; a thrown error
       // here would propagate out of setInterval's callback and surface as
       // an unhandled rejection without restarting the timer cleanly.
-      const { warnLog } = await import("../utils/log.js");
       warnLog(
         "watchModePoller",
         `tick failed: ${e instanceof Error ? e.message : String(e)}`,

@@ -31,6 +31,14 @@ import {
   type DropboxTokenBundle,
 } from "./dropboxTokens.js";
 
+/**
+ * Hard ceiling on `list_folder` pagination. Dropbox returns up to 2000 entries
+ * per page by default, so this covers a folder of two million entries — far
+ * past anything this extension creates, while still bounding a server that
+ * never stops saying `has_more`.
+ */
+const DROPBOX_LIST_FOLDER_MAX_PAGES = 1000;
+
 const API = "https://api.dropboxapi.com";
 const CONTENT = "https://content.dropboxapi.com";
 
@@ -330,7 +338,21 @@ export class DropboxProvider implements ICloudProvider {
     }[] = [];
 
     let cursor: string | undefined;
+    // Ceiling plus a cursor-progress check: `for(;;)` trusted the server to
+    // eventually say `has_more: false`. A server that keeps answering
+    // `has_more: true` with the same cursor — a bug, a proxy, a truncated
+    // response — spun this loop forever, and since the whole call sits on the
+    // extension host it reads as a freeze with no error anywhere.
+    let pages = 0;
+    let previousCursor: string | undefined;
     for (;;) {
+      pages += 1;
+      if (pages > DROPBOX_LIST_FOLDER_MAX_PAGES) {
+        throw new ProviderError(
+          "NETWORK_ERROR",
+          `Dropbox listFolder: превышен предел в ${String(DROPBOX_LIST_FOLDER_MAX_PAGES)} страниц для ${folderDb}`,
+        );
+      }
       const r = cursor
         ? await this.rpc("/2/files/list_folder/continue", { cursor })
         : await this.rpc("/2/files/list_folder", {
@@ -353,6 +375,13 @@ export class DropboxProvider implements ICloudProvider {
       if (!page.has_more) {
         break;
       }
+      if (page.cursor !== undefined && page.cursor === previousCursor) {
+        throw new ProviderError(
+          "NETWORK_ERROR",
+          `Dropbox listFolder: курсор не продвигается для ${folderDb}`,
+        );
+      }
+      previousCursor = cursor;
       cursor = page.cursor;
       if (!cursor) {
         break;
