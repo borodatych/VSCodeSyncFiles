@@ -34,18 +34,14 @@ const NOT_YET_CONVERTED = new Set([
   // Git paths are relative to the *repo* root, not to the sync root.
   "ui/syncTriggerManager.ts",
   // Conversion pending — see `.cursor/plans/stabilization100.plan.md`, C13.
-  "ui/syncOfflineFlush.ts",
-  "ui/syncScheduleDeferredFlush.ts",
   "ui/vscodeSyncUriHandler.ts",
   "ui/workspacesTree.ts",
   "ui/quickTransferDropPanel.ts",
   "ui/quickTransferUi.ts",
   "commands/registerConflicts.ts",
   "commands/registerEncryptedBundleExport.ts",
-  "commands/registerFileOperations.ts",
   "commands/registerWorkspaceLifecycle.ts",
   "commands/registerPhase21Commands.ts",
-  "startup/registerWorkspaceTreeWiring.ts",
   "startup/registerFileLifecycleEvents.ts",
   // Ignore-rule matching works on paths relative to the *workspace folder*,
   // which is what `.syncignore` semantics are defined against — not a bypass.

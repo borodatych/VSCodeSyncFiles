@@ -23,6 +23,7 @@ import { pickWorkspaceId, pickOtherWorkspaceId } from "./_shared.js";
 import { resolveFileTarget, resolveFileTargetLoose as resolveFileTargetLooseRaw } from "./_fileTargetHelpers.js";
 import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+import { trackedAbsolutePathFor, trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 async function runAddToNewWorkspaceImpl(
   runWithEngine: RunWithEngineFn,
@@ -300,9 +301,9 @@ export function registerFileOperationsCommands(
         return;
       }
       const cfg = await WorkspaceConfigManager.load(target.root);
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const fileEntry = cfg.files.find((f) => f.localPath === rel);
-      if (!fileEntry) {
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
+      const fileEntry = rel === undefined ? undefined : cfg.files.find((f) => f.localPath === rel);
+      if (!fileEntry || rel === undefined) {
         await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
         return;
       }
@@ -347,8 +348,10 @@ export function registerFileOperationsCommands(
       if (!target) {
         return;
       }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      const abs = path.join(target.root, ...rel.split("/"));
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
+      if (rel === undefined) return;
+      const abs = await trackedAbsolutePathFor(target.root, rel);
+      if (abs === undefined) return;
       if (!(await guardPathsBeforePush([abs]))) {
         return;
       }
@@ -374,11 +377,11 @@ export function registerFileOperationsCommands(
       if (!target) {
         return;
       }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
       await runWithEngine(async (engine, root) => {
         const cfg = await WorkspaceConfigManager.load(root);
-        const fileEntry = cfg.files.find((f) => f.localPath === rel);
-        if (!fileEntry) {
+        const fileEntry = rel === undefined ? undefined : cfg.files.find((f) => f.localPath === rel);
+        if (!fileEntry || rel === undefined) {
           await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
           return;
         }
@@ -402,11 +405,11 @@ export function registerFileOperationsCommands(
     vscode.commands.registerCommand("vscodesync.compareWithCloud", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) return;
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
       await runWithEngine(async (engine, root) => {
         const cfg = await WorkspaceConfigManager.load(root);
-        const fileEntry = cfg.files.find((f) => f.localPath === rel);
-        if (!fileEntry) {
+        const fileEntry = rel === undefined ? undefined : cfg.files.find((f) => f.localPath === rel);
+        if (!fileEntry || rel === undefined) {
           await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
           return;
         }
@@ -438,10 +441,10 @@ export function registerFileOperationsCommands(
       if (!target) {
         return;
       }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
       const cfg0 = await WorkspaceConfigManager.load(target.root);
-      const fileEntry = cfg0.files.find((f) => f.localPath === rel);
-      if (!fileEntry) {
+      const fileEntry = rel === undefined ? undefined : cfg0.files.find((f) => f.localPath === rel);
+      if (!fileEntry || rel === undefined) {
         await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
         return;
       }
@@ -473,9 +476,9 @@ export function registerFileOperationsCommands(
       if (!target) {
         return;
       }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
       const cfg0 = await WorkspaceConfigManager.load(target.root);
-      if (!cfg0.files.some((f) => f.localPath === rel)) {
+      if (rel === undefined || !cfg0.files.some((f) => f.localPath === rel)) {
         await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
         return;
       }
@@ -507,10 +510,10 @@ export function registerFileOperationsCommands(
     vscode.commands.registerCommand("vscodesync.openTimeTravelScrubber", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) return;
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(target.root, target.fsPath);
       const cfg = await WorkspaceConfigManager.load(target.root);
-      const row = cfg.files.find((f) => f.localPath === rel);
-      if (!row) {
+      const row = rel === undefined ? undefined : cfg.files.find((f) => f.localPath === rel);
+      if (!row || rel === undefined) {
         await vscode.window.showWarningMessage("VSCodeSync: файл не отслеживается этим расширением.");
         return;
       }
@@ -543,9 +546,9 @@ export function registerFileOperationsCommands(
       const folder = vscode.workspace.getWorkspaceFolder(target);
       if (!folder) return;
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-      const rel = path.relative(folder.uri.fsPath, target.fsPath).split(path.sep).join("/");
-      const tf = wc.files.find((f) => f.localPath === rel);
-      if (!tf) {
+      const rel = await trackedPosixRelFor(folder.uri.fsPath, target.fsPath);
+      const tf = rel === undefined ? undefined : wc.files.find((f) => f.localPath === rel);
+      if (!tf || rel === undefined) {
         await vscode.window.showWarningMessage(
           "VSCodeSync: файл не отслеживается — добавьте его в workspace.",
         );

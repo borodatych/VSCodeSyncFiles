@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
 import type { DeferredQueueItem, SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
@@ -10,6 +9,7 @@ import {
 } from "../core/binarySkipNotice.js";
 import { runQuietFullSyncAllFolders, type QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
 
 const CFG = "vscodesync";
 
@@ -68,7 +68,8 @@ export async function flushScheduleDeferredQueue(
 
       if (item.kind === "push") {
         const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
-        const abs = path.join(root, ...item.rel.split("/"));
+        const abs = await trackedAbsolutePathFor(root, item.rel);
+        if (abs === undefined) continue;
         if (warnBin && (await fileLooksBinary(abs))) {
           if (shouldAnnounceBinarySkip(root, item.rel)) {
             void vscode.window.showWarningMessage(binarySkipMessage(item.rel));

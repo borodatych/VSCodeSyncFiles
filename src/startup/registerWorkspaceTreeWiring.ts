@@ -14,7 +14,6 @@
  * can keep their existing contracts.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspacesTreeDnD } from "../ui/workspacesTreeDnD.js";
 import {
   type SyncTreeElement,
@@ -31,6 +30,7 @@ import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { RunWithEngineFn } from "../commands/registerWorkspaceLifecycle.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
 
 export interface WorkspaceTreeWiringDeps {
   context: vscode.ExtensionContext;
@@ -75,7 +75,8 @@ export function registerWorkspaceTreeWiring(
       }
       await runWithEngine(async (engine) => {
         for (const s of sources) {
-          const abs = path.join(folderRoot, ...s.localPath.split("/"));
+          const abs = await trackedAbsolutePathFor(folderRoot, s.localPath);
+          if (abs === undefined) continue;
           await engine.removeTrackedFiles(s.workspaceId, [abs]);
           await engine.addFiles(targetWorkspaceId, [abs]);
         }

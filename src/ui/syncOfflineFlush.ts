@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
 import type { OfflineQuickTransferQueueItem, OfflineQueueItem, SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { warnLog } from "../utils/log.js";
@@ -20,6 +19,7 @@ import {
 } from "../core/syncOfflineFlushBackoff.js";
 import { isQueuedQuickTransferSendExpired, sendQuickTransferFile } from "../core/quickTransfer.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
 
 const CFG = "vscodesync";
 
@@ -115,7 +115,8 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
       if (item.kind === "push") {
         const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
-        const abs = path.join(root, ...item.rel.split("/"));
+        const abs = await trackedAbsolutePathFor(root, item.rel);
+        if (abs === undefined) continue;
         if (warnBin && (await fileLooksBinary(abs))) {
           if (shouldAnnounceBinarySkip(root, item.rel)) {
             void vscode.window.showWarningMessage(binarySkipMessage(item.rel));

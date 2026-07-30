@@ -118,6 +118,23 @@ export const STALE_MANIFEST_EDITING_LOCK_MS = STALE_MANIFEST_EDITING_LOCK_MS_DEF
  * without this type a policy denial would be recorded once per file and the
  * workspace would still report success.
  */
+/**
+ * The file is in conflict and neither side may be moved until it is resolved.
+ *
+ * `pushFile` used to return silently here while `pullFile` threw a bare `Error`.
+ * The same user action therefore produced either a false "done" or an
+ * exception, depending on direction.
+ */
+export class FileConflictError extends Error {
+  constructor(readonly posixRel: string) {
+    super(
+      `VSCodeSync: «${posixRel}» в конфликте — синхронизация файла остановлена. ` +
+        "Разрешите конфликт: «Принять моё» или «Принять их версию».",
+    );
+    this.name = "FileConflictError";
+  }
+}
+
 export class WorkspacePolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -3701,7 +3718,10 @@ export class SyncEngine {
       throw new Error("not tracked");
     }
     if (file.syncStatus === "conflict") {
-      return;
+      // Symmetric with `pullFile`: a conflicted file is never moved silently.
+      // `pushAll` already filters conflicts out before reaching here, and a
+      // stray one is now recorded as a skipped file rather than a false success.
+      throw new FileConflictError(posixRel);
     }
     const profileStart = this.deps.onSyncProfileSample ? Date.now() : 0;
     const meta = await this.pullMeta(workspaceId, ent.metaEtag);
@@ -4118,7 +4138,7 @@ export class SyncEngine {
       throw new Error("not tracked");
     }
     if (file.syncStatus === "conflict") {
-      throw new Error("файл в конфликте — используйте «Принять моё» или «Принять их версию»");
+      throw new FileConflictError(posixRel);
     }
     const meta = metaIn ?? (await this.pullMeta(workspaceId, ent.metaEtag));
     const metaRow = meta.files[posixRel];
