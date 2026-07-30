@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { RequestQueue, getGlobalQueue, disposeGlobalQueue } from "../../src/core/requestQueue.js";
+import {
+  RequestQueue,
+  RequestQueueOverflowError,
+  RequestQueueTimeoutError,
+  getGlobalQueue,
+  disposeGlobalQueue,
+} from "../../src/core/requestQueue.js";
 
 describe("RequestQueue — concurrency serialization", () => {
   it("executes N concurrent enqueues sequentially (concurrency = 1)", async () => {
@@ -91,6 +97,52 @@ describe("RequestQueue — concurrency serialization", () => {
     const queue = new RequestQueue({ concurrency: 1, timeoutMs: 20 });
     await expect(
       queue.enqueue(() => new Promise<void>((r) => setTimeout(r, 200))),
-    ).rejects.toThrow("timed out");
+    ).rejects.toBeInstanceOf(RequestQueueTimeoutError);
+  });
+
+  it("слот освобождается по дедлайну, и очередь продолжает работать", async () => {
+    // The point of the deadline: an operation that never settles must not hold
+    // its slot forever. Before the fix `timeoutMs` defaulted to 0, no watchdog
+    // was armed, and everything behind such an operation waited indefinitely.
+    const queue = new RequestQueue({ concurrency: 1, timeoutMs: 20 });
+    const stuck = queue.enqueue(() => new Promise<void>(() => { /* never settles */ }));
+    await expect(stuck).rejects.toBeInstanceOf(RequestQueueTimeoutError);
+    expect(queue.timedOutCount).toBe(1);
+    await expect(queue.enqueue(() => Promise.resolve("next"))).resolves.toBe("next");
+    expect(queue.activeCount).toBe(0);
+  });
+
+  it("переполнение очереди отклоняется вместо бесконечного роста", async () => {
+    const queue = new RequestQueue({ concurrency: 1, timeoutMs: 0, maxPending: 2 });
+    const block = queue.enqueue(() => new Promise<void>((r) => setTimeout(r, 30)));
+    const q1 = queue.enqueue(() => Promise.resolve(1));
+    const q2 = queue.enqueue(() => Promise.resolve(2));
+    await expect(queue.enqueue(() => Promise.resolve(3))).rejects.toBeInstanceOf(
+      RequestQueueOverflowError,
+    );
+    await Promise.all([block, q1, q2]);
+  });
+
+  it("reset отклоняет ожидающие и освобождает слоты", async () => {
+    const queue = new RequestQueue({ concurrency: 1, timeoutMs: 0 });
+    const stuck = queue.enqueue(() => new Promise<void>(() => { /* never settles */ }));
+    const waiting = queue.enqueue(() => Promise.resolve("never runs"));
+    const result = queue.reset();
+    expect(result).toEqual({ rejectedPending: 1, clearedRunning: 1 });
+    await expect(waiting).rejects.toThrow("сброшена");
+    expect(queue.activeCount).toBe(0);
+    await expect(queue.enqueue(() => Promise.resolve("ok"))).resolves.toBe("ok");
+    void stuck.catch(() => undefined);
+  });
+
+  it("синхронный throw внутри операции не утекает слотом", async () => {
+    const queue = new RequestQueue({ concurrency: 1, timeoutMs: 0 });
+    await expect(
+      queue.enqueue(() => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(queue.activeCount).toBe(0);
+    await expect(queue.enqueue(() => Promise.resolve("after"))).resolves.toBe("after");
   });
 });

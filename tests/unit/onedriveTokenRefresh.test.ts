@@ -63,10 +63,14 @@ describe("OneDrive token refresh (maybeRefreshToken)", () => {
       expiresAtMs: Date.now() + 1 * 60 * 1000,
       clientId: "client1",
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ access_token: "new-token", refresh_token: "new-refresh", expires_in: 3600 }),
-    }));
+    // A real Response, not a duck-typed literal: `fetchWithTimeout` reads the
+    // body through the response object, so the mock must behave like one.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ access_token: "new-token", refresh_token: "new-refresh", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    ));
     const result = await maybeRefreshToken(secrets, bundle);
     expect(result.accessToken).toBe("new-token");
     expect(result.refreshToken).toBe("new-refresh");
@@ -83,10 +87,12 @@ describe("OneDrive token refresh (maybeRefreshToken)", () => {
       expiresAtMs: Date.now() - 1000,
       clientId: "client1",
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: false,
-      json: () => Promise.resolve({ error: "invalid_grant" }),
-    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
     await expect(maybeRefreshToken(secrets, bundle)).rejects.toBeInstanceOf(ProviderError);
   });
 

@@ -1,6 +1,13 @@
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runWithSyncFileLock, subscribeSyncFileLock, syncFileLockKey } from "../../src/core/syncFileLock.js";
+import {
+  runWithSyncFileLock,
+  snapshotSyncFileLocks,
+  subscribeSyncFileLock,
+  syncFileLockKey,
+  syncFileLockTailCount,
+  SyncFileLockTimeoutError,
+} from "../../src/core/syncFileLock.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -68,19 +75,108 @@ describe("syncFileLock", () => {
   });
 
   it("continues chain when fn throws", async () => {
+    // Contract: a rejected body must not wedge the key, and the next body must
+    // start only after the previous one has fully settled. The exact microtask
+    // interleaving between the first caller's `.catch` and the second body is
+    // not part of that contract, so it is not asserted.
     const log: string[] = [];
+    let firstBodyDone = false;
     const p1 = runWithSyncFileLock("/r", "z.ts", "push", () => {
       log.push("fail");
+      firstBodyDone = true;
       return Promise.reject(new Error("x"));
     }).catch(() => {
       log.push("caught");
     });
     const p2 = runWithSyncFileLock("/r", "z.ts", "push", () => {
+      expect(firstBodyDone).toBe(true);
       log.push("after");
       return Promise.resolve(0);
     });
     await p1;
     await p2;
-    expect(log).toEqual(["fail", "after", "caught"]);
+    expect(log).toContain("fail");
+    expect(log).toContain("after");
+    expect(log).toContain("caught");
+    expect(log.indexOf("fail")).toBeLessThan(log.indexOf("after"));
+  });
+
+  it("ожидание блокировки ограничено дедлайном", async () => {
+    // Before the fix, waiting was unbounded: a body that never settled kept
+    // every later operation on that file queued in silence forever.
+    let releaseStuck: (() => void) | undefined;
+    const stuck = runWithSyncFileLock("/r", "wait.ts", "push", () =>
+      new Promise<void>((resolve) => {
+        releaseStuck = resolve;
+      }),
+    );
+    const waiter = runWithSyncFileLock(
+      "/r",
+      "wait.ts",
+      "pull",
+      () => Promise.resolve("never runs"),
+      { waitTimeoutMs: 30 },
+    );
+    await expect(waiter).rejects.toBeInstanceOf(SyncFileLockTimeoutError);
+    await expect(waiter).rejects.toMatchObject({ kind: "wait" });
+    releaseStuck?.();
+    await stuck;
+  });
+
+  it("зависшее тело отклоняет вызывающего, но ключ остаётся занятым", async () => {
+    // Releasing the key on a hold timeout would let a second push start against
+    // a file the first push may still be writing. A stuck key is the cheaper
+    // failure, so the caller is rejected while the key stays blocked.
+    let releaseStuck: (() => void) | undefined;
+    const stuck = runWithSyncFileLock(
+      "/r",
+      "hold.ts",
+      "push",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseStuck = resolve;
+        }),
+      { holdTimeoutMs: 30 },
+    );
+    await expect(stuck).rejects.toMatchObject({ kind: "hold" });
+
+    let secondStarted = false;
+    const second = runWithSyncFileLock(
+      "/r",
+      "hold.ts",
+      "pull",
+      () => {
+        secondStarted = true;
+        return Promise.resolve("ok");
+      },
+      { waitTimeoutMs: 1000 },
+    );
+    expect(secondStarted).toBe(false);
+    releaseStuck?.();
+    await expect(second).resolves.toBe("ok");
+  });
+
+  it("карта хвостов не растёт: ключ удаляется, когда его никто не ждёт", async () => {
+    const before = syncFileLockTailCount();
+    await runWithSyncFileLock("/r", "tail-a.ts", "push", () => Promise.resolve(1));
+    await runWithSyncFileLock("/r", "tail-b.ts", "push", () => Promise.resolve(2));
+    expect(syncFileLockTailCount()).toBe(before);
+  });
+
+  it("удерживаемые локи видны в снимке", async () => {
+    let release: (() => void) | undefined;
+    const held = runWithSyncFileLock("/r", "snap.ts", "pull", () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    // The body starts one turn later than the call: acquiring the lock now
+    // awaits its (bounded) turn first.
+    await delay(0);
+    const snap = snapshotSyncFileLocks();
+    expect(snap.some((s) => s.key.endsWith("snap.ts") && s.op === "pull")).toBe(true);
+    release?.();
+    await held;
+    expect(snapshotSyncFileLocks().some((s) => s.key.endsWith("snap.ts"))).toBe(false);
   });
 });

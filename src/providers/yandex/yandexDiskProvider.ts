@@ -26,7 +26,7 @@ import {
   storeYandexTokens,
   type YandexTokenBundle,
 } from "./yandexTokens.js";
-import { verboseLog, warnLog } from "../../utils/log.js";
+import { fetchWithTimeout as sharedFetchWithTimeout } from "../_shared/fetchWithTimeout.js";
 
 const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
@@ -37,31 +37,13 @@ const LOCKED_RETRY_DELAY_MS = 1500;
 const API_TIMEOUT_MS = 30_000;   // metadata / auth requests
 const DATA_TIMEOUT_MS = 120_000; // upload PUT / download GET
 
+/**
+ * Yandex used to carry its own byte-for-byte copy of `fetchWithTimeout`,
+ * including the defect where the deadline was disarmed as soon as headers
+ * arrived. Delegating to the shared helper means the fix lands here too.
+ */
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const ac = new AbortController();
-  const short = url.replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
-  const t0 = Date.now();
-  verboseLog("yandex.fetch", `START ${init.method ?? "GET"} ${short}`);
-  const timer = setTimeout(() => {
-    warnLog("yandex.fetch", `ABORT after ${String(timeoutMs)}ms — ${init.method ?? "GET"} ${short}`);
-    ac.abort();
-  }, timeoutMs);
-  return fetch(url, { ...init, signal: ac.signal })
-    .then((r) => {
-      verboseLog(
-        "yandex.fetch",
-        `DONE ${String(r.status)} in ${String(Date.now() - t0)}ms — ${short}`,
-      );
-      return r;
-    })
-    .catch((e: unknown) => {
-      warnLog(
-        "yandex.fetch",
-        `ERROR ${e instanceof Error ? e.message : String(e)} in ${String(Date.now() - t0)}ms — ${short}`,
-      );
-      throw e;
-    })
-    .finally(() => { clearTimeout(timer); });
+  return sharedFetchWithTimeout(url, init, { channel: "yandex.fetch", timeoutMs });
 }
 
 /** API path in `disk:/relative` or `app:/relative` form (Yandex Disk REST). */
