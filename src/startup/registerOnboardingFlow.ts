@@ -16,6 +16,7 @@
  * dispatcher in extension.ts can notify it on new sync events.
  */
 import * as vscode from "vscode";
+import { backgroundCloudAllowed } from "../ui/backgroundCloudGate.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ProviderType } from "../core/types.js";
@@ -89,6 +90,10 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
 
   void (async () => {
     try {
+      // Activation is a background moment: registering this machine writes
+      // `_machines.json` in the cloud, so it obeys the same gate as every
+      // other background poller (B11).
+      if (!backgroundCloudAllowed()) return;
       const c = await globalConfig.load();
       if (!c.onboardingCompleted) return;
       const p = await tryAuthenticatedProvider(registry);

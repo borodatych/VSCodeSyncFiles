@@ -7,6 +7,7 @@
  * 5 (responsive, ~12 req/h), 15 (lightweight). Below 1 minute is rejected.
  */
 import * as vscode from "vscode";
+import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
@@ -79,6 +80,7 @@ export function registerPresenceHeartbeat(
 
   const tick = async (): Promise<void> => {
     if (running) return;
+    if (!backgroundCloudAllowed()) return;
     running = true;
     try {
       await runTick();

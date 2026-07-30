@@ -68,7 +68,21 @@ export async function ensureWorkspaceGitignoreEntry(
   if (gitignoreCoversVscodesync(existing)) {
     return;
   }
+  // An existing .gitignore is the user's file, committed to their repository.
+  // The ENOENT branch above always asked before creating one; this branch
+  // appended silently on activation and announced the write after the fact.
+  // Same rule for both now: ask first, write on consent.
   const append = buildGitignoreAppend(existing);
+  const ok = showInformationMessage
+    ? await showInformationMessage(
+        "VSCodeSync: .gitignore не исключает .vscode/vscodesync.json (локальный кэш). Дописать?",
+        "Дописать",
+        "Позже",
+      )
+    : "Дописать";
+  if (ok !== "Дописать") {
+    return;
+  }
   await fs.writeFile(gitignorePath, append, "utf8");
   await showInformationMessage?.(
     "VSCodeSync: в .gitignore добавлен .vscode/vscodesync.json (локальный кэш).",

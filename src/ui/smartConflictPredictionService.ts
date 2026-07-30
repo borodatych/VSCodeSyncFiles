@@ -18,6 +18,7 @@
  *    walk every open editor on every keystroke.
  */
 import * as vscode from "vscode";
+import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 import {
@@ -98,6 +99,7 @@ export class SmartConflictPredictionService implements vscode.Disposable {
    *  (e.g. editor flip + save in <1s) don't double up the provider call. */
   private async fetchPresence(): Promise<void> {
     if (!this.tryAuthenticatedProvider) return;
+    if (!backgroundCloudAllowed()) return;
     const nowMs = Date.now();
     // Throttle: skip if we already fetched within the last (interval − 1s).
     // Allows the timer-driven fetch to always succeed, while debouncing

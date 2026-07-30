@@ -74,6 +74,20 @@ async function tick(context: vscode.ExtensionContext, deps: CrossCloudBackupDeps
   const due = intervalDays * 24 * 3600_000;
   if (Date.now() - last < due) return;
 
+  // The interval is a reminder, not an actor (B12). The timer used to
+  // replicate manifests, `_meta.json` and the whole snapshot tree — i.e. file
+  // contents — into a *second* vendor's cloud on its own; the widest data
+  // mover in the codebase, with no gate beyond the setting. Copying now runs
+  // only from the notification button. Declining postpones by one interval:
+  // the user answered for this occurrence.
+  await context.globalState.update(STATE_KEY, Date.now());
+  const picked = await vscode.window.showInformationMessage(
+    `VSCodeSync: пора сделать резервную копию во второе облако (${secondary}).`,
+    "Скопировать",
+    "Пропустить",
+  );
+  if (picked !== "Скопировать") return;
+
   const primary = await deps.tryAuthenticatedProvider();
   if (!primary) return;
   if (primary.type === secondary) {
