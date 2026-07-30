@@ -48,16 +48,12 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * `syncWorkspace` is the one gated operation whose checkpoint is conditional:
- * its check-only branch is the divergence detector, which a background pass is
- * meant to run. The condition is spelled out here so it stays a deliberate,
- * single exception rather than a pattern anyone may copy.
+ * Gated operations whose checkpoint is legitimately conditional. Empty since
+ * B5/B6: `checkWorkspaceStatus` got its own body, so `syncWorkspace` no longer
+ * needs a `checkOnly` escape. Kept as a named list (not deleted) so the next
+ * genuine exception has to be declared here with its reason, visibly.
  */
-const CONDITIONAL_GATES: Record<string, string> = {
-  syncWorkspace:
-    "гейт под `options?.checkOnly !== true` — check-only ветка это детектор расхождений, " +
-    "который фон обязан выполнять; расцепление checkWorkspaceStatus в собственное тело — B5/B6",
-};
+const CONDITIONAL_GATES: Record<string, string> = {};
 
 describe("MUTATION_OPS ↔ syncEngine.ts", () => {
   const engine = readSource(ENGINE);

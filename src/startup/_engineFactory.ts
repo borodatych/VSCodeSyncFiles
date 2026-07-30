@@ -79,6 +79,8 @@ export interface EngineFactoryRefs {
   ) => Promise<void>;
   /** v2.12.4 — best-effort P2P mirror for `pushFile`. */
   mirrorPushedFile?: (workspaceId: string, posixRel: string, plaintext: Buffer) => void;
+  /** B5 — user accepted the tracking drift reported by the detector. */
+  applyTrackingDrift?: (workspaceId: string) => Promise<void>;
 }
 
 export interface EngineFactoryDeps {
@@ -168,6 +170,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
   const warnedSchemaVersionKeys = new Set<string>();
   const warnedCorruptManifestKeys = new Set<string>();
   const warnedRemoteDeletedKeys = new Set<string>();
+  const warnedTrackingDriftKeys = new Set<string>();
   const notifiedConflictKeys = new Set<string>();
   const profileBuffer = createSyncProfileBuffer({ capacity: 500 });
 
@@ -488,6 +491,29 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
           // Anything other than the explicit confirmation aborts.
           return afterFailure === "Продолжить без snapshot";
         }
+      },
+      onTrackingDriftDetected: ({ workspaceId, workspaceNote, toAdopt, toPrune }) => {
+        // Once per workspace per session: drift persists until acted on, and
+        // the detector re-fires on every background tick.
+        if (warnedTrackingDriftKeys.has(workspaceId)) {
+          return;
+        }
+        warnedTrackingDriftKeys.add(workspaceId);
+        const label = workspaceNote.trim().length > 0 ? `«${workspaceNote}»` : workspaceId;
+        const parts: string[] = [];
+        if (toAdopt.length > 0) parts.push(`в облаке появилось ${String(toAdopt.length)}`);
+        if (toPrune.length > 0) parts.push(`удалено из облака ${String(toPrune.length)}`);
+        void (async () => {
+          const choice = await vscode.window.showInformationMessage(
+            `VSCodeSync: состав файлов ${label} изменился на другой машине (${parts.join(", ")}). Применить к локальному трекингу?`,
+            "Применить",
+            "Позже",
+          );
+          if (choice === "Применить") {
+            warnedTrackingDriftKeys.delete(workspaceId);
+            void refs.applyTrackingDrift?.(workspaceId);
+          }
+        })();
       },
       onRemoteWorkspaceDeleted: (
         workspaceId: string,

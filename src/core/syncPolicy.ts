@@ -47,11 +47,10 @@ export type SyncTrigger =
  *   nothing else. A git branch switch must keep suspending and activating
  *   workspaces automatically; that is state about *whether* to sync, not a
  *   sync.
- * - `adoptManifestFilesFromCloud`, `pruneTrackingFromManifest` — these run
- *   inside the check-only branch of `syncWorkspace`, i.e. on the detector path,
- *   so gating them would deny the detector itself. They change which files are
- *   tracked without moving a byte in either direction. Making check-only stop
- *   mutating tracking composition is findings B5/B6, the next step.
+ * - `adoptManifestFilesFromCloud`, `pruneTrackingFromManifest` — private, and
+ *   reachable only from `applyTrackingFromCloud` and the user half of
+ *   `syncWorkspace`, both of which are gated. The detector reports the drift
+ *   through `onTrackingDriftDetected` instead of applying it.
  * - `downloadManifest`, `pullMeta` and the read APIs built on them — they
  *   refresh cached etags, tags and the machine list in the local config. Cache
  *   maintenance, not user data.
@@ -65,6 +64,7 @@ export const MUTATION_OPS = [
   "syncOneFile",
   "syncWorkspace",
   "forcePullWorkspace",
+  "applyTrackingFromCloud",
   // --- Writing cloud metadata ------------------------------------------
   "putManifest",
   "pushMetaJson",

@@ -115,6 +115,52 @@ describe("SyncEngine — чекпоинт мутации", () => {
     expect([...provider.files.keys()].sort()).toEqual([...cloudBefore.keys()].sort());
   });
 
+  it("детектор сообщает о дрейфе трекинга, но не применяет его", async () => {
+    const { provider, root, user, wsId } = await setup();
+    await user.pushAll(wsId);
+
+    // A second machine adds a file to the same workspace: the manifest now
+    // lists something this machine does not track.
+    const otherRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-mutpolicy-b-"));
+    roots.push(otherRoot);
+    const other = new SyncEngine({
+      workspaceRoot: otherRoot,
+      provider,
+      machineId: "m2",
+      machineName: "M2",
+      trigger: "user",
+    });
+    await other.attachCloudWorkspace(wsId);
+    const newFile = path.join(otherRoot, "b.txt");
+    await fs.writeFile(newFile, "from m2");
+    await other.addFiles(wsId, [newFile]);
+
+    const drifts: { toAdopt: readonly string[]; toPrune: readonly string[] }[] = [];
+    const detector = new SyncEngine({
+      workspaceRoot: root,
+      provider,
+      machineId: "m1",
+      machineName: "M1",
+      trigger: "auto",
+      onTrackingDriftDetected: (d) => drifts.push(d),
+    });
+
+    await detector.checkWorkspaceStatus(wsId);
+
+    // Reported, not applied: the local config still tracks only a.txt.
+    expect(drifts).toHaveLength(1);
+    expect(drifts[0].toAdopt).toEqual(["b.txt"]);
+    expect(drifts[0].toPrune).toEqual([]);
+    const cfg = await WorkspaceConfigManager.load(root);
+    expect(cfg.files.map((f) => f.localPath)).toEqual(["a.txt"]);
+
+    // The user applying the drift adopts the entry (status: needs pulling).
+    await user.applyTrackingFromCloud(wsId);
+    const cfgAfter = await WorkspaceConfigManager.load(root);
+    const adopted = cfgAfter.files.find((f) => f.localPath === "b.txt");
+    expect(adopted?.syncStatus).toBe("cloud_newer");
+  });
+
   it("пользовательский движок делает то же самое без отказа", async () => {
     const { provider, user, wsId, filePath } = await setup();
     await fs.writeFile(filePath, "one-changed");

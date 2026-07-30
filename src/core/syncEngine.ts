@@ -343,6 +343,20 @@ export interface SyncEngineDeps {
     detached: boolean,
   ) => void;
   /**
+   * The cloud manifest lists files this machine does not track, or the machine
+   * tracks files the manifest no longer has — and the current pass is not
+   * allowed to change that. Fires only from the detector; a user-triggered pass
+   * applies the difference instead of reporting it.
+   */
+  onTrackingDriftDetected?: (drift: {
+    workspaceId: string;
+    workspaceNote: string;
+    /** In the cloud manifest, not tracked here. */
+    toAdopt: readonly string[];
+    /** Tracked here, gone from the cloud manifest. */
+    toPrune: readonly string[];
+  }) => void;
+  /**
    * Called after a file is successfully written to disk during pull.
    * Provides old and new UTF-8 content for diff/notification purposes.
    * `oldContent` is null when the file did not exist locally before pull.
@@ -490,6 +504,31 @@ export interface SyncProfileSample {
 
 export class SyncEngine {
   private readonly manifestByWs = new Map<string, CloudManifest>();
+  /**
+   * Which etag `manifestByWs` corresponds to. The etag we send as
+   * `ifNoneMatch` comes from the *shared* per-root config store, which another
+   * engine instance may have advanced past this instance's cached body. A 304
+   * only proves the cloud matches the etag we sent — not that it matches our
+   * cache — so the cache may satisfy a 304 only when the two agree.
+   */
+  private readonly manifestEtagByWs = new Map<string, string>();
+
+  /** Cache a manifest body together with the etag that names it (if known). */
+  private cacheManifest(workspaceId: string, manifest: CloudManifest, etag: string | undefined): void {
+    this.manifestByWs.set(workspaceId, manifest);
+    if (etag) {
+      this.manifestEtagByWs.set(workspaceId, etag);
+    } else {
+      // Unknown etag: the body may not answer a 304 for whatever etag the
+      // shared store carries, so it must not.
+      this.manifestEtagByWs.delete(workspaceId);
+    }
+  }
+
+  private evictManifestCache(workspaceId: string): void {
+    this.manifestByWs.delete(workspaceId);
+    this.manifestEtagByWs.delete(workspaceId);
+  }
   private readonly metaByWs = new Map<string, MetaJson>();
   /**
    * When set, `persistMutatedCfg(cfgRef)` only marks the batch dirty and
@@ -1035,7 +1074,7 @@ export class SyncEngine {
       metaEtag,
     });
     await this.saveCfg(cfg0);
-    this.manifestByWs.set(workspaceId, manifest);
+    this.cacheManifest(workspaceId, manifest, manifestDl.etag);
     this.metaByWs.set(workspaceId, meta);
 
     const now = new Date().toISOString();
@@ -1204,7 +1243,7 @@ export class SyncEngine {
       metaEtag: metaUp.etag,
     });
     await this.saveCfg(cfg);
-    this.manifestByWs.set(workspaceId, manifest);
+    this.cacheManifest(workspaceId, manifest, up.etag);
     return workspaceId;
   }
 
@@ -1234,7 +1273,7 @@ export class SyncEngine {
     cfg.activeWorkspaces.splice(ix, 1);
     cfg.files = cfg.files.filter((f) => f.workspaceId !== workspaceId);
     await this.saveCfg(cfg);
-    this.manifestByWs.delete(workspaceId);
+    this.evictManifestCache(workspaceId);
     this.metaByWs.delete(workspaceId);
   }
 
@@ -1395,8 +1434,8 @@ export class SyncEngine {
       throw new Error("Оба workspace должны быть подключены в этом проекте.");
     }
 
-    this.manifestByWs.delete(sourceWorkspaceId);
-    this.manifestByWs.delete(targetWorkspaceId);
+    this.evictManifestCache(sourceWorkspaceId);
+    this.evictManifestCache(targetWorkspaceId);
     this.metaByWs.delete(sourceWorkspaceId);
     this.metaByWs.delete(targetWorkspaceId);
 
@@ -1497,12 +1536,12 @@ export class SyncEngine {
       await this.deleteCloudFolderRecursive(workspaceRootPath(sourceWorkspaceId));
     }
 
-    this.manifestByWs.delete(sourceWorkspaceId);
+    this.evictManifestCache(sourceWorkspaceId);
     this.metaByWs.delete(sourceWorkspaceId);
 
     cfgInit = await this.loadCfg();
     const tgtEntryPost = cfgInit.activeWorkspaces.find((w) => w.workspaceId === targetWorkspaceId);
-    this.manifestByWs.delete(targetWorkspaceId);
+    this.evictManifestCache(targetWorkspaceId);
     await this.downloadManifest(targetWorkspaceId, tgtEntryPost?.manifestEtag);
   }
 
@@ -2008,7 +2047,7 @@ export class SyncEngine {
         throw new Error(`workspace ${id}: workspaceId в манифесте не совпадает`);
       }
       const manifest = rawManifest as CloudManifest;
-      this.manifestByWs.set(id, manifest);
+      this.cacheManifest(id, manifest, manDl.etag);
       let meta: MetaJson;
       let metaEtag: string | undefined;
       try {
@@ -2559,12 +2598,16 @@ export class SyncEngine {
     }
     if (dl.notModified) {
       const cached = this.manifestByWs.get(workspaceId);
-      if (cached) {
+      // The cache answers a 304 only when its body is the one the etag names.
+      // `ifNoneMatch` came from the shared config store, which another engine
+      // instance may have advanced; serving this instance's older body for the
+      // newer etag made "apply what the detector just reported" a no-op.
+      if (cached && this.manifestEtagByWs.get(workspaceId) === ifNoneMatch) {
         return cached;
       }
       const full = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
       const m = this.parseManifestSafe(workspaceId, full.body);
-      this.manifestByWs.set(workspaceId, m);
+      this.cacheManifest(workspaceId, m, full.etag);
       if (full.etag) {
         await this.patchEntry(workspaceId, {
           manifestEtag: full.etag,
@@ -2574,7 +2617,7 @@ export class SyncEngine {
       return m;
     }
     const m = this.parseManifestSafe(workspaceId, dl.body);
-    this.manifestByWs.set(workspaceId, m);
+    this.cacheManifest(workspaceId, m, dl.etag);
     if (dl.etag) {
       await this.patchEntry(workspaceId, {
         manifestEtag: dl.etag,
@@ -2647,7 +2690,7 @@ export class SyncEngine {
       metaEtag: metaUp.etag,
       ...this.entryPatchFromManifest(manifest),
     });
-    this.manifestByWs.set(workspaceId, manifest);
+    this.cacheManifest(workspaceId, manifest, up.etag);
     this.metaByWs.set(workspaceId, EMPTY_META_JSON);
   }
 
@@ -2893,7 +2936,7 @@ export class SyncEngine {
           ...this.entryPatchFromManifest(clean),
         });
       }
-      this.manifestByWs.set(workspaceId, clean);
+      this.cacheManifest(workspaceId, clean, res.etag);
       return res.etag;
     } catch (e) {
       if (e instanceof ProviderError && e.code === "PRECONDITION_FAILED" && retries > 0) {
@@ -3035,29 +3078,21 @@ export class SyncEngine {
     throw new Error("pushMetaJson: retries exhausted");
   }
 
-  async syncWorkspace(workspaceId: string, options?: { checkOnly?: boolean }): Promise<void> {
-    // Check-only is the detector: it reads the manifest, hashes locally and
-    // records statuses, which is exactly what a background pass is allowed to
-    // do. Everything else in here moves file bytes, so only that half is gated.
-    if (options?.checkOnly !== true) {
-      this.assertMayMutate("syncWorkspace");
-    }
-    // v0.7 — opportunistically drain any deferred history snapshots queued
-    // by `historyMode = lazy` since the last sync. Cheap when the queue is
-    // empty; bounded by `historyVersions` per file otherwise.
-    //
-    // Uploading those snapshots is a cloud write, and it used to happen before
-    // the check-only branch was even considered — so a background status pass
-    // pushed history blobs. The queue is left intact for the next user-driven
-    // sync rather than drained and dropped.
-    if (this.mayMutate("runDeferredHistorySnapshots") && this.lazyHistoryQueue.length > 0) {
-      const drained = this.drainLazyHistoryQueue();
-      try {
-        await this.runDeferredHistorySnapshots(drained);
-      } catch (e) {
-        warnLog("syncEngine", `lazy history drain failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+  /**
+   * Everything a pass over a workspace needs before it looks at a single file.
+   *
+   * Extracted so the detector and the full sync stop being the same method with
+   * a flag. The flag reached only `iterateTrackedFiles`; the shared prologue ran
+   * regardless, so "check only" adopted files from someone else's manifest,
+   * pruned tracked entries, and — on a NOT_FOUND manifest — detached the
+   * workspace outright. That is `checkOnly` in name and a mutation in fact.
+   */
+  private async loadWorkspaceSyncContext(workspaceId: string): Promise<{
+    cfg: WorkspaceConfig;
+    manifest: CloudManifest;
+    trackedFiles: TrackedFile[];
+    meta: MetaJson;
+  } | null> {
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -3091,7 +3126,7 @@ export class SyncEngine {
         savedFiles,
         detached,
       );
-      return;
+      return null;
     }
 
     // Forward-compat: if the cloud manifest has a newer schemaVersion, skip sync
@@ -3099,7 +3134,7 @@ export class SyncEngine {
     const rawSchema = (manifest as unknown as { schemaVersion: number }).schemaVersion;
     if (rawSchema > SUPPORTED_MANIFEST_SCHEMA) {
       this.deps.onSchemaVersionTooNew?.(workspaceId, rawSchema);
-      return;
+      return null;
     }
 
     // Detect files that would be silently pruned (tombstone purged while offline)
@@ -3126,18 +3161,24 @@ export class SyncEngine {
       }
     }
 
-    // Adopt new files added by other machines since last sync (before pruning)
-    // Important: must run BEFORE pruneTrackingFromManifest so renamedFrom detection can
-    // find the old entry while it still exists in cfg.files.
-    await this.adoptManifestFilesFromCloud(workspaceId);
-
-    // Reload cfg after adoption (adoptManifestFilesFromCloud saves its own copy)
-    const cfgAfterAdopt = await this.loadCfg();
-    this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
-    await this.saveCfg(cfgAfterAdopt);
+    // Adopting files another machine added, and pruning entries it removed,
+    // changes *what this machine tracks*. No byte moves either way, but the
+    // local tracking list is the user's, so a background pass reports the drift
+    // and leaves it alone; a user-triggered pass applies it as before.
+    if (this.mayMutate("applyTrackingFromCloud")) {
+      // Adopt before pruning: `renamedFrom` detection needs the old entry to
+      // still be in `cfg.files`.
+      await this.adoptManifestFilesFromCloud(workspaceId);
+      // Reload cfg after adoption (adoptManifestFilesFromCloud saves its own copy)
+      const cfgAfterAdopt = await this.loadCfg();
+      this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
+      await this.saveCfg(cfgAfterAdopt);
+    } else {
+      this.reportTrackingDrift(cfg, workspaceId, entry.workspaceNote, manifest);
+    }
 
     if (normalizeWorkspaceSyncState(entry) !== "active") {
-      return;
+      return null;
     }
 
     // Use the fresh config after adopt + prune
@@ -3159,18 +3200,71 @@ export class SyncEngine {
     // cache, eliminating N getMetadata(_meta.json) HTTP round-trips for N tracked files.
     const entInit = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entInit) {
-      return;
+      return null;
     }
-    const metaNow = await this.pullMeta(workspaceId, entInit.metaEtag);
+    const meta = await this.pullMeta(workspaceId, entInit.metaEtag);
 
-    await this.iterateTrackedFiles(
-      cfgSync,
-      workspaceId,
-      manifest,
-      trackedFiles,
-      metaNow,
-      options?.checkOnly === true,
+    return { cfg: cfgSync, manifest, trackedFiles, meta };
+  }
+
+  /**
+   * Report tracking composition that differs from the cloud manifest without
+   * changing it. This is what the detector produces instead of adopting and
+   * pruning on its own; the panel and the notification turn it into a choice.
+   */
+  private reportTrackingDrift(
+    cfg: WorkspaceConfig,
+    workspaceId: string,
+    workspaceNote: string,
+    manifest: CloudManifest,
+  ): void {
+    if (!this.deps.onTrackingDriftDetected) return;
+    const activePaths = new Set(manifest.files.filter((f) => !f.removedAt).map((f) => f.path));
+    const trackedPaths = new Set(
+      cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
     );
+    const toAdopt = [...activePaths].filter((p) => !trackedPaths.has(p));
+    const toPrune = [...trackedPaths].filter((p) => !activePaths.has(p));
+    if (toAdopt.length === 0 && toPrune.length === 0) return;
+    this.deps.onTrackingDriftDetected({ workspaceId, workspaceNote, toAdopt, toPrune });
+  }
+
+  /**
+   * Bring the local tracking list in line with the cloud manifest — the
+   * user-driven half of what the detector only reports.
+   */
+  async applyTrackingFromCloud(workspaceId: string): Promise<void> {
+    this.assertMayMutate("applyTrackingFromCloud");
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const manifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!manifest) return;
+    await this.adoptManifestFilesFromCloud(workspaceId);
+    const cfgAfterAdopt = await this.loadCfg();
+    this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
+    await this.saveCfg(cfgAfterAdopt);
+  }
+
+  async syncWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("syncWorkspace");
+    // v0.7 — opportunistically drain any deferred history snapshots queued by
+    // `historyMode = lazy` since the last sync. Cheap when the queue is empty;
+    // bounded by `historyVersions` per file otherwise. Uploading them is a cloud
+    // write, which is why it lives here and not in the shared prologue.
+    if (this.lazyHistoryQueue.length > 0) {
+      const drained = this.drainLazyHistoryQueue();
+      try {
+        await this.runDeferredHistorySnapshots(drained);
+      } catch (e) {
+        warnLog("syncEngine", `lazy history drain failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const ctx = await this.loadWorkspaceSyncContext(workspaceId);
+    if (!ctx) return;
+    await this.iterateTrackedFiles(ctx.cfg, workspaceId, ctx.manifest, ctx.trackedFiles, ctx.meta, false);
   }
 
   /**
@@ -3290,8 +3384,16 @@ export class SyncEngine {
    * Surface this from auto-triggers when `vscodesync.autoSyncMode` is
    * `check-only` — no file content moves until the user invokes Push/Pull.
    */
+  /**
+   * The divergence detector: reads the manifest, hashes locally, records
+   * `syncStatus`. Writes nothing else — no blob, no manifest, no `_meta`, no
+   * change to which files are tracked. This is the one pass a background source
+   * is allowed to run, so its guarantees have to hold without a checkpoint.
+   */
   async checkWorkspaceStatus(workspaceId: string): Promise<void> {
-    return this.syncWorkspace(workspaceId, { checkOnly: true });
+    const ctx = await this.loadWorkspaceSyncContext(workspaceId);
+    if (!ctx) return;
+    await this.iterateTrackedFiles(ctx.cfg, workspaceId, ctx.manifest, ctx.trackedFiles, ctx.meta, true);
   }
 
   private pruneTrackingFromManifest(cfg: WorkspaceConfig, manifest: CloudManifest): void {

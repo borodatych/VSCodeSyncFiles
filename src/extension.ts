@@ -60,6 +60,7 @@ import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
 import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
+import { wireEngineFactoryRefs } from "./startup/wireEngineFactoryRefs.js";
 import { registerObservers } from "./startup/registerObservers.js";
 import { registerProviderAuthBundle } from "./startup/registerProviderAuthBundle.js";
 import { registerSyncMonitors } from "./startup/registerSyncMonitors.js";
@@ -223,26 +224,12 @@ export function activate(context: vscode.ExtensionContext): void {
     makeEngine,
   });
 
-  const repushDeletedWorkspace: NonNullable<
-    Parameters<typeof engineFactory.setRefs>[0]["repushDeletedWorkspace"]
-  > = async (workspaceId, localRoot, savedEntry, savedFiles) => {
-    await runWithEngine(async (engine) => {
-      await engine.repushWorkspaceToCloud(workspaceId, savedEntry, savedFiles);
-      void vscode.window.showInformationMessage(
-        `VSCodeSync: workspace «${savedEntry.workspaceNote || workspaceId}» восстановлен на облаке.`,
-      );
-    }, localRoot, { trigger: "user" }); // "Залить на облако" in the remote-deletion toast.
-    workspacesTree.invalidateRemoteCache();
-    workspacesTree.refresh();
-    await statusBar.refresh();
-  };
-
-  engineFactory.setRefs({
-    logSyncActivity,
-    logSyncStatsTransfer,
-    logSyncCompression,
-    treeRefresh: () => { workspacesTree.refresh(); },
-    repushDeletedWorkspace,
+  wireEngineFactoryRefs({
+    engineFactory,
+    logRefs: { logSyncActivity, logSyncStatsTransfer, logSyncCompression },
+    runWithEngine,
+    statusBar,
+    workspacesTree,
     mirrorPushedFile: (wId, rel, pt) => { mirrorPushedFile(p2pMirrorRegistry, wId, rel, pt); },
   });
 
