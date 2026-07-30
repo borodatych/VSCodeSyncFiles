@@ -64,12 +64,27 @@ export function formatBulkPushResults(results: readonly PushAllResult[]): string
   const lines: string[] = [];
   lines.push(`VSCodeSync · Bulk Push — ${String(s.okCount)} ok / ${String(s.failCount)} failed`);
   lines.push(`Pushed ${String(s.totalPushed)} file(s) across ${String(results.length)} workspace(s).`);
-  if (s.failCount === 0) return lines.join("\n");
-  lines.push("");
-  lines.push("Failures:");
-  for (const r of results) {
-    if (r.ok) continue;
-    lines.push(`  ✗ ${r.workspaceId}: ${r.error ?? "(no error message)"}`);
+  // Per-file failures are reported even when the workspace itself succeeded:
+  // one unreadable file no longer aborts the workspace, so without this line
+  // the summary would claim success while some files were never sent.
+  const skipped = results.flatMap((r) =>
+    (r.failedFiles ?? []).map((f) => ({ workspaceId: r.workspaceId, ...f })),
+  );
+  if (s.failCount === 0 && skipped.length === 0) return lines.join("\n");
+  if (s.failCount > 0) {
+    lines.push("");
+    lines.push("Failures:");
+    for (const r of results) {
+      if (r.ok) continue;
+      lines.push(`  ✗ ${r.workspaceId}: ${r.error ?? "(no error message)"}`);
+    }
+  }
+  if (skipped.length > 0) {
+    lines.push("");
+    lines.push(`Skipped files (${String(skipped.length)}):`);
+    for (const f of skipped) {
+      lines.push(`  ! ${f.workspaceId} · ${f.posixRel}: ${f.error}`);
+    }
   }
   return lines.join("\n");
 }

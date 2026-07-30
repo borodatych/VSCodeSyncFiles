@@ -109,6 +109,22 @@ export const STALE_MANIFEST_EDITING_LOCK_MS = STALE_MANIFEST_EDITING_LOCK_MS_DEF
  * elsewhere and local detach is correct, whereas a corrupt body means we simply
  * do not know, and destroying local tracking over it is never right.
  */
+/**
+ * Operation denied by a workspace-level rule, not by anything about the file.
+ *
+ * Suspend / freeze, a machine still awaiting approval, a read-only secondary
+ * window — these apply to every file of the workspace equally. `pushAll`
+ * isolates *per-file* failures so one unreadable file cannot abort the rest;
+ * without this type a policy denial would be recorded once per file and the
+ * workspace would still report success.
+ */
+export class WorkspacePolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspacePolicyError";
+  }
+}
+
 export class ManifestCorruptError extends Error {
   constructor(
     readonly workspaceId: string,
@@ -140,6 +156,15 @@ export interface PushAllResult {
   skipped?: "not_active";
   /** When `ok === false` — error message captured from the failing call. */
   error?: string;
+  /**
+   * Files that failed individually while the workspace as a whole succeeded.
+   *
+   * A single unreadable file used to reject the whole workspace: `computeHash`
+   * throws ENOENT for a file deleted from disk since the last sync, the
+   * `parallelLimit` callback rejected, and every remaining file in that
+   * workspace was skipped. One stale entry blocked the entire push.
+   */
+  failedFiles?: { posixRel: string; error: string }[];
 }
 
 /** Progress event surfaced by `pushAll(_, onProgress)`. Two events per workspace. */
@@ -625,10 +650,10 @@ export class SyncEngine {
     }
     const st = normalizeWorkspaceSyncState(entry);
     if (st === "suspended") {
-      throw new Error("Workspace в режиме Suspend: загрузка и выгрузка файлов отключены.");
+      throw new WorkspacePolicyError("Workspace в режиме Suspend: загрузка и выгрузка файлов отключены.");
     }
     if (st === "frozen") {
-      throw new Error("Workspace заморожен (Freeze): операции с файлами отключены.");
+      throw new WorkspacePolicyError("Workspace заморожен (Freeze): операции с файлами отключены.");
     }
   }
 
@@ -646,12 +671,12 @@ export class SyncEngine {
     }
     const st = await this.getSelfMachineStatusInManifest(workspaceId);
     if (st === "pending") {
-      throw new Error(
+      throw new WorkspacePolicyError(
         "Workspace: эта машина ожидает подтверждения в манифесте — отправка и изменение состава файлов отключены (выполните Pull или дождитесь одобрения на другой машине).",
       );
     }
     if (st === "blocked") {
-      throw new Error("Workspace: машина заблокирована в манифесте — запись отключена.");
+      throw new WorkspacePolicyError("Workspace: машина заблокирована в манифесте — запись отключена.");
     }
   }
 
@@ -3491,20 +3516,37 @@ export class SyncEngine {
           return;
         }
         const dirtyFiles = c2.files.filter((x) => x.workspaceId === id && x.syncStatus !== "conflict");
+        const failedFiles: { posixRel: string; error: string }[] = [];
         await this.withBatchedCfgWrites(c2, async () => {
           await parallelLimit(
             dirtyFiles,
             async (f) => {
-              const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
-              if (localHash !== f.localHash) {
-                await this.pushFile(c2, id, f.localPath, entry);
-                pushedFiles++;
+              // Per-file isolation: one unreadable or vanished file must not
+              // abort the other files of the same workspace.
+              try {
+                const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
+                if (localHash !== f.localHash) {
+                  await this.pushFile(c2, id, f.localPath, entry);
+                  pushedFiles++;
+                }
+              } catch (e: unknown) {
+                // A workspace-level denial applies to every file equally —
+                // recording it per file would let the workspace report success.
+                if (e instanceof WorkspacePolicyError) throw e;
+                const reason = e instanceof Error ? e.message : String(e);
+                warnLog("syncEngine", `pushAll: ${f.localPath} пропущен — ${reason}`);
+                failedFiles.push({ posixRel: f.localPath, error: reason });
               }
             },
             { concurrency: fileConcurrency },
           );
         });
-        results[idx] = { workspaceId: id, ok: true, pushedFiles };
+        results[idx] = {
+          workspaceId: id,
+          ok: true,
+          pushedFiles,
+          ...(failedFiles.length > 0 ? { failedFiles } : {}),
+        };
         onProgress?.({
           kind: "workspace_finished",
           workspaceId: id,
