@@ -12,6 +12,7 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { EXTENSION_ID } from "../core/extensionIdentity.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
@@ -300,7 +301,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
         `${JSON.stringify(redacted, null, 2)}\n`, "utf8");
 
       // Manifest.
-      const extPkg = vscode.extensions.getExtension("borodatych.vscodesyncfiles")?.packageJSON as
+      const extPkg = vscode.extensions.getExtension(EXTENSION_ID)?.packageJSON as
         | { version?: string }
         | undefined;
       const manifest = buildSupportBundleManifest({

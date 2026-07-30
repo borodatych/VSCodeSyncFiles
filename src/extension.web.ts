@@ -12,6 +12,7 @@
  *  - Git extension integration stub (branch detection best-effort)
  */
 import * as vscode from "vscode";
+import { EXTENSION_ID } from "./core/extensionIdentity.js";
 
 import { WEB_STUB_COMMAND_IDS } from "./webStubCommands.generated.js";
 
@@ -26,7 +27,8 @@ const WEB_MSG =
  *
  * Redirect URI to register in provider consoles:
  *   vscode://<publisher>.<extensionName>/oauth-callback
- *   e.g.  vscode://vscodesync.vscodesync/oauth-callback
+ *   i.e.  vscode://borodatych.vscodesyncfiles/oauth-callback
+ *         (built at runtime by `buildWebOAuthRedirectUri` from EXTENSION_ID)
  *
  * Flows supported:
  *  - OneDrive: Authorization code + PKCE (state parameter)
@@ -101,8 +103,7 @@ export async function webOAuthGetCode(
  * Format: vscode://<publisher>.<name>/oauth-callback
  */
 export function buildWebOAuthRedirectUri(): string {
-  const EXT_ID = "borodatych.vscodesyncfiles";
-  const ext = vscode.extensions.getExtension(EXT_ID);
+  const ext = vscode.extensions.getExtension(EXTENSION_ID);
   const pkg = ext?.packageJSON as { publisher?: string; name?: string } | undefined;
   const publisher = pkg?.publisher ?? "borodatych";
   const name = pkg?.name ?? "vscodesyncfiles";

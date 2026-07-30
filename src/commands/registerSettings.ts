@@ -10,6 +10,7 @@
  * interface; no module-level state.
  */
 import * as vscode from "vscode";
+import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
@@ -54,7 +55,7 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
     }),
 
     vscode.commands.registerCommand("vscodesync.openSyncSettings", async () => {
-      await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:vscodesync.vscodesync");
+      await vscode.commands.executeCommand("workbench.action.openSettings", EXTENSION_SETTINGS_QUERY);
     }),
 
     vscode.commands.registerCommand("vscodesync.toggleTelemetry", async () => {

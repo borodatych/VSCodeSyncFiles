@@ -49,7 +49,7 @@ describe("webPowerMonitorStub contract", () => {
 
 describe("web OAuth URL parsing", () => {
   it("extracts code and state from redirect URI query string", () => {
-    const redirectUri = "vscode://vscodesync.vscodesync/oauth-callback?code=AUTH_CODE_123&state=MY_STATE";
+    const redirectUri = "vscode://borodatych.vscodesyncfiles/oauth-callback?code=AUTH_CODE_123&state=MY_STATE";
     const url = new URL(redirectUri);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
@@ -58,7 +58,7 @@ describe("web OAuth URL parsing", () => {
   });
 
   it("detects error parameter in redirect", () => {
-    const redirectUri = "vscode://vscodesync.vscodesync/oauth-callback?error=access_denied&error_description=User+denied";
+    const redirectUri = "vscode://borodatych.vscodesyncfiles/oauth-callback?error=access_denied&error_description=User+denied";
     const url = new URL(redirectUri);
     const err = url.searchParams.get("error_description") ?? url.searchParams.get("error");
     expect(err).toBe("User denied");

@@ -3,6 +3,7 @@
  * Настройки разбиты по разделам; изменения применяются сразу через VS Code API.
  */
 import * as vscode from "vscode";
+import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 
 const CFG = "vscodesync";
@@ -74,7 +75,7 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           if (msg.type === "openNative") {
             await vscode.commands.executeCommand(
               "workbench.action.openSettings",
-              `@ext:vscodesync.vscodesync`,
+              EXTENSION_SETTINGS_QUERY,
             );
           }
           if (msg.type === "runCommand" && msg.key) {

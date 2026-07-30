@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import type { ProviderType, WorkspaceConfig } from "../core/types.js";
+import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
@@ -525,7 +526,7 @@ export class SyncStatusBarController implements vscode.Disposable {
 
     await vscode.window.showInformationMessage(lines.join("\n"), "Открыть настройки").then((choice) => {
       if (choice === "Открыть настройки") {
-        void vscode.commands.executeCommand("workbench.action.openSettings", "@ext:vscodesync.vscodesync");
+        void vscode.commands.executeCommand("workbench.action.openSettings", EXTENSION_SETTINGS_QUERY);
       }
     });
   }
