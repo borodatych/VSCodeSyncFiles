@@ -176,6 +176,19 @@ export interface SyncEngineDeps {
    */
   encrypt?: (buf: Buffer) => Buffer;
   /**
+   * True when the user has turned encryption on.
+   *
+   * `encrypt`/`decrypt` being optional used to mean that an engine built
+   * without them worked happily in plaintext. That is precisely what happened:
+   * the key reached only 7 of 24 construction sites, and every automatic
+   * trigger built its engine without one. With encryption enabled that engine
+   * uploaded plaintext over encrypted blobs (recording a valid `_meta.hash`, so
+   * nothing ever corrected it) and wrote ciphertext straight over the user's
+   * local file on pull. This flag lets the engine tell "encryption is off" from
+   * "encryption is on and the key is missing" and refuse the latter.
+   */
+  encryptionRequired?: boolean;
+  /**
    * Optional E2E decryption applied after download and before writing locally.
    * Must be the inverse of `encrypt`.
    */
@@ -3529,6 +3542,7 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean },
   ): Promise<void> {
+    this.assertEncryptionReady();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const ent =
       entry ?? (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -3801,7 +3815,25 @@ export class SyncEngine {
     });
   }
 
+  /**
+   * Refuse any blob operation when encryption is switched on but no key reached
+   * this engine. Silently falling back to plaintext is the worst of the three
+   * possible outcomes: on push it puts readable content into the cloud over
+   * encrypted blobs *and* records a matching `_meta.hash`, so nothing ever
+   * notices; on pull it overwrites the user's file with ciphertext.
+   */
+  private assertEncryptionReady(): void {
+    if (this.deps.encryptionRequired !== true) return;
+    if (this.deps.encrypt !== undefined && this.deps.decrypt !== undefined) return;
+    throw new Error(
+      "VSCodeSync: шифрование включено, но ключ недоступен для этой операции. " +
+        "Операция отменена, чтобы не залить открытый текст в облако и не перезаписать файл шифротекстом. " +
+        "Проверьте команду «VSCodeSync: Encryption Key» и повторите.",
+    );
+  }
+
   private async pushBlobRaw(cloudPath: string, abs: string): Promise<void> {
+    this.assertEncryptionReady();
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const buf = await fs.readFile(abs);
     await this.deps.provider.uploadFile(cloudPath, buf);
@@ -3901,6 +3933,7 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     metaIn?: MetaJson,
   ): Promise<"updated" | "already_current"> {
+    this.assertEncryptionReady();
     return runWithSyncFileLock(this.deps.workspaceRoot, posixRel, "pull", async () => {
     return this.withInFlightOp(workspaceId, posixRel, async () => {
     await this.ensureWorkspaceNotSuspendedNorFrozen(workspaceId);

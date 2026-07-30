@@ -42,7 +42,6 @@ export interface DiagnosticsCommandsDeps {
   /** Auth-aware lookup of the active provider; returns null when not signed in. */
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
   /** Encryption key resolver; returns null when encryption is off. */
-  getEncKey: () => Promise<Buffer | null>;
   /** Engine factory used by Health Check to run targeted ops without going
    * through the full `runWithEngine` flow. */
   makeEngine: (
@@ -50,7 +49,6 @@ export interface DiagnosticsCommandsDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
   /** Open VS Code folder list — usually `vscode.workspace.workspaceFolders ?? []`. */
   roots: () => readonly vscode.WorkspaceFolder[];
@@ -69,7 +67,6 @@ export function registerDiagnosticsCommands(
     healthCheckChannel,
     refreshWorkspaceInstanceLock,
     tryAuthenticatedProvider,
-    getEncKey,
     makeEngine,
     roots,
     profileBuffer,
@@ -109,7 +106,6 @@ export function registerDiagnosticsCommands(
       }
       const provider = await tryAuthenticatedProvider();
       const gcData = await globalConfig.load();
-      const encKey = await getEncKey();
       const report = await buildHealthCheckReport({
         workspaceFolders: folders,
         globalConfig,
@@ -117,7 +113,7 @@ export function registerDiagnosticsCommands(
         provider,
         machineId: gcData.machineId,
         machineName: gcData.machineName,
-        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, encKey),
+        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName),
         offlineQueue: offlineQueueStore,
         scheduleDeferred: scheduleDeferredStore,
       });
@@ -155,7 +151,7 @@ export function registerDiagnosticsCommands(
         let total = 0;
         for (const t of report.staleLockTargets) {
           try {
-            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, encKey);
+            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName);
             total += await eng.clearStaleManifestEditingLocks(t.workspaceId);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);

@@ -76,14 +76,28 @@ export interface EngineFactoryRefs {
   mirrorPushedFile?: (workspaceId: string, posixRel: string, plaintext: Buffer) => void;
 }
 
+export interface EngineFactoryDeps {
+  /** Active encryption key, or null when `vscodesync.encryption` is off. */
+  getEncKey: () => Promise<Buffer | null>;
+}
+
 export interface EngineFactory {
   readonly makeEngine: (
     workspaceRoot: string,
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
+  /**
+   * Re-read the encryption key into the factory cache. Must be awaited during
+   * activation and after anything that changes the key or the setting.
+   *
+   * The key used to be an optional fifth argument of `makeEngine`, and 17 of
+   * the 24 construction sites simply did not pass it — six of them could not,
+   * the parameter was missing from their dependency type. Owning the key here
+   * removes the choice from the call site entirely.
+   */
+  readonly refreshEncryptionKey: () => Promise<void>;
   readonly setRefs: (refs: EngineFactoryRefs) => void;
   /** Shared with `registerConflictsCommands` — bundle clears entries on resolve. */
   readonly notifiedConflictKeys: Set<string>;
@@ -134,7 +148,14 @@ function makeOnFilePulledCallback(): (
   };
 }
 
-export function createEngineFactory(): EngineFactory {
+export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFactory {
+  /** Cached encryption key; refreshed via `refreshEncryptionKey`. */
+  let cachedEncKey: Buffer | null = null;
+
+  const refreshEncryptionKey = async (): Promise<void> => {
+    cachedEncKey = await factoryDeps.getEncKey();
+  };
+
   const warnedEncodingIssueKeys = new Set<string>();
   const warnedPreserveLfConflictKeys = new Set<string>();
   const warnedPurgeLostKeys = new Set<string>();
@@ -151,7 +172,6 @@ export function createEngineFactory(): EngineFactory {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ): SyncEngine {
     const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
     const mb = cfg.get<number>("maxFileSizeMB", 5);
@@ -167,7 +187,7 @@ export function createEngineFactory(): EngineFactory {
     const tombstonePurgeDays = cfg.get<number>("tombstonePurgeDays", 30);
     const encryptionOn = cfg.get<boolean>("encryption", false);
     const compressUploads = cfg.get<boolean>("compressUploads", false);
-    const key = encryptionOn && encKey ? encKey : null;
+    const key = encryptionOn ? cachedEncKey : null;
     return new SyncEngine({
       workspaceRoot,
       provider: wrapWithQueue(provider),
@@ -180,6 +200,9 @@ export function createEngineFactory(): EngineFactory {
       localBackupEnabled,
       localBackupRetentionDays,
       tombstonePurgeDays,
+      // `encryptionRequired` lets the engine refuse when the setting is on but
+      // the key is absent, instead of silently working in plaintext.
+      encryptionRequired: encryptionOn,
       encrypt: key ? (buf) => encryptBuffer(key, buf) : undefined,
       decrypt: key ? (buf) => decryptBuffer(key, buf) : undefined,
       onFilePulled: makeOnFilePulledCallback(),
@@ -469,6 +492,7 @@ export function createEngineFactory(): EngineFactory {
 
   return {
     makeEngine,
+    refreshEncryptionKey,
     setRefs(next): void {
       refs = next;
     },

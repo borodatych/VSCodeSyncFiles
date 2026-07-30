@@ -63,13 +63,11 @@ function dirtyFilesForWorkspace(wc: WorkspaceConfig, workspaceId: string) {
 export interface GitBranchAutoActivationDeps {
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
-  getEncKey: () => Promise<Buffer | null>;
   makeEngine: (
     root: string,
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
   offlineQueue?: SyncOfflineQueueStore;
   refreshUi: () => void | Promise<void>;
@@ -108,8 +106,7 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
     return;
   }
   const gc = await deps.globalConfig.load();
-  const encKey = await deps.getEncKey();
-  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, encKey);
+  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
 
   const toSuspend: string[] = [];
   const toActivate: string[] = [];

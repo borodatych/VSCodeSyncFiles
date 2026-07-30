@@ -45,13 +45,11 @@ export interface MachineApprovalNotifierDeps {
   extensionContext: vscode.ExtensionContext;
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
-  getEncKey: () => Promise<Buffer | null>;
   makeEngine: (
     workspaceRoot: string,
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
   startupChannel?: vscode.OutputChannel;
 }
@@ -72,13 +70,12 @@ async function pollOnce(deps: MachineApprovalNotifierDeps): Promise<void> {
   if (!provider) {
     return;
   }
-  const encKey = await deps.getEncKey();
   const folders = vscode.workspace.workspaceFolders ?? [];
 
   for (const folder of folders) {
     const root = folder.uri.fsPath;
     const wc = await WorkspaceConfigManager.load(root);
-    const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, encKey);
+    const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
 
     for (const aw of wc.activeWorkspaces) {
       let machines;

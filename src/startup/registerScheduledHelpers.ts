@@ -38,7 +38,6 @@ import { isAutoSyncBlockedBySchedule } from "../ui/syncScheduleGate.js";
 import { guardPathsBeforeAdd } from "../ui/syncGuards.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { readOneDriveTokenBundle } from "../providers/onedrive/onedriveProvider.js";
-import { readEncryptionKey } from "../core/encryptionKey.js";
 import { classifyExpiry, formatExpiryHint } from "../core/tokenExpiryHints.js";
 import { verboseLog } from "../utils/log.js";
 
@@ -57,9 +56,7 @@ export interface ScheduledHelpersDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
-  getEncKey: () => Promise<Buffer | null>;
 }
 
 export interface ScheduledHelpersHandle {
@@ -76,7 +73,6 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
     fileDecorations,
     scheduleDeferredStore,
     makeEngine,
-    getEncKey,
   } = deps;
 
   const startupChannel = vscode.window.createOutputChannel("VSCodeSync · Startup");
@@ -258,8 +254,7 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         throw new Error("Нет авторизованного провайдера");
       }
       const gc = await globalConfig.load();
-      const encKey = await getEncKey();
-      const engine = makeEngine(folderRoot, provider, gc.machineId, gc.machineName, encKey);
+      const engine = makeEngine(folderRoot, provider, gc.machineId, gc.machineName);
       const t = gc.activeProvider ?? "onedrive";
       const wid = await engine.createWorkspace(note, t);
       const wc = await WorkspaceConfigManager.load(folderRoot);
@@ -285,8 +280,7 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
         return;
       }
       const gc = await globalConfig.load();
-      const encKey = await getEncKey();
-      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName, encKey);
+      const engine = makeEngine(folderRootFsPath, provider, gc.machineId, gc.machineName);
       statusBar.setSyncing(true);
       try {
         await applyArchivedTagAndSuspend(engine, workspaceId);
@@ -309,10 +303,6 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
     extensionContext: context,
     globalConfig,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    getEncKey: async () =>
-      vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false)
-        ? await readEncryptionKey(context.secrets)
-        : null,
     makeEngine,
     startupChannel,
   });

@@ -55,6 +55,7 @@ import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCre
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
 import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
+import { registerEncryptionKeyRefresh } from "./startup/registerEncryptionKeyRefresh.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
@@ -137,7 +138,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const activityAlertMonitor = new ActivityAlertMonitor(context);
   context.subscriptions.push(activityAlertMonitor);
 
-  const engineFactory = createEngineFactory();
+  const getEncKey = async (): Promise<Buffer | null> => {
+    const encOn = vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false);
+    if (!encOn) return null;
+    return readEncryptionKey(context.secrets);
+  };
+
+  const engineFactory = createEngineFactory({ getEncKey });
+
+  registerEncryptionKeyRefresh(context, engineFactory);
   const { makeEngine, notifiedConflictKeys, profileBuffer } = engineFactory;
 
   const { logSyncActivity, logSyncStatsTransfer, logSyncCompression } = createEngineLogRefs({
@@ -205,16 +214,9 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
 
-  const getEncKey = async (): Promise<Buffer | null> => {
-    const encOn = vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false);
-    if (!encOn) return null;
-    return readEncryptionKey(context.secrets);
-  };
-
   const runWithEngine = createRunWithEngine({
     registry,
     globalConfig,
-    getEncKey,
     statusBar,
     workspacesTree,
     fileDecorations,
@@ -264,7 +266,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const gitBranchActivationDeps = {
     globalConfig,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    getEncKey,
     makeEngine,
     offlineQueue: offlineQueueStore,
     refreshUi: async () => {
@@ -377,7 +378,6 @@ export function activate(context: vscode.ExtensionContext): void {
       healthCheckChannel,
       refreshWorkspaceInstanceLock,
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-      getEncKey,
       makeEngine,
       roots, profileBuffer,
     }),
@@ -457,7 +457,6 @@ export function activate(context: vscode.ExtensionContext): void {
     fileDecorations,
     scheduleDeferredStore,
     makeEngine,
-    getEncKey,
   });
 
   startDigestTimer(context);

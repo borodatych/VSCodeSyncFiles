@@ -24,11 +24,15 @@ const EXTENSION_TS = resolve(process.cwd(), "src", "extension.ts");
  *
  * v0.15 bump: 495 → 510. Justification: Phase 21 wiring required 4 new
  * lifecycle subscriptions; consolidated into `registerPhase21Bootstrap`
- * (extraction), but the bootstrap call + import line still net +7 lines. */
-const LOC_CEILING = 510;
+ * (extraction), but the bootstrap call + import line still net +7 lines.
+ *
+ * 1.0.0 tighten: 510 → 505. The encryption-key lifecycle was extracted into
+ * `registerEncryptionKeyRefresh`; the guard caught the growth and the ceiling
+ * follows the extraction down rather than the other way round. */
+const LOC_CEILING = 505;
 
 /** Soft target — when current LoC drops below this, lower the ceiling. */
-const LOC_SOFT_TARGET = 515;
+const LOC_SOFT_TARGET = 500;
 
 describe("src/extension.ts size guard", () => {
   it("stays below the regression ceiling", () => {

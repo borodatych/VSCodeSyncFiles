@@ -25,7 +25,6 @@ import { verboseLog } from "../utils/log.js";
 export interface RunWithEngineDeps {
   registry: ProviderRegistry;
   globalConfig: GlobalConfigManager;
-  getEncKey: () => Promise<Buffer | null>;
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
   fileDecorations: SyncFileDecorationController;
@@ -34,12 +33,11 @@ export interface RunWithEngineDeps {
     provider: import("../providers/cloudProviderTypes.js").ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
   ) => SyncEngine;
 }
 
 export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
-  const { registry, globalConfig, getEncKey, statusBar, workspacesTree, fileDecorations, makeEngine } = deps;
+  const { registry, globalConfig, statusBar, workspacesTree, fileDecorations, makeEngine } = deps;
   let seq = 0;
   return async (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
@@ -58,8 +56,7 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
       return;
     }
     const cfg = await globalConfig.load();
-    const encKey = await getEncKey();
-    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, encKey);
+    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName);
     statusBar.setSyncing(true);
     let failure: unknown;
     try {
