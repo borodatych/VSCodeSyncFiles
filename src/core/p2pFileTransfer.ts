@@ -20,7 +20,9 @@
  *
  * No `vscode` import. SHA-256 via existing `hashProviders.ts`.
  */
+import * as path from "node:path";
 import { createSha256Provider } from "./hashProviders.js";
+import { safePosixRelative } from "./quickTransfer.js";
 
 export const P2P_DEFAULT_CHUNK_SIZE_BYTES = 16 * 1024;
 export const P2P_FILE_CHUNK_HEADER_BYTES = 8;
@@ -115,7 +117,7 @@ export function encodeManifestPayload(manifest: P2PFileManifest): Uint8Array {
 
 export type ManifestDecodeResult =
   | { ok: true; manifest: P2PFileManifest }
-  | { ok: false; reason: "bad_json" | "bad_shape" | "oversized" };
+  | { ok: false; reason: "bad_json" | "bad_shape" | "oversized" | "unsafe_path" };
 
 /** Strict manifest decoder. Mirrors the planner's invariants. */
 export function decodeManifestPayload(payload: Uint8Array): ManifestDecodeResult {
@@ -133,6 +135,17 @@ export function decodeManifestPayload(payload: Uint8Array): ManifestDecodeResult
     return { ok: false, reason: "bad_shape" };
   }
   if (typeof m.relPath !== "string" || m.relPath.length === 0) return { ok: false, reason: "bad_shape" };
+  // `relPath` arrives from the remote peer and is joined onto the workspace
+  // root. Every other field here is validated strictly; this one used to be
+  // "non-empty string", which let `../../../.ssh/authorized_keys` (or an
+  // absolute path) write outside the workspace. Same rule as Quick Transfer's
+  // `safePosixRelative`: no "..", no absolute, no drive letters. The manifest
+  // is rewritten with the normalised form so the writer never sees the raw one.
+  const relSafe = safePosixRelative(m.relPath);
+  if (relSafe === null || path.posix.isAbsolute(m.relPath) || /^[A-Za-z]:/.test(m.relPath)) {
+    return { ok: false, reason: "unsafe_path" };
+  }
+  m.relPath = relSafe;
   if (typeof m.totalChunks !== "number" || !Number.isInteger(m.totalChunks) || m.totalChunks < 1) {
     return { ok: false, reason: "bad_shape" };
   }

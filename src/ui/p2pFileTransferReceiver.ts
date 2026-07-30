@@ -77,7 +77,14 @@ export function attachFileReceiver(
       verboseLog("p2p-receive", `dropped ${manifest.relPath} — workspace not resolved`);
       return;
     }
-    const abs = path.join(root, manifest.relPath);
+    // The decoder already rejects traversal and absolute paths; this is the
+    // last line of defence in case a new manifest source ever skips it. A
+    // network-supplied path never gets to name a file outside the workspace.
+    const abs = path.resolve(root, manifest.relPath);
+    if (!abs.startsWith(path.resolve(root) + path.sep)) {
+      warnLog("p2p-receive", `dropped ${manifest.relPath} — escapes workspace root`);
+      return;
+    }
     const tmp = `${abs}.p2p-tmp-${manifest.transferId.slice(0, 8)}`;
     try {
       await fs.mkdir(path.dirname(abs), { recursive: true });
