@@ -5,6 +5,10 @@ import { warnLog } from "../utils/log.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
+import {
+  binarySkipMessage,
+  shouldAnnounceBinarySkip,
+} from "../core/binarySkipNotice.js";
 import { runQuietFullSyncAllFolders, type QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
@@ -113,6 +117,9 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
         const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
         const abs = path.join(root, ...item.rel.split("/"));
         if (warnBin && (await fileLooksBinary(abs))) {
+          if (shouldAnnounceBinarySkip(root, item.rel)) {
+            void vscode.window.showWarningMessage(binarySkipMessage(item.rel));
+          }
           continue;
         }
         try {

@@ -20,6 +20,10 @@ import { subscribeSyncFileLock } from "../core/syncFileLock.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
+import {
+  binarySkipMessage,
+  shouldAnnounceBinarySkip,
+} from "../core/binarySkipNotice.js";
 import type { SyncStatusBarController } from "./statusBar.js";
 import { runQuietFullSyncAllFolders } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
@@ -267,6 +271,11 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
     const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
     const abs = path.join(root, ...rel.split("/"));
     if (warnBin && (await fileLooksBinary(abs))) {
+      // Silence here used to mean the file was never pushed by automation and
+      // the user had no way to find out.
+      if (shouldAnnounceBinarySkip(root, rel)) {
+        void vscode.window.showWarningMessage(binarySkipMessage(rel));
+      }
       return;
     }
     await withEngine(
@@ -692,6 +701,9 @@ async function maybePushCommittedFilesForFolder(
       continue;
     }
     if (warnOnBinary && (await fileLooksBinary(abs))) {
+      if (shouldAnnounceBinarySkip(workspaceFolderRoot, relW)) {
+        void vscode.window.showWarningMessage(binarySkipMessage(relW));
+      }
       continue;
     }
     trackedToPush.push({ relW, wsId: fe.workspaceId });
