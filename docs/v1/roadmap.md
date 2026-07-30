@@ -32,8 +32,52 @@
 | 23 | [Finish & polish](23-finish-and-polish/roadmap.md) (v0.17 → v0.18) | A1–A13 bug fixes, D01–D06 wiring (provider hash verify, quota banner, withRetry, exportSbom, vscode tasks, trusted teammates), N16–N21 helpers + W1–W6 wiring (invite link commands, connectivity probe widget, schema migrator hook, adaptive concurrency in engine, .vscodesyncrc.json watcher, registry memoisation). Финальная фаза текущей серии v1. | `[x]` |
 | 24 | [Audit pass 2026-05-21](24-audit-pass-2026-05-21/roadmap.md) (v0.8) | A1–A3 закрыты до фазы (pull rollback fix). B1–B9 баг-фиксы (deleteBlob, fetch timeouts, dropbox 304, watch poller try/catch, manifest tie-break), U1–U5 UX (keybindings when, command palette cleanup, undo для destructive, single-click auto-mode switch). F1–F8 модные фичи (Smart Pull Digest, cursor-style presence, diff-on-hover, bulk pull, adaptive mode, sync rewind, Telegram digest, "go home"-flow). M1–M5 modern bonus (CDC, S3, BLAKE3 write-path, passkey-only, GH Releases). | `[ ]` |
 
+| 25 | **Стабилизация 1.0.0** (аудит 2026-07-30) | Полный многоагентный аудит: 130 подтверждённых находок + 8 от критика полноты. Семь этапов — см. секцию ниже. Детальный документ: `.cursor/plans/stabilization100.plan.md` | `[~]` |
+
 **Стратегические направления v2:** см. [`docs/v2/roadmap.md`](../v2/roadmap.md)
 (WebRTC P2P sync, Passkey unlock, WASM zstd+BLAKE3, cross-cloud backup mirror, декомпозиция `extension.ts`). Конкретные шаги завершения — в Phase 17 выше.
+
+---
+
+## Фаза 25 — стабилизация 1.0.0 (аудит 2026-07-30)
+
+Инвариант, ради которого затевается фаза: **расширение изменяет содержимое файлов —
+локально или в облаке — только непосредственно в ответ на явное действие пользователя.**
+Всё остальное — чтение и индикация.
+
+- [x] **Этап 0. Инструменты и сетка безопасности** — ✅ (2026-07-30, ветка `next`)
+  - [x] Сырые невидимые байты в исходниках заменены на escape-запись: NUL в 4 файлах,
+        U+0001 в 2, U+E000 в 1. Из-за NUL git считал `syncEngine.ts` бинарным — `grep`
+        без `-a` не находил в нём **ничего**, а `text=auto` не нормализовал переводы строк.
+  - [x] `.gitattributes` (`* text=auto eol=lf`) + нормализация дерева: было 312 «изменённых»
+        файлов с 52811 идентичными строками и нулём реальных правок.
+  - [x] Единый источник правды для id расширения (`src/core/extensionIdentity.ts`).
+        В трёх местах UI стоял мёртвый `vscodesync.vscodesync` — «Открыть настройки»
+        показывала пустой список.
+  - [x] `npm run verify` = typecheck + lint + compile + verify:web + test. Раньше
+        `tsc --noEmit` не запускался ни одним скриптом, `verify:web` не вызывался нигде.
+  - [x] Интеграционный тест впервые проходит: исправлен id расширения,
+        `@vscode/test-electron` 2.5.2 → 3.1.0 (2.x искала бинарь по пути
+        `Contents/MacOS/Electron`, VS Code 1.110+ кладёт его как `Contents/MacOS/Code`).
+  - [x] CI: `verify` на трёх ОС, `test:integration` под xvfb, запуск на `next` и на PR.
+  - [x] Гейты консистентности: настройки ↔ код, `affectsConfiguration` ↔ схема,
+        nls en ↔ ru, дефолты README ↔ схема (нашлось 7 расхождений, худшее —
+        `gitBranchAutoSync` документировался как `false` при фактическом `true`).
+  - [x] `vscodesync.tombstonePurgeDays` объявлена и проведена в deps движка.
+  - [x] Support bundle пишет все 7 заявленных файлов вместо 2 и все 98 настроек
+        вместо 9; добавлен `runtime-state.json` со снимком очередей и файловых локов.
+- [ ] **Этап 1. Зависания** — таймаут на чтение тела ответа, дефолты очереди запросов,
+      дедлайн и TTL файлового лока, разделение очередей триггеров, сквозной `AbortSignal`.
+- [ ] **Этап 2. Корректность push/pull** — ключ шифрования во все 17 мест создания движка,
+      хэш облачной версии через decrypt+gunzip, единый владелец конфига воркспейса,
+      `.gz`-осведомлённые пути, единый резолвер tracked-пути.
+- [ ] **Этап 3. Политика «ничего без спроса»** — `mutationPolicy` как единственный чекпоинт,
+      фон только как детектор расхождений, панель «Расхождения», миграция настроек.
+- [ ] **Этап 4. Провайдеры** — классификатор HTTP-статуса, мьютекс refresh, Яндекс на
+      code+PKCE, квоты и троттлинг.
+- [ ] **Этап 5. Рефакторинг ядра** — `syncEngine.ts` 4157 строк → оркестратор < 600 строк
+      плюс слои `plan/` и `io/`.
+- [ ] **Этап 6. Поверхность и релиз** — сокращение палитры, документация, версия 1.0.0.
 
 ---
 
