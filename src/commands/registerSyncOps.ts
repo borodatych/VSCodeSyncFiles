@@ -13,6 +13,7 @@ import * as nodePath from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { pickRoot, pickWorkspaceId } from "./_shared.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+import { summarisePushForToast } from "../core/bulkPushWizard.js";
 
 export interface SyncOpsCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -24,8 +25,8 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
   return [
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
       await runWithEngine(async (engine) => {
-        await engine.pushAll();
-        void vscode.window.showInformationMessage("Push all: готово.");
+        const results = await engine.pushAll();
+        void vscode.window.showInformationMessage(summarisePushForToast("Push all", results));
       });
     }),
 
@@ -382,8 +383,8 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
         return;
       }
       await runWithEngine(async (engine) => {
-        await engine.pushAll(ws);
-        void vscode.window.showInformationMessage("Push workspace: готово.");
+        const results = await engine.pushAll(ws);
+        void vscode.window.showInformationMessage(summarisePushForToast("Push workspace", results));
       });
     }),
 

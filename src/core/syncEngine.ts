@@ -1019,6 +1019,7 @@ export class SyncEngine {
       if (cfg.files.some((f) => f.workspaceId === workspaceId && f.localPath === posixRel)) {
         continue;
       }
+      const wireGzip = meta.files[posixRel]?.wireGzip === true;
       // Detect rename: if manifest says this file was renamed from another path,
       // update the existing entry instead of registering a duplicate.
       if (mf.renamedFrom) {
@@ -1029,20 +1030,26 @@ export class SyncEngine {
           cfg.files[oldIdx] = {
             ...cfg.files[oldIdx],
             localPath: posixRel,
-            cloudPath: trackedFileCloudPath(workspaceId, posixRel),
+            cloudPath: blobCloudPath(workspaceId, posixRel, wireGzip),
             localHash: meta.files[posixRel]?.hash ?? "",
           };
           changed = true;
           continue;
         }
       }
+      // A file adopted from someone else's manifest exists in the cloud, not
+      // necessarily on this disk. It used to be registered as `syncStatus: "ok"`
+      // with the *cloud* hash written into `localHash` — so it looked already
+      // synced and nothing ever pulled it, while its `cloudPath` was built
+      // without the `.gz` suffix and pointed at nothing for compressed blobs.
+      const localExists = await fileExists(this.localAbs(cfg, posixRel));
       cfg.files.push({
         localPath: posixRel,
         workspaceId,
-        cloudPath: trackedFileCloudPath(workspaceId, posixRel),
+        cloudPath: blobCloudPath(workspaceId, posixRel, wireGzip),
         lastSync: stamp,
-        localHash: meta.files[posixRel]?.hash ?? "",
-        syncStatus: "ok",
+        localHash: localExists ? (meta.files[posixRel]?.hash ?? "") : "",
+        syncStatus: localExists ? "ok" : "cloud_newer",
       });
       changed = true;
     }

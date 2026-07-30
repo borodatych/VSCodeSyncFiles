@@ -59,6 +59,30 @@ export function summariseBulkPushResults(results: readonly PushAllResult[]): Bul
   return { okCount, failCount, totalPushed, failedWorkspaceIds };
 }
 
+/**
+ * One-line outcome for a toast.
+ *
+ * The commands used to announce a flat "Push …: готово." regardless of what
+ * happened: zero files sent, files skipped, whole workspaces failed — all read
+ * as success, which is exactly the "it says done but nothing was uploaded"
+ * complaint.
+ */
+export function summarisePushForToast(
+  label: string,
+  results: readonly PushAllResult[],
+): string {
+  const pushed = results.reduce((n, r) => n + r.pushedFiles, 0);
+  const failedWorkspaces = results.filter((r) => !r.ok).length;
+  const skippedFiles = results.reduce((n, r) => n + (r.failedFiles?.length ?? 0), 0);
+
+  const parts: string[] = [];
+  parts.push(pushed > 0 ? `отправлено файлов: ${String(pushed)}` : "отправлять было нечего");
+  if (skippedFiles > 0) parts.push(`пропущено файлов: ${String(skippedFiles)}`);
+  if (failedWorkspaces > 0) parts.push(`ошибок в папках: ${String(failedWorkspaces)}`);
+  const tail = skippedFiles > 0 || failedWorkspaces > 0 ? " Подробности — в канале Diagnostics." : "";
+  return `${label}: ${parts.join(", ")}.${tail}`;
+}
+
 export function formatBulkPushResults(results: readonly PushAllResult[]): string {
   const s = summariseBulkPushResults(results);
   const lines: string[] = [];
