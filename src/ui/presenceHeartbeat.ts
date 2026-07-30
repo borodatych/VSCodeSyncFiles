@@ -7,7 +7,6 @@
  * 5 (responsive, ~12 req/h), 15 (lightweight). Below 1 minute is rejected.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
@@ -21,6 +20,7 @@ import {
   type CurrentEditingFrame,
   type CurrentEditingMode,
 } from "../core/presenceCurrentEditing.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 export interface PresenceHeartbeatDeps {
   globalConfig: GlobalConfigManager;
@@ -38,7 +38,8 @@ async function resolveActiveTrackedFile(): Promise<{ workspaceId: string; relPat
   if (editor?.document.uri.scheme !== "file") return null;
   const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
   if (!folder) return null;
-  const rel = path.relative(folder.uri.fsPath, editor.document.uri.fsPath).split(path.sep).join("/");
+  const rel = await trackedPosixRelFor(folder.uri.fsPath, editor.document.uri.fsPath);
+  if (rel === undefined) return null;
   if (!rel || rel.startsWith("..")) return null;
   const wc = await WorkspaceConfigManager.load(folder.uri.fsPath).catch(() => null);
   if (!wc) return null;

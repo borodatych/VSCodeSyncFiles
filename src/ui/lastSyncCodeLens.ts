@@ -4,8 +4,8 @@
  * the engine already keeps. Disabled by setting `vscodesync.codeLens.enabled`.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 function relativeAge(iso: string | undefined): string {
   if (!iso) return "never";
@@ -41,7 +41,8 @@ export class SyncLastSyncCodeLensProvider implements vscode.CodeLensProvider, vs
     } catch {
       return [];
     }
-    const rel = path.relative(folder.uri.fsPath, document.uri.fsPath).split(path.sep).join("/");
+    const rel = await trackedPosixRelFor(folder.uri.fsPath, document.uri.fsPath);
+    if (rel === undefined) return [];
     const tf = wc.files.find((f) => f.localPath === rel);
     if (!tf) return [];
 

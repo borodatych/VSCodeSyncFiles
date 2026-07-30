@@ -1,5 +1,7 @@
 /**
- * Keeps the engine factory's encryption key current.
+ * Wiring for the cross-cutting services that must exist before any command,
+ * trigger or panel runs: the encryption key the engine factory owns, and the
+ * single resolver for absolute <-> tracked-posix path conversions.
  *
  * The key used to be an optional fifth argument of `makeEngine`, and 17 of the
  * 24 construction sites never passed it — six of them could not, the parameter
@@ -11,11 +13,19 @@
 import * as vscode from "vscode";
 import type { EngineFactory } from "./_engineFactory.js";
 import { CONFIG_SECTION } from "../core/extensionIdentity.js";
+import type { GlobalConfigManager } from "../core/globalConfigManager.js";
+import { setTrackedPathMachineNameProvider } from "../core/trackedPathResolver.js";
 
-export function registerEncryptionKeyRefresh(
+export function registerCoreServices(
   context: vscode.ExtensionContext,
   engineFactory: EngineFactory,
+  globalConfig: GlobalConfigManager,
 ): void {
+  // One resolver for absolute <-> tracked-posix conversions. Hand-rolled
+  // `path.join` / `path.relative` at a call site ignores `pathMapping`, and a
+  // tracked file then reads as "not in sync".
+  setTrackedPathMachineNameProvider(async () => (await globalConfig.load()).machineName);
+
   // Prime the cache before any engine exists. The engine refuses blob work
   // while encryption is on and the key is missing, so the brief window before
   // this first read resolves fails loudly instead of writing plaintext.

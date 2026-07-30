@@ -55,7 +55,7 @@ import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCre
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
 import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
-import { registerEncryptionKeyRefresh } from "./startup/registerEncryptionKeyRefresh.js";
+import { registerCoreServices } from "./startup/registerCoreServices.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const engineFactory = createEngineFactory({ getEncKey });
 
-  registerEncryptionKeyRefresh(context, engineFactory);
+  registerCoreServices(context, engineFactory, globalConfig);
   const { makeEngine, notifiedConflictKeys, profileBuffer } = engineFactory;
 
   const { logSyncActivity, logSyncStatsTransfer, logSyncCompression } = createEngineLogRefs({
