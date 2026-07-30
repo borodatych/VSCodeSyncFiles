@@ -36,7 +36,7 @@ export async function flushScheduleDeferredQueue(
 
   const hadFull = snapshot.some((i) => i.kind === "fullSync");
   if (hadFull) {
-    await runQuietFullSyncAllFolders({ ...deps, trigger: "auto" });
+    await runQuietFullSyncAllFolders(deps);
     void vscode.window.showInformationMessage("VSCodeSync: выполнены отложенные синхронизации (полный sync).");
     return;
   }
@@ -55,7 +55,7 @@ export async function flushScheduleDeferredQueue(
   try {
     for (const item of fileOps) {
       const root = item.root;
-      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, "auto");
+      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, deps.trigger);
       const cfg = await WorkspaceConfigManager.load(root);
       const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === item.workspaceId);
       if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {

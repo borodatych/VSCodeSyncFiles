@@ -26,7 +26,13 @@ const CFG = "vscodesync";
 export type OfflineFlushDeps = QuietFullSyncAllFoldersDeps;
 
 /**
- * Drain and execute persisted offline queue after transport recovers.
+ * Drain and execute the persisted offline queue.
+ *
+ * Since B2 this is a *user* action: the recovery monitor only counts pending
+ * items and offers a notification, and the deps carry `trigger: "user"` from
+ * the button press. The rate-limit and schedule gates below apply to what is
+ * still an automatic environment signal (they stop a user click from landing
+ * into a rate-limited provider), but nothing calls this on a timer any more.
  */
 export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: OfflineFlushDeps): Promise<void> {
   if (!vscode.workspace.isTrusted) {
@@ -47,10 +53,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
   const hadFull = snapshot.some((i) => i.kind === "fullSync");
   if (hadFull) {
-    await runQuietFullSyncAllFolders({
-      ...deps,
-      trigger: "auto",
-    });
+    await runQuietFullSyncAllFolders(deps);
   }
 
   const tail = snapshot.filter((i) => i.kind !== "fullSync");
@@ -100,7 +103,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
     for (let opIx = 0; opIx < fileOps.length; opIx += 1) {
       const item = fileOps[opIx];
       const root = item.root;
-      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, "auto");
+      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, deps.trigger);
       const cfg = await WorkspaceConfigManager.load(root);
       const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === item.workspaceId);
       if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {

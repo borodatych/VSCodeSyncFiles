@@ -11,15 +11,39 @@ export interface RegisterSyncScheduleTransitionOpts {
 }
 
 /**
- * Detects transition from "outside syncSchedule window" → inside and flushes deferred queue.
+ * Detects the "outside syncSchedule window" → inside transition and *offers*
+ * the deferred queue (B3). The window opening used to be the trigger for a
+ * silent flush — scheduling delayed the sync instead of requiring consent for
+ * it. Now the transition produces one notification; the flush itself runs with
+ * `trigger: "user"` from the button.
  */
 export function registerSyncScheduleTransition(context: vscode.ExtensionContext, opts: RegisterSyncScheduleTransitionOpts): void {
   let wasBlocked = isAutoSyncBlockedBySchedule();
 
+  const offer = async (): Promise<void> => {
+    const n = await opts.store.totalPending();
+    if (n === 0) {
+      return;
+    }
+    const picked = await vscode.window.showInformationMessage(
+      `VSCodeSync: окно расписания открылось, отложенных операций: ${String(n)}.`,
+      "Выполнить",
+      "Очистить",
+    );
+    if (picked === "Выполнить") {
+      await flushScheduleDeferredQueue(opts.store, { ...opts.flushDeps, trigger: "user" });
+    } else if (picked === "Очистить") {
+      const dropped = await opts.store.drainSnapshot();
+      void vscode.window.showInformationMessage(
+        `VSCodeSync: очередь расписания очищена (${String(dropped.length)} операций). Файлы на диске не тронуты.`,
+      );
+    }
+  };
+
   const poll = (): void => {
     const blocked = isAutoSyncBlockedBySchedule();
     if (wasBlocked && !blocked) {
-      void flushScheduleDeferredQueue(opts.store, opts.flushDeps).catch(() => {
+      void offer().catch(() => {
         /* logged by VS Code notification paths */
       });
     }
