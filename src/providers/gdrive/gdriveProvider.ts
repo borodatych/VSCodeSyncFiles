@@ -516,6 +516,7 @@ export class GdriveProvider implements ICloudProvider {
           size: Number.isFinite(sizeNum) ? sizeNum : undefined,
           etag,
           modifiedIso: it.modifiedTime,
+          isFolder: it.mimeType === MIME_FOLDER,
         });
         if (out.length >= HARD_CAP) return out;
       }

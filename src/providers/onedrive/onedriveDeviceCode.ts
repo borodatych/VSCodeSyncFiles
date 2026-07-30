@@ -1,5 +1,9 @@
 import type { SecretStore } from "../../core/types.js";
 import { storeOneDriveTokens } from "./onedriveProvider.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 interface DeviceCodeStart {
   device_code: string;
@@ -38,11 +42,11 @@ async function pollUntilReady(
       client_id: clientId,
       device_code: deviceCode,
     });
-    const tr = await fetch(tokenUrl, {
+    const tr = await fetchWithTimeout(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
-    });
+    }, { channel: "onedrive.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     const j = (await tr.json()) as TokenResponse & { error?: string; error_description?: string };
     if (j.access_token) {
       return j;
@@ -69,14 +73,14 @@ export async function runOneDriveDeviceCodeLogin(
   onUserCode: (verificationUri: string, userCode: string, message: string) => void,
 ): Promise<void> {
   const dcUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode";
-  const startRes = await fetch(dcUrl, {
+  const startRes = await fetchWithTimeout(dcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({
       client_id: clientId,
       scope: "Files.ReadWrite offline_access",
     }),
-  });
+  }, { channel: "onedrive.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   if (!startRes.ok) {
     throw new Error(await startRes.text());
   }

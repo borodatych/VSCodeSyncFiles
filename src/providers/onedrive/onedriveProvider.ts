@@ -383,7 +383,14 @@ export class OneDriveProvider implements ICloudProvider {
         throw new ProviderError("NETWORK_ERROR", await r.text());
       }
       const j = (await r.json()) as {
-        value?: { name?: string; size?: number; eTag?: string; lastModifiedDateTime?: string }[];
+        value?: {
+          name?: string;
+          size?: number;
+          eTag?: string;
+          lastModifiedDateTime?: string;
+          /** Graph marks a folder by carrying this facet at all. */
+          folder?: { childCount?: number };
+        }[];
         "@odata.nextLink"?: string;
       };
       for (const it of j.value ?? []) {
@@ -392,6 +399,7 @@ export class OneDriveProvider implements ICloudProvider {
           size: it.size,
           etag: normalizeEtag(it.eTag ?? null),
           modifiedIso: it.lastModifiedDateTime,
+          isFolder: it.folder !== undefined,
         });
         if (out.length >= HARD_CAP) break;
       }

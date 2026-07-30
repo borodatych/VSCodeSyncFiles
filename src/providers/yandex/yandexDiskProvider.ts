@@ -399,6 +399,7 @@ export class YandexDiskProvider implements ICloudProvider {
           size: it.type === "file" ? it.size : undefined,
           etag: etagFromResource(it),
           modifiedIso: it.modified,
+          isFolder: it.type === "dir",
         });
         if (out.length >= HARD_CAP) break;
       }

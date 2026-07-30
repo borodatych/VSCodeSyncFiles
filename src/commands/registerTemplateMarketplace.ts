@@ -16,6 +16,10 @@ import {
   parseWorkspaceTemplate,
   type WorkspaceTemplateManifest,
 } from "../core/workspaceTemplate.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../providers/_shared/fetchWithTimeout.js";
 
 const COMMAND_ID = "vscodesync.installWorkspaceTemplateFromMarketplace";
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/borodatych/vscodesync-templates/main/index.json";
@@ -39,7 +43,7 @@ async function runInstallFromMarketplace(): Promise<void> {
 
   let entries: RegistryIndexEntry[];
   try {
-    const res = await fetch(registryUrl);
+    const res = await fetchWithTimeout(registryUrl, {}, { channel: "templates.registry", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     if (!res.ok) {
       await vscode.window.showWarningMessage(`VSCodeSync: registry returned ${String(res.status)}.`);
       return;
@@ -67,7 +71,7 @@ async function runInstallFromMarketplace(): Promise<void> {
   const manifests: WorkspaceTemplateManifest[] = [];
   await Promise.all(entries.map(async (e) => {
     try {
-      const res = await fetch(e.manifestUrl);
+      const res = await fetchWithTimeout(e.manifestUrl, {}, { channel: "templates.registry", timeoutMs: DEFAULT_API_TIMEOUT_MS });
       if (!res.ok) return;
       const raw: unknown = await res.json();
       const parsed = parseWorkspaceTemplate(raw);

@@ -17,6 +17,10 @@
  */
 import * as vscode from "vscode";
 import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../providers/_shared/fetchWithTimeout.js";
+import {
   parseDeviceAuthResponse,
   planDeviceCodePoll,
   type DeviceAuthResponse,
@@ -70,11 +74,11 @@ async function runSignInDeviceCode(deps: OAuthDeviceCodeDeps): Promise<void> {
   let device: DeviceAuthResponse;
   try {
     const body = new URLSearchParams({ client_id: picked.clientId, scope: picked.scope });
-    const res = await fetch(picked.deviceAuthEndpoint, {
+    const res = await fetchWithTimeout(picked.deviceAuthEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
       body: body.toString(),
-    });
+    }, { channel: "oauth.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     const raw: unknown = await res.json();
     const parsed = parseDeviceAuthResponse(raw, Date.now());
     if (!parsed.ok) {
@@ -127,11 +131,11 @@ async function pollForTokens(
         device_code: device.deviceCode,
         client_id: provider.clientId,
       });
-      const res = await fetch(provider.tokenEndpoint, {
+      const res = await fetchWithTimeout(provider.tokenEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
         body: body.toString(),
-      });
+      }, { channel: "oauth.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
       const json = (await res.json()) as Record<string, unknown>;
       if (typeof json.access_token === "string") {
         event = {

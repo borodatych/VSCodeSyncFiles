@@ -11,6 +11,13 @@ import {
   buildOpenAiChatBody,
   resolveAiMergeEndpoint,
 } from "./aiMergeEndpoint.js";
+import {
+  fetchWithTimeout,
+} from "../providers/_shared/fetchWithTimeout.js";
+
+/** AI endpoints (ollama / lm-studio / custom) may think for a while — bounded all the same. */
+const AI_MERGE_TIMEOUT_MS = 180_000;
+
 
 const CFG = "vscodesync";
 const MAX_CONTENT_CHARS = 12_000; // per section; ~3K tokens each
@@ -171,7 +178,7 @@ async function callHttpEndpoint(
       : JSON.stringify(buildOpenAiChatBody(model, "You are a precise code merge assistant.", prompt));
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    res = await fetchWithTimeout(url, { method: "POST", headers: { "Content-Type": "application/json" }, body }, { channel: "aiMerge", timeoutMs: AI_MERGE_TIMEOUT_MS });
   } catch (e) {
     return { ok: false, reason: "error", detail: `${kind} request failed: ${e instanceof Error ? e.message : String(e)}` };
   }

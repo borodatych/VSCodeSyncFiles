@@ -397,6 +397,7 @@ export class DropboxProvider implements ICloudProvider {
         size: it[".tag"] === "file" ? it.size : undefined,
         etag,
         modifiedIso: it.server_modified,
+        isFolder: it[".tag"] === "folder",
       };
     });
   }

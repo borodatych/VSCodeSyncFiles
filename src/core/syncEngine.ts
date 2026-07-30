@@ -1183,18 +1183,30 @@ export class SyncEngine {
     }
     for (const it of items) {
       const p = it.cloudPath;
-      const childPrefix = p.endsWith("/") ? p : `${p}/`;
-      let nested: FileMetadata[];
-      try {
-        nested = await this.deps.provider.listFolder(childPrefix);
-      } catch (e) {
-        if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-          nested = [];
-        } else {
-          throw e;
+      // `isFolder` comes straight from the listing on all four providers. Only
+      // when it is absent do we fall back to the old probe — which used to run
+      // for every entry, including plain files that can never have children,
+      // turning one delete into one extra `listFolder` per object.
+      let hasChildren: boolean;
+      if (it.isFolder === false) {
+        hasChildren = false;
+      } else if (it.isFolder === true) {
+        hasChildren = true;
+      } else {
+        const childPrefix = p.endsWith("/") ? p : `${p}/`;
+        let nested: FileMetadata[];
+        try {
+          nested = await this.deps.provider.listFolder(childPrefix);
+        } catch (e) {
+          if (e instanceof ProviderError && e.code === "NOT_FOUND") {
+            nested = [];
+          } else {
+            throw e;
+          }
         }
+        hasChildren = nested.length > 0;
       }
-      if (nested.length > 0) {
+      if (hasChildren) {
         await this.deleteCloudFolderRecursive(p);
       }
       try {

@@ -33,6 +33,16 @@ export interface FileMetadata {
   size?: number;
   etag?: string;
   modifiedIso?: string;
+  /**
+   * Whether the entry is a folder, when the provider says so in the listing.
+   *
+   * All four APIs carry this (`.tag`, `type`, `mimeType`, the Graph `folder`
+   * facet), but the field did not exist, so `deleteCloudFolderRecursive` had to
+   * probe every single entry with an extra `listFolder` — including plain
+   * files, which can never have children. `undefined` means "provider did not
+   * say", and callers must fall back to probing.
+   */
+  isFolder?: boolean;
 }
 
 export interface UploadOptions {
