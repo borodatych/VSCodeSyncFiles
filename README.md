@@ -121,6 +121,7 @@
 | `vscodesync.encryption` | `false` | Шифровать блобы воркспейса (AES-256-GCM) |
 | `vscodesync.aiMerge.enabled` | `false` | Использовать GitHub Copilot для разрешения конфликтов |
 | `vscodesync.tasks.allowFileMutations` | `false` | Разрешить задачам `vscodesync` отправлять и скачивать файлы (в том числе автозапускаемым через `runOn: folderOpen`) |
+| `vscodesync.softLock.enabled` | `false` | Сообщать другим машинам «сейчас редактируется» для открытого файла (soft-lock в манифесте) |
 | `vscodesync.watchMode` | `false` | Автосинхронизация при сохранении файла |
 | `vscodesync.watchIntervalSeconds` | `30` | Минимальный интервал опроса в watch-режиме |
 | `vscodesync.deltaSync` | `false` | Загружать только изменённые части файла |

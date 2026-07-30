@@ -234,6 +234,7 @@
   "cfg.historyLazyDrainMinutes.description": "Drain interval of the deferred history-snapshot queue when `historyMode = lazy` (minutes).",
   "cfg.metaWriteRetries.description": "Retries when `_meta.json` write hits PRECONDITION_FAILED (another machine raced ahead).",
   "cfg.verifyRetries.description": "Retries when the post-upload hash check disagrees with the local plaintext hash (mode `plaintext-only`).",
+  "cfg.softLock.enabled.description": "Announce \"editing now\" on the open file to other machines (soft lock in the cloud manifest). Off by default: each announcement costs a manifest download and upload, which only pays off in explicit collaboration.",
   "cfg.softLockStaleHours.description": "After how many hours `editingSince` in the manifest is treated as stale and cleared automatically.",
   "cfg.tokenRefreshSkewMinutes.description": "Refresh OAuth tokens this many minutes before they expire. Applies to all providers (Google Drive, OneDrive, Yandex.Disk, Dropbox).",
   "cfg.saveDebounceSecDefault.description": "Default delay between file save and push when no workspace-level override exists. 0 = send immediately (not recommended).",

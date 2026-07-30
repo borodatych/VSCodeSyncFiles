@@ -634,6 +634,11 @@
           "maximum": 10,
           "markdownDescription": "%cfg.verifyRetries.description%"
         },
+        "vscodesync.softLock.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.softLock.enabled.description%"
+        },
         "vscodesync.softLockStaleHours": {
           "type": "number",
           "default": 3,

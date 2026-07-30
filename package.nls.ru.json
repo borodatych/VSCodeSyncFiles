@@ -246,6 +246,7 @@
   "cfg.historyLazyDrainMinutes.description": "Период «отлива» очереди отложенных снимков истории при `historyMode = lazy` (мин).",
   "cfg.metaWriteRetries.description": "Сколько раз пытаться записать `_meta.json` при `PRECONDITION_FAILED` (другая машина уже обновила meta) до сдачи.",
   "cfg.verifyRetries.description": "Сколько раз перепроверять хэш blob'а после загрузки в режиме `verifyUploadHash = plaintext-only` до того, как признать рассинхрон.",
+  "cfg.softLock.enabled.description": "Сообщать другим машинам «сейчас редактируется» для открытого файла (soft-lock в облачном манифесте). По умолчанию выключено: каждое объявление — скачивание и загрузка манифеста, что оправдано только при совместной работе.",
   "cfg.softLockStaleHours.description": "Через сколько часов «editingSince» в манифесте считается устаревшим soft-lock'ом и автоматически снимается (Health Check / repair).",
   "cfg.tokenRefreshSkewMinutes.description": "За сколько минут до истечения OAuth-токена начинать его обновлять. Применяется для всех провайдеров (Google Drive, OneDrive, Yandex.Disk, Dropbox).",
   "cfg.saveDebounceSecDefault.description": "Дефолтная задержка между сохранением файла и push'ем, если в настройках workspace не указано иное. 0 — отправлять немедленно (не рекомендуется).",

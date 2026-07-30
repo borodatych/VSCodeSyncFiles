@@ -523,6 +523,22 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * The manifest etag as of the most recent download in this instance,
+   * falling back to what the caller had. Callers that download and then write
+   * must use this: `patchEntry` has already advanced the stored etag, and the
+   * copy they loaded earlier is one write behind.
+   */
+  private async currentManifestEtag(
+    workspaceId: string,
+    fallback: string | undefined,
+  ): Promise<string | undefined> {
+    const fresh = (await this.loadCfg()).activeWorkspaces.find(
+      (w) => w.workspaceId === workspaceId,
+    )?.manifestEtag;
+    return fresh ?? fallback;
+  }
+
   private evictManifestCache(workspaceId: string): void {
     this.manifestByWs.delete(workspaceId);
     this.manifestEtagByWs.delete(workspaceId);
@@ -1942,6 +1958,11 @@ export class SyncEngine {
     if (!m) {
       return;
     }
+    // `downloadManifest` just refreshed the stored etag; re-read it instead of
+    // sending the pre-download one. The stale etag put every lock write on the
+    // 412-merge path, where the version tie-break belongs to the remote row —
+    // which was masked while `setSoftLock` inflated `version` on each call.
+    const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
     const now = new Date().toISOString();
     const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
     if (mfIx < 0) {
@@ -1954,12 +1975,15 @@ export class SyncEngine {
       machines: this.touchMachine(m.machines, now),
       files: m.files.map((f, i) =>
         i === mfIx
-          ? { ...f, editingBy: this.deps.machineId, editingSince: now, version: f.version + 1 }
+          ? // A soft lock is presence metadata, not a content change. Bumping
+            // `version` here inflated the file's version on every tab switch,
+            // making "who has the newer content" drift for no content at all.
+            { ...f, editingBy: this.deps.machineId, editingSince: now }
           : f,
       ),
     };
     try {
-      await this.putManifest(workspaceId, updated, entry.manifestEtag);
+      await this.putManifest(workspaceId, updated, freshEtag);
       verboseLog("softlock", `set DONE ${posixRel}`);
     } catch (e: unknown) {
       warnLog(
@@ -1988,6 +2012,7 @@ export class SyncEngine {
     if (!m) {
       return;
     }
+    const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
     const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
     if (mfIx < 0) {
       return;
@@ -2002,12 +2027,11 @@ export class SyncEngine {
       ...m,
       updatedAt: now,
       machines: this.touchMachine(m.machines, now),
-      files: m.files.map((f, i) =>
-        i === mfIx ? { ...rest, version: f.version + 1 } : f,
-      ),
+      // Presence metadata, not content — see `setSoftLock` on `version`.
+      files: m.files.map((f, i) => (i === mfIx ? { ...rest } : f)),
     };
     try {
-      await this.putManifest(workspaceId, updated, entry.manifestEtag);
+      await this.putManifest(workspaceId, updated, freshEtag);
       verboseLog("softlock", `clear DONE ${posixRel}`);
     } catch (e: unknown) {
       warnLog(

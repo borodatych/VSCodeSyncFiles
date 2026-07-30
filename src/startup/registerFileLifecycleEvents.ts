@@ -84,13 +84,31 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
   registerSoftLockLifecycle(context, runWithEngine);
 }
 
+/**
+ * Soft-Lock lifecycle (B4).
+ *
+ * Behind `vscodesync.softLock.enabled`, default *off*: announcing "I am
+ * editing this file" costs two cloud round-trips (manifest download + upload)
+ * per tab switch, which only makes sense in explicit collaboration. Turning
+ * the setting on is the user's consent to that traffic.
+ *
+ * The 10-minute heartbeat and the 60-minute auto-clear timers are gone, not
+ * gated: both were pure timer paths (the mutation checkpoint would refuse
+ * them anyway), and both duties are already covered elsewhere — a lock that
+ * stops being refreshed goes stale for readers via `softLockStaleHours`, and
+ * closing the document clears it explicitly. The next real user action
+ * (tab switch, edit) re-announces presence by itself.
+ */
 function registerSoftLockLifecycle(
   context: vscode.ExtensionContext,
   runWithEngine: RunWithEngineFn,
 ): void {
-  const softLockRegistry = new Map<string, { root: string; workspaceId: string; relPath: string; lastActivityMs: number }>();
-  const SOFT_LOCK_TIMEOUT_MS = 60 * 60 * 1000; // 60 min without activity → auto-clear
-  const SOFT_LOCK_HEARTBEAT_MS = 10 * 60 * 1000; // refresh every 10 min of active editing
+  const softLockRegistry = new Map<string, { root: string; workspaceId: string; relPath: string }>();
+  const SOFT_LOCK_DEBOUNCE_MS = 1500;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const softLockEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("vscodesync").get<boolean>("softLock.enabled", false);
 
   const setSoftLockForUri = async (uri: vscode.Uri): Promise<void> => {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
@@ -104,10 +122,9 @@ function registerSoftLockLifecycle(
       root,
       workspaceId: fileEntry.workspaceId,
       relPath: rel,
-      lastActivityMs: Date.now(),
     });
-    // Opening or editing a file is the user being present in it — that is what
-    // a soft lock announces. The 10-minute refresh below is a timer and says so.
+    // Opening or editing a file is the user being present in it — that is
+    // what a soft lock announces.
     await runWithEngine(async (engine) => {
       await engine.setSoftLock(fileEntry.workspaceId, rel);
     }, root, { showErrorDialog: false, trigger: "user" });
@@ -122,45 +139,27 @@ function registerSoftLockLifecycle(
     }, entry.root, { showErrorDialog: false, trigger: "user" });
   };
 
-  const heartbeatHandle = setInterval(() => {
-    const now = Date.now();
-    for (const [fsPath, entry] of softLockRegistry) {
-      if (now - entry.lastActivityMs > SOFT_LOCK_TIMEOUT_MS) {
-        softLockRegistry.delete(fsPath);
-        // Both branches below are the interval firing, not the user. They write
-        // `editingBy` in the cloud manifest, so under the mutation policy they
-        // are refused and logged: a lock stops being refreshed once the user
-        // stops touching the file, and readers already treat locks older than
-        // `softLockStaleMs` as stale. Removing Soft-Lock from automatic paths
-        // outright is finding B4.
-        void runWithEngine(async (engine) => {
-          await engine.clearSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false, trigger: "auto" });
-      } else if (now - entry.lastActivityMs > SOFT_LOCK_HEARTBEAT_MS) {
-        // Refresh cloud lock without resetting the inactivity timer — only real edits do that.
-        void runWithEngine(async (engine) => {
-          await engine.setSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false, trigger: "auto" });
-      }
-    }
-  }, SOFT_LOCK_HEARTBEAT_MS);
-
   context.subscriptions.push(
-    new vscode.Disposable(() => { clearInterval(heartbeatHandle); }),
-    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      if (editor?.document.uri.scheme === "file") {
-        await setSoftLockForUri(editor.document.uri).catch(() => { /* non-fatal */ });
-      }
+    new vscode.Disposable(() => {
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
     }),
-    vscode.workspace.onDidCloseTextDocument(async (doc) => {
+    // Not awaited and debounced: flipping through five tabs must not fire
+    // five manifest uploads, and the event handler must not block on I/O.
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!softLockEnabled()) return;
+      if (editor?.document.uri.scheme !== "file") return;
+      const uri = editor.document.uri;
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        void setSoftLockForUri(uri).catch(() => { /* non-fatal */ });
+      }, SOFT_LOCK_DEBOUNCE_MS);
+    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      // Clear regardless of the setting: a lock set before the setting was
+      // turned off must still be removable.
       if (doc.uri.scheme === "file") {
-        await clearSoftLockForUri(doc.uri).catch(() => { /* non-fatal */ });
-      }
-    }),
-    vscode.workspace.onDidChangeTextDocument((e) => {
-      const entry = softLockRegistry.get(e.document.uri.fsPath);
-      if (entry) {
-        entry.lastActivityMs = Date.now();
+        void clearSoftLockForUri(doc.uri).catch(() => { /* non-fatal */ });
       }
     }),
   );
