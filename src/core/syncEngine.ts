@@ -58,11 +58,9 @@ import type { ActivityEventInput } from "./activityLog.js";
 import type { SyncTransferEvent } from "./syncStatsStore.js";
 import {
   blobCloudPath,
-  gunzipToPlaintext,
-  gzipIfShrinks,
-  plaintextLooksCompressible,
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
+import { decodeCloudBlob, encodeCloudBlob } from "./cloudBlobCodec.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -1302,10 +1300,16 @@ export class SyncEngine {
       this.deps.machineName,
     );
 
+    // Both sides of the copy must respect the wire encoding recorded in the
+    // source `_meta`: `trackedFileCloudPath` always omits the `.gz` suffix, so
+    // merging a workspace with `compressUploads` on silently skipped every
+    // compressed blob and left the target pointing at objects that do not exist.
+    const srcMetaForCopy = await this.pullMeta(sourceWorkspaceId, entSrc.metaEtag);
     const sortedPaths = [...srcPaths].sort((a, b) => a.localeCompare(b));
     for (const posixRel of sortedPaths) {
-      const srcCloud = trackedFileCloudPath(sourceWorkspaceId, posixRel);
-      const dstCloud = trackedFileCloudPath(targetWorkspaceId, posixRel);
+      const wireGzip = srcMetaForCopy.files[posixRel]?.wireGzip === true;
+      const srcCloud = blobCloudPath(sourceWorkspaceId, posixRel, wireGzip);
+      const dstCloud = blobCloudPath(targetWorkspaceId, posixRel, wireGzip);
       await copyCloudFileBetweenProviders(this.deps.provider, this.deps.provider, srcCloud, dstCloud);
     }
 
@@ -1374,9 +1378,14 @@ export class SyncEngine {
       throw new Error("источник merge не найден в конфиге (evacuate)");
     }
     const now = new Date().toISOString();
+    // NOT_FOUND is swallowed below, so a path missing the `.gz` suffix looked
+    // like a successful delete while the real blob stayed in the cloud forever
+    // as garbage — and the manifest was emptied regardless.
+    const srcMetaForEvacuate = await this.pullMeta(sourceWorkspaceId, ent.metaEtag);
     for (const mf of priorManifest.files.filter((f) => !f.removedAt)) {
+      const wireGzip = srcMetaForEvacuate.files[mf.path]?.wireGzip === true;
       try {
-        await this.deps.provider.deleteFile(trackedFileCloudPath(sourceWorkspaceId, mf.path));
+        await this.deps.provider.deleteFile(blobCloudPath(sourceWorkspaceId, mf.path, wireGzip));
       } catch (e) {
         if (!(e instanceof ProviderError && e.code === "NOT_FOUND")) {
           throw e;
@@ -1910,7 +1919,6 @@ export class SyncEngine {
     for (const abs of absolutePaths) {
       await this.assertFileWithinSizeLimit(abs);
       const posixRel = this.posixRel(cfg, abs);
-      const cloudPath = trackedFileCloudPath(workspaceId, posixRel);
       const markers = await this.fileHasSyncMarkers(abs);
       const exists = localCopy.files.some((f) => f.path === posixRel && !f.removedAt);
       if (!exists) {
@@ -1921,18 +1929,35 @@ export class SyncEngine {
           hasSyncignoreMarkers: markers,
         });
       }
-      await this.pushBlobRaw(cloudPath, abs);
+      // Same pipeline as `pushFile`. This used to call `pushBlobRaw`, which
+      // uploaded the file byte-for-byte: no compression, and — with encryption
+      // switched on — no encryption either, to a path computed without the
+      // `.gz` suffix. The blob was then downloaded again in full purely to read
+      // its etag, which `uploadFile` already returns.
+      this.assertEncryptionReady();
+      const plaintext = await fs.readFile(abs);
+      const encoded = encodeCloudBlob(plaintext, posixRel, {
+        encrypt: this.deps.encrypt,
+        decrypt: this.deps.decrypt,
+        compressUploads: this.deps.compressUploads,
+      });
+      const cloudPath = blobCloudPath(workspaceId, posixRel, encoded.wireGzip);
+      const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body);
+      this.emitTransfer({ direction: "upload", bytes: encoded.body.length });
       const hash = await computeHash(abs, this.hashCfg(posixRel));
-      const dl = await this.deps.provider.downloadFile(cloudPath);
       const prev = meta.files[posixRel];
       const prevVersion = prev === undefined ? 0 : prev.version;
-      meta.files[posixRel] = {
+      const row: MetaEntry = {
         hash,
-        etag: dl.etag ?? "",
+        etag: uploaded.etag ?? "",
         version: prevVersion + 1,
         machineId: this.deps.machineId,
         updatedAt: new Date().toISOString(),
       };
+      if (encoded.wireGzip) {
+        row.wireGzip = true;
+      }
+      meta.files[posixRel] = row;
       this.metaByWs.set(workspaceId, meta);
       const tracked: TrackedFile = {
         localPath: posixRel,
@@ -2179,9 +2204,17 @@ export class SyncEngine {
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
 
     const oldCloudPath = trackedEntry.cloudPath;
-    const newCloudPath = trackedFileCloudPath(workspaceId, newRel);
+    // The new path must carry the same wire encoding as the old one. It used to
+    // be built with `trackedFileCloudPath`, i.e. always without the `.gz`
+    // suffix, while the `_meta` row was moved across verbatim — `wireGzip: true`
+    // included. `pullFile` then asked for `<newRel>.gz`, which did not exist,
+    // and the file was NOT_FOUND forever: a plain rename with `compressUploads`
+    // on permanently broke the file.
+    const renameWireGzip = meta.files[oldRel]?.wireGzip === true;
+    const newCloudPath = blobCloudPath(workspaceId, newRel, renameWireGzip);
 
-    // Copy blob: download old, upload to new path
+    // Copy blob: download old, upload to new path. Bytes are moved in their
+    // wire form on purpose — no decode/re-encode, so no key is needed here.
     try {
       const dl = await this.deps.provider.downloadFile(oldCloudPath);
       await this.deps.provider.uploadFile(newCloudPath, dl.body, undefined);
@@ -2996,7 +3029,8 @@ export class SyncEngine {
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
-        cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+        const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+        cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -3076,8 +3110,8 @@ export class SyncEngine {
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
-        cloudBuf = dl.body;
-        cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+        cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+        cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -3238,7 +3272,8 @@ export class SyncEngine {
         let cloudCurrent = "";
         try {
           const dl = await this.deps.provider.downloadFile(file.cloudPath);
-          cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+          const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+          cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
         } catch (e) {
           if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
             throw e;
@@ -3290,8 +3325,8 @@ export class SyncEngine {
     let cloudBuf: Buffer | undefined;
     try {
       const dl = await this.deps.provider.downloadFile(file.cloudPath);
-      cloudBuf = dl.body;
-      cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+      cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+      cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
         throw e;
@@ -3626,12 +3661,12 @@ export class SyncEngine {
         // §8.2: rolling-hash delta + conditional GET — not implemented; upload proceeds as full body below.
       }
 
-      let wireGzip = false;
-      let gzipWireBody: Buffer | undefined;
-      if (this.deps.compressUploads && plaintextLooksCompressible(posixRel, plaintextBufLocked)) {
-        gzipWireBody = gzipIfShrinks(plaintextBufLocked);
-        wireGzip = gzipWireBody !== undefined;
-      }
+      const encoded = encodeCloudBlob(plaintextBufLocked, posixRel, {
+        encrypt: this.deps.encrypt,
+        decrypt: this.deps.decrypt,
+        compressUploads: this.deps.compressUploads,
+      });
+      const wireGzip = encoded.wireGzip;
 
       const uploadCloudPath = blobCloudPath(workspaceId, posixRel, wireGzip);
       const pathModeChanged =
@@ -3639,12 +3674,7 @@ export class SyncEngine {
         prevWireGzipLocked !== wireGzip ||
         oldBlobPathForHistory !== uploadCloudPath;
 
-      let uploadBuf: Buffer;
-      if (wireGzip && gzipWireBody !== undefined) {
-        uploadBuf = this.deps.encrypt ? this.deps.encrypt(gzipWireBody) : gzipWireBody;
-      } else {
-        uploadBuf = this.deps.encrypt ? this.deps.encrypt(plaintextBufLocked) : plaintextBufLocked;
-      }
+      const uploadBuf = encoded.body;
 
       const ifMatchBlob = pathModeChanged ? undefined : prevEtagLocked;
       let etag = prevEtagLocked;
@@ -3739,8 +3769,10 @@ export class SyncEngine {
         }
         file.cloudPath = uploadCloudPath;
         await this.persistMutatedCfg(cfg);
-        if (wireGzip && gzipWireBody !== undefined) {
-          const saved = plaintextBufLocked.length - gzipWireBody.length;
+        if (wireGzip) {
+          // `encoded.body` may be encrypted on top of the gzip, but AES-GCM adds
+          // a fixed overhead, so the delta still reflects the real saving.
+          const saved = plaintextBufLocked.length - encoded.body.length;
           if (saved > 0) {
             this.deps.onCompressionSaving?.(saved);
           }
@@ -3822,6 +3854,23 @@ export class SyncEngine {
    * encrypted blobs *and* records a matching `_meta.hash`, so nothing ever
    * notices; on pull it overwrites the user's file with ciphertext.
    */
+  /**
+   * Turn a downloaded blob back into plaintext.
+   *
+   * The upload pipeline is `plaintext -> [gzip] -> [encrypt] -> upload`, so
+   * reading it back means decrypt first, then gunzip. Four comparison sites
+   * hashed `dl.body` as-is, which is the *wire* form: with encryption or
+   * compression enabled the result could never equal `_meta.hash` (always the
+   * plaintext canonical hash), so every such file was reported as a conflict
+   * forever, and the same raw bytes were handed to the line-ending comparison.
+   */
+  private decodeCloudBlob(body: Buffer, wireGzip: boolean): Buffer {
+    return decodeCloudBlob(body, wireGzip, {
+      encrypt: this.deps.encrypt,
+      decrypt: this.deps.decrypt,
+    });
+  }
+
   private assertEncryptionReady(): void {
     if (this.deps.encryptionRequired !== true) return;
     if (this.deps.encrypt !== undefined && this.deps.decrypt !== undefined) return;
@@ -3830,14 +3879,6 @@ export class SyncEngine {
         "Операция отменена, чтобы не залить открытый текст в облако и не перезаписать файл шифротекстом. " +
         "Проверьте команду «VSCodeSync: Encryption Key» и повторите.",
     );
-  }
-
-  private async pushBlobRaw(cloudPath: string, abs: string): Promise<void> {
-    this.assertEncryptionReady();
-    rejectIfSecondaryWorkspaceInstanceReadOnly();
-    const buf = await fs.readFile(abs);
-    await this.deps.provider.uploadFile(cloudPath, buf);
-    this.emitTransfer({ direction: "upload", bytes: buf.length });
   }
 
   private async verifyUploadPlaintextHash(
@@ -3849,10 +3890,7 @@ export class SyncEngine {
     const verifyRetries = this.resolveVerifyRetries();
     for (let i = 0; i < verifyRetries; i += 1) {
       const got = await this.deps.provider.downloadFile(cloudPath);
-      let body = got.body;
-      if (wireGzip) {
-        body = gunzipToPlaintext(body);
-      }
+      const body = this.decodeCloudBlob(got.body, wireGzip);
       const h = hashCanonicalBuffer(body, posixRel, this.hashCfg(posixRel));
       if (h === expectedPlaintextHash) {
         return;
@@ -4014,10 +4052,7 @@ export class SyncEngine {
     if (hadLocal && this.deps.localBackupEnabled !== false) {
       await backupLocalWithPrune(abs, this.deps.workspaceRoot, posixRel, this.deps.localBackupRetentionDays ?? 7, this.resolveLocalBackupDir());
     }
-    let rawBody: Buffer = this.deps.decrypt ? this.deps.decrypt(dl.body) : dl.body;
-    if (wireGzip) {
-      rawBody = gunzipToPlaintext(rawBody);
-    }
+    const rawBody: Buffer = this.decodeCloudBlob(dl.body, wireGzip);
     await fs.mkdir(path.dirname(abs), { recursive: true });
     if (bufferLooksBinary(rawBody)) {
       await fs.writeFile(abs, rawBody);
@@ -4116,12 +4151,7 @@ export class SyncEngine {
     if (dl.notModified && dl.body.length === 0) {
       dl = await this.deps.provider.downloadFile(norm);
     }
-    let body: Buffer = dl.body;
-    body = this.deps.decrypt ? this.deps.decrypt(body) : body;
-    if (wireGzip) {
-      body = gunzipToPlaintext(body);
-    }
-    return body;
+    return this.decodeCloudBlob(dl.body, wireGzip);
   }
 
   /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
@@ -4143,12 +4173,7 @@ export class SyncEngine {
     if (dl.notModified && dl.body.length === 0) {
       dl = await this.deps.provider.downloadFile(path);
     }
-    let body: Buffer = dl.body;
-    body = this.deps.decrypt ? this.deps.decrypt(body) : body;
-    if (wireGzip) {
-      body = gunzipToPlaintext(body);
-    }
-    return { body };
+    return { body: this.decodeCloudBlob(dl.body, wireGzip) };
   }
 }
 

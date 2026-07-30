@@ -844,6 +844,29 @@ export function registerPlannedPaletteCommands(
  * flow used by Export-to-Folder and Restore-from-Cloud. Returns the target
  * absolute path on success, undefined on cancel/error.
  */
+/**
+ * `_meta` rows for a cloud workspace, keyed by tracked path. Only `wireGzip`
+ * matters here: it decides whether the blob lives under a `.gz` suffix.
+ * Missing or unreadable `_meta` yields an empty map, which degrades to the old
+ * "assume uncompressed" behaviour rather than failing the whole export.
+ */
+async function readCloudMetaRows(
+  provider: ICloudProvider,
+  workspaceId: string,
+): Promise<Record<string, { wireGzip?: boolean } | undefined>> {
+  const { metaCloudPath } = await import("../core/cloudLayout.js");
+  const dl = await provider.downloadFile(metaCloudPath(workspaceId)).catch(() => null);
+  if (!dl) return {};
+  try {
+    const parsed = JSON.parse(dl.body.toString("utf8")) as {
+      files?: Record<string, { wireGzip?: boolean }>;
+    };
+    return parsed.files ?? {};
+  } catch {
+    return {};
+  }
+}
+
 async function runCloudExportFlow(
   provider: ICloudProvider,
   pickFolderTitle: string,
@@ -872,7 +895,9 @@ async function runCloudExportFlow(
   const target = folderUris?.[0]?.fsPath;
   if (!target) return undefined;
 
-  const { manifestCloudPath, trackedFileCloudPath } = await import("../core/cloudLayout.js");
+  const { manifestCloudPath } = await import("../core/cloudLayout.js");
+  const { blobCloudPath } = await import("../core/wireCompression.js");
+  const { decodeCloudBlob } = await import("../core/cloudBlobCodec.js");
   const dl = await provider.downloadFile(manifestCloudPath(picked.workspaceId)).catch(() => null);
   if (!dl) {
     await vscode.window.showWarningMessage("VSCodeSync: облачный манифест недоступен.");
@@ -897,24 +922,52 @@ async function runCloudExportFlow(
     );
     return undefined;
   }
+  // Export writes cloud blobs straight to disk without going through the
+  // engine, so it has no decryption key. Writing ciphertext into the user's
+  // folder while reporting success is worse than refusing.
+  if (vscode.workspace.getConfiguration(CFG).get<boolean>("encryption", false)) {
+    await vscode.window.showErrorMessage(
+      "VSCodeSync: экспорт зашифрованного workspace пока не поддерживается — " +
+        "на диск попал бы шифротекст. Используйте Pull в подключённую папку.",
+    );
+    return undefined;
+  }
+
+  // `_meta` tells which blobs are stored gzipped. The path used to be built
+  // with `trackedFileCloudPath`, i.e. always without the `.gz` suffix, so every
+  // compressed file simply failed to download — silently, see below.
+  const metaRows = await readCloudMetaRows(provider, picked.workspaceId);
+
+  let failed = 0;
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: загрузка файлов…", cancellable: false },
     async (progress) => {
       let done = 0;
       for (const entry of plan.entries) {
+        const wireGzip = metaRows[entry.posixRel]?.wireGzip === true;
         try {
           const dlFile = await provider.downloadFile(
-            trackedFileCloudPath(picked.workspaceId, entry.posixRel),
+            blobCloudPath(picked.workspaceId, entry.posixRel, wireGzip),
           );
+          const body = decodeCloudBlob(dlFile.body, wireGzip, {});
           await fs.mkdir(path.dirname(entry.targetAbs), { recursive: true });
-          await fs.writeFile(entry.targetAbs, dlFile.body);
+          await fs.writeFile(entry.targetAbs, body);
+          // `done` used to be incremented outside the `try`, so the progress
+          // counter reached 100 % even when nothing had been written.
+          done++;
         } catch {
-          /* per-file errors are non-fatal; final count reflects what succeeded */
+          failed++;
         }
-        done++;
-        progress.report({ message: `${String(done)}/${String(plan.entries.length)}` });
+        progress.report({
+          message: `${String(done)}/${String(plan.entries.length)}`,
+        });
       }
     },
   );
+  if (failed > 0) {
+    await vscode.window.showWarningMessage(
+      `VSCodeSync: экспорт завершён с ошибками — не скачано файлов: ${String(failed)} из ${String(plan.entries.length)}.`,
+    );
+  }
   return target;
 }
