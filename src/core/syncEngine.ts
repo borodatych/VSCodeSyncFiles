@@ -85,9 +85,9 @@ const LAST_SYNC_REFRESH_THROTTLE_MS = 5 * 60_000;
  * Supports `*` (within one path segment) and `**` (any depth).
  */
 function minimatchGlob(str: string, pattern: string): boolean {
-  // Use  (private-use) as a safe sentinel for `**` so we can rewrite it
+  // Use \uE000 (private-use) as a safe sentinel for `**` so we can rewrite it
   // to `.*` after escaping `*` → `[^/]*` for single segments.
-  const SENTINEL = "";
+  const SENTINEL = "\uE000";
   const reStr = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, SENTINEL)

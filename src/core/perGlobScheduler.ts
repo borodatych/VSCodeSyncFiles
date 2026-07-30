@@ -28,12 +28,12 @@ export interface PerGlobScheduleConfig {
  *
  * Implementation note (v0.17 A1 clarification): SENTINEL **must** be a
  * non-empty string. `split("")` would split per-codepoint and produce
- * garbage. We use the escape sequence `""` (U+0001 is illegal in
+ * garbage. We use the escape sequence `"\u0001"` (U+0001 is illegal in
  * POSIX paths so it cannot collide with user input) rather than a raw
  * control character so the source stays readable in any editor.
  */
 export function matchesGlob(posixRel: string, pattern: string): boolean {
-  const SENTINEL = "";
+  const SENTINEL = "\u0001";
   const re = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, SENTINEL)

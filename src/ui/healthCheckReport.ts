@@ -6,6 +6,7 @@ import type { SyncEngine } from "../core/syncEngine.js";
 import { STALE_MANIFEST_EDITING_LOCK_MS } from "../core/syncEngine.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { readMachinesRegistrySafe } from "../core/machineRegistry.js";
+import { setLastHealthReport } from "../core/lastHealthReportStore.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { describeWorkspaceInstanceLockForHealth } from "../core/workspaceInstanceLock.js";
@@ -184,5 +185,9 @@ export async function buildHealthCheckReport(ctx: {
     lines.push("");
   }
 
+  // Recorded here rather than at each call site so no caller can forget: the
+  // support bundle reads this back, and the report itself only ever went to a
+  // write-only output channel.
+  setLastHealthReport(lines);
   return { lines, staleLockTargets, machinesRegistryStale };
 }

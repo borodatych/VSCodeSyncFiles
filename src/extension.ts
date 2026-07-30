@@ -494,7 +494,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // v0.15 Phase 21 — wire pure helpers added in v0.8–v0.14 to user-visible commands.
   registerPhase21Bootstrap({
-    context, globalConfig, registry, runWithEngine, makeEngine,
+    context, globalConfig, registry, runWithEngine, makeEngine, profileBuffer,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
 }

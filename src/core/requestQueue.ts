@@ -121,6 +121,26 @@ export function getGlobalQueue(namespace: string, opts?: RequestQueueOptions): R
   return q;
 }
 
+/** Read-only view of one global queue, for diagnostics and support bundles. */
+export interface RequestQueueSnapshot {
+  readonly namespace: string;
+  readonly running: number;
+  readonly pending: number;
+}
+
+/**
+ * Snapshot every global queue. A queue stuck at `running > 0` with a growing
+ * `pending` is the signature of the "extension hangs" report: one operation that
+ * never settles holds its slot and nothing behind it can start.
+ */
+export function snapshotGlobalQueues(): RequestQueueSnapshot[] {
+  return [...globalQueues.entries()].map(([namespace, q]) => ({
+    namespace,
+    running: q.activeCount,
+    pending: q.pendingCount,
+  }));
+}
+
 /** Remove a queue from the global map (e.g. when provider is switched). */
 export function disposeGlobalQueue(namespace: string): void {
   globalQueues.delete(namespace);
