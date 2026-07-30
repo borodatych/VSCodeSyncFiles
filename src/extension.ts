@@ -254,7 +254,6 @@ export function activate(context: vscode.ExtensionContext): void {
     globalConfig,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
     makeEngine,
-    offlineQueue: offlineQueueStore,
     refreshUi: async () => {
       workspacesTree.refresh();
       fileDecorations.refresh();
