@@ -424,7 +424,7 @@ export class SyncEngine {
   constructor(private readonly deps: SyncEngineDeps) {}
 
   private inFlightKey(workspaceId: string, posixRel: string): string {
-    return `${workspaceId} ${posixRel}`;
+    return `${workspaceId}\u0000${posixRel}`;
   }
 
   /** True while a user-initiated pull/push/conflict-resolve holds the file. */
