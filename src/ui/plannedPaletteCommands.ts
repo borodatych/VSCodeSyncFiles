@@ -522,6 +522,22 @@ export function registerPlannedPaletteCommands(
         );
         return;
       }
+      // Exporting the current key first is not advice, it is the recovery path.
+      // Rotation rewrites every cloud blob; if it stops half way the only thing
+      // that can still read the untouched half is the old key.
+      const exportedFirst = await vscode.window.showWarningMessage(
+        "VSCodeSync: перед ротацией ключа экспортируйте текущий ключ. " +
+          "Если ротация прервётся, только он откроет ещё не перешифрованные файлы.",
+        { modal: true },
+        "Экспортировать сейчас",
+        "Ключ уже сохранён",
+      );
+      if (exportedFirst === undefined) {
+        return;
+      }
+      if (exportedFirst === "Экспортировать сейчас") {
+        await vscode.commands.executeCommand("vscodesync.exportEncryptionKey");
+      }
       const confirm = await vscode.window.showWarningMessage(
         "VSCodeSync: Ротация ключа шифрования. Перед началом будут созданы авто-снапшоты всех workspace. Все облачные файлы будут перезашифрованы. Продолжить?",
         { modal: true },
@@ -540,62 +556,128 @@ export function registerPlannedPaletteCommands(
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: ротация ключа…", cancellable: false },
         async (progress) => {
-          // Step 1: Auto-snapshots for all workspaces
+          // Step 1: auto-snapshots. A failure here is fatal, not "non-fatal":
+          // the snapshot is the safety net for precisely this operation, and
+          // rotating without it means rewriting every blob with no way back.
           const folders = vscode.workspace.workspaceFolders ?? [];
           const snapshotDate = new Date().toISOString().replace(/[:.]/g, "-");
           let totalFiles = 0;
+          const snapshotFailures: string[] = [];
           for (const folder of folders) {
             const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
             for (const ws of wc.activeWorkspaces) {
               progress.report({ message: `Снапшот workspace ${ws.workspaceNote || ws.workspaceId}…` });
-              const engine = extras.makeEngine(folder.uri.fsPath, provider, gc.machineId, gc.machineName);
               try {
                 await createWorkspaceSnapshot(provider, folder.uri.fsPath, ws.workspaceId, `auto-pre-key-rotation-${snapshotDate}`, gc.machineName);
-              } catch {
-                // Non-fatal: continue with rotation even if snapshot fails
+              } catch (e) {
+                snapshotFailures.push(
+                  `${ws.workspaceNote || ws.workspaceId}: ${e instanceof Error ? e.message : String(e)}`,
+                );
               }
               totalFiles += wc.files.filter((f) => f.workspaceId === ws.workspaceId).length;
-              void engine; // engine used for snapshot
             }
+          }
+          if (snapshotFailures.length > 0) {
+            await vscode.window.showErrorMessage(
+              "VSCodeSync: ротация отменена — не удалось создать страховочные снапшоты:\n" +
+                snapshotFailures.join("\n"),
+            );
+            return;
           }
 
           // Step 2: Generate new key
           const newKey = generateEncryptionKey();
           progress.report({ message: "Перешифровка файлов…" });
 
-          // Step 3: Re-encrypt all tracked files
-          let processed = 0;
+          // Step 3: re-encrypt every tracked blob, remembering what succeeded.
+          const reEncrypted: string[] = [];
+          const failures: { cloudPath: string; localPath: string; error: string }[] = [];
+          let seen = 0;
           for (const folder of folders) {
             const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
             for (const file of wc.files) {
               if (!file.cloudPath) {
                 continue;
               }
-              progress.report({ message: `${String(processed + 1)}/${String(totalFiles)}: ${file.localPath}` });
+              seen++;
+              progress.report({ message: `${String(seen)}/${String(totalFiles)}: ${file.localPath}` });
               try {
                 const dl = await provider.downloadFile(file.cloudPath);
                 const plaintext = decryptBuffer(oldKey, dl.body);
                 const newCiphertext = encryptBuffer(newKey, plaintext);
                 await provider.uploadFile(file.cloudPath, newCiphertext, { ifMatch: dl.etag });
-              } catch {
-                // If file doesn't exist or fails, skip
+                reEncrypted.push(file.cloudPath);
+              } catch (e) {
+                failures.push({
+                  cloudPath: file.cloudPath,
+                  localPath: file.localPath,
+                  error: e instanceof Error ? e.message : String(e),
+                });
               }
-              processed++;
             }
           }
 
-          // Step 4: Store new key
-          await storeEncryptionKey(secrets, newKey);
+          // Step 4: the key is stored only when every blob was rewritten.
+          //
+          // It used to be stored unconditionally, right after a loop that
+          // swallowed every per-file error. Any file that failed re-encryption
+          // stayed under the old key, which was then overwritten — the file
+          // became permanently unreadable, and the report still claimed success.
+          if (failures.length === 0) {
+            await storeEncryptionKey(secrets, newKey);
+            await extras.refreshAfterLocalConfigChange?.();
+            void vscode.window
+              .showInformationMessage(
+                `VSCodeSync: ротация ключа завершена. Перешифровано файлов: ${String(reEncrypted.length)}. Экспортируйте новый ключ.`,
+                "Экспортировать",
+              )
+              .then(async (choice) => {
+                if (choice === "Экспортировать") {
+                  await vscode.commands.executeCommand("vscodesync.exportEncryptionKey");
+                }
+              });
+            return;
+          }
 
-          await extras.refreshAfterLocalConfigChange?.();
-          await vscode.window.showInformationMessage(
-            `VSCodeSync: ротация ключа завершена. Перешифровано ${String(processed)} файлов. Рекомендуется экспортировать новый ключ (VSCodeSync: Export Encryption Key).`,
-            "Экспортировать",
-          ).then(async (choice) => {
-            if (choice === "Экспортировать") {
-              await vscode.commands.executeCommand("vscodesync.exportEncryptionKey");
+          // Rollback: both keys are still in hand, so the blobs already rewritten
+          // can be put back under the old key and the old key kept in place.
+          progress.report({ message: "Откат: возвращаю перешифрованные файлы под старый ключ…" });
+          const rollbackFailures: string[] = [];
+          for (const cloudPath of reEncrypted) {
+            try {
+              const dl = await provider.downloadFile(cloudPath);
+              const plaintext = decryptBuffer(newKey, dl.body);
+              await provider.uploadFile(cloudPath, encryptBuffer(oldKey, plaintext), {
+                ifMatch: dl.etag,
+              });
+            } catch (e) {
+              rollbackFailures.push(`${cloudPath}: ${e instanceof Error ? e.message : String(e)}`);
             }
-          });
+          }
+
+          if (rollbackFailures.length === 0) {
+            await vscode.window.showErrorMessage(
+              `VSCodeSync: ротация отменена и полностью откачена. Ключ НЕ изменён. ` +
+                `Не удалось перешифровать файлов: ${String(failures.length)} ` +
+                `(${failures.slice(0, 3).map((f) => f.localPath).join(", ")}${failures.length > 3 ? ", …" : ""}). ` +
+                "Устраните причину и повторите.",
+            );
+            return;
+          }
+
+          // Partial rollback: some blobs are under the new key and cannot be put
+          // back. Keeping the old key would make exactly those unreadable, so the
+          // new key wins and the user is told precisely which files need the
+          // exported old key.
+          await storeEncryptionKey(secrets, newKey);
+          await extras.refreshAfterLocalConfigChange?.();
+          await vscode.window.showErrorMessage(
+            "VSCodeSync: ротация завершилась частично. Новый ключ сохранён, потому что откатить удалось не всё.\n" +
+              `Под НОВЫМ ключом: ${String(reEncrypted.length - rollbackFailures.length)} файлов и ещё ${String(rollbackFailures.length)}, которые не удалось вернуть.\n` +
+              `Под СТАРЫМ ключом остались: ${failures.map((f) => f.localPath).join(", ")}.\n` +
+              "Восстановите их экспортированным старым ключом или из авто-снапшота " +
+              `auto-pre-key-rotation-${snapshotDate}.`,
+          );
         },
       );
     }),

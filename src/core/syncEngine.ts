@@ -3731,30 +3731,27 @@ export class SyncEngine {
       const prevWireGzipLocked = prevLocked?.wireGzip === true;
       await this.snapshotHistory(workspaceId, posixRel, oldBlobPathForHistory);
       const plaintextBufLocked = await fs.readFile(abs);
-      // v0.7 — only re-hash when the file changed between the unlocked
-      // pre-check and acquiring the lock. We detect that via mtime stat on
-      // the path (cheap) — if unchanged, reuse `hash` from above.
-      let hashLocked = hash;
-      try {
-        const st = await fs.stat(abs);
-        // Re-hash only if the file was rewritten between the unlocked
-        // pre-check and acquiring the lock. The fast-path detects "nothing
-        // changed" via size; equal size with different content still races
-        // through to the safe re-hash branch below via the catch path.
-        if (plaintextBufLocked.length !== st.size) {
-          const hashStart2 = this.deps.onSyncProfileSample ? Date.now() : 0;
-          hashLocked = await computeHash(abs, this.hashCfg(posixRel));
-          if (this.deps.onSyncProfileSample) {
-            hashMsAccum += Date.now() - hashStart2;
-          }
-        }
-      } catch {
-        const hashStart2 = this.deps.onSyncProfileSample ? Date.now() : 0;
-        hashLocked = await computeHash(abs, this.hashCfg(posixRel));
-        if (this.deps.onSyncProfileSample) {
-          hashMsAccum += Date.now() - hashStart2;
-        }
+      // Hash the exact bytes we are about to upload.
+      //
+      // The previous version reused `hash` from the unlocked pre-check and only
+      // re-hashed when `plaintextBufLocked.length !== st.size` — comparing a
+      // buffer just read from `abs` against a `stat` of the same `abs` taken
+      // immediately after. Those agree essentially always, so the "did it change
+      // while we waited for the lock" check never fired. When the file *had*
+      // been rewritten in between, the new content went to the cloud while
+      // `_meta.hash` recorded the hash of the old content: every other machine
+      // saw a permanent mismatch and this one believed it was in sync.
+      //
+      // Hashing the in-memory buffer removes the race by construction and costs
+      // no second read of the file.
+      const hashStartLocked = this.deps.onSyncProfileSample ? Date.now() : 0;
+      const hashLocked = hashCanonicalBuffer(plaintextBufLocked, posixRel, this.hashCfg(posixRel));
+      if (this.deps.onSyncProfileSample) {
+        hashMsAccum += Date.now() - hashStartLocked;
       }
+      // `hash` above stays as it is: it feeds the pre-lock three-way check that
+      // decides whether to upload at all. Only the value recorded in `_meta`
+      // had to become the hash of the bytes actually sent.
 
       if (
         isDeltaSyncEligible({
