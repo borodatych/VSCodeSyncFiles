@@ -1,10 +1,13 @@
 /**
- * Second VS Code window on the same workspace folders: cloud writes disabled except
- * _meta updates that complete a pull (see `withPullCloudMetaWriteAllowed`).
+ * Second VS Code window on the same workspace folders: cloud writes disabled
+ * except the `_meta` update that completes a pull. That exception used to be a
+ * process-wide depth counter (`withPullCloudMetaWriteAllowed`): while any
+ * parallel pull held it open, *any* other cloud `_meta` write in the process
+ * passed the read-only check. It is now the `reason` argument of
+ * `pushMetaJson` — scoped to the one call, impossible to leak (F7).
  */
 
 let secondaryReadOnly = false;
-let pullCloudMetaWriteDepth = 0;
 
 export function setSecondaryWorkspaceInstanceReadOnly(on: boolean): void {
   secondaryReadOnly = on;
@@ -20,18 +23,4 @@ export function rejectIfSecondaryWorkspaceInstanceReadOnly(): void {
       "VSCodeSync: это окно в режиме только чтения — запись в облако отключена (sync уже ведёт другое окно VSCode с тем же workspace). Pull по-прежнему доступен.",
     );
   }
-}
-
-/** Allows `pushMetaJson` while finishing `pullFile` on a secondary instance. */
-export async function withPullCloudMetaWriteAllowed<T>(fn: () => Promise<T>): Promise<T> {
-  pullCloudMetaWriteDepth += 1;
-  try {
-    return await fn();
-  } finally {
-    pullCloudMetaWriteDepth -= 1;
-  }
-}
-
-export function isPullMetaCloudWriteActive(): boolean {
-  return pullCloudMetaWriteDepth > 0;
 }

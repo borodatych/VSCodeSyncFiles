@@ -161,6 +161,35 @@ describe("SyncEngine — чекпоинт мутации", () => {
     expect(adopted?.syncStatus).toBe("cloud_newer");
   });
 
+  it("Push не скачивает cloud-newer поверх локального файла (B17)", async () => {
+    const { provider, root, user, wsId, filePath } = await setup();
+    await user.pushAll(wsId);
+
+    // A second machine changes a.txt in the cloud; this machine keeps its copy.
+    const otherRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-mutpolicy-c-"));
+    roots.push(otherRoot);
+    const other = new SyncEngine({
+      workspaceRoot: otherRoot,
+      provider,
+      machineId: "m2",
+      machineName: "M2",
+      trigger: "user",
+    });
+    await other.attachCloudWorkspace(wsId);
+    await other.pullAll(wsId);
+    await fs.writeFile(path.join(otherRoot, "a.txt"), "from m2");
+    await other.pushAll(wsId);
+
+    // Push used to open with a two-way syncWorkspace, which would download
+    // m2's version over the local file before pushing anything.
+    await user.pushAll(wsId);
+    expect(await fs.readFile(filePath, "utf8")).toBe("one");
+
+    const cfg = await WorkspaceConfigManager.load(root);
+    const entry = cfg.files.find((f) => f.localPath === "a.txt");
+    expect(entry?.syncStatus).toBe("cloud_newer");
+  });
+
   it("пользовательский движок делает то же самое без отказа", async () => {
     const { provider, user, wsId, filePath } = await setup();
     await fs.writeFile(filePath, "one-changed");

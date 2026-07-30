@@ -51,10 +51,8 @@ import { isDeltaSyncEligible } from "./deltaSyncGate.js";
 import { assertMutationAllowed, mutationPolicy, type MutationOp, type SyncTrigger } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
 import {
-  isPullMetaCloudWriteActive,
   isSecondaryWorkspaceInstanceReadOnly,
   rejectIfSecondaryWorkspaceInstanceReadOnly,
-  withPullCloudMetaWriteAllowed,
 } from "./syncWorkspaceInstanceReadOnly.js";
 import type { ActivityEventInput } from "./activityLog.js";
 import type { SyncTransferEvent } from "./syncStatsStore.js";
@@ -1524,7 +1522,7 @@ export class SyncEngine {
     if (!entTgt3) {
       throw new Error("Целевой workspace пропал из конфига после putManifest.");
     }
-    await this.pushMetaJson(targetWorkspaceId, mergedMeta, entTgt3.metaEtag);
+    await this.pushMetaJson(targetWorkspaceId, mergedMeta, entTgt3.metaEtag, "push");
 
     if (!deleteSourceWorkspace) {
       await this.evacuateMergedSourceWorkspace(sourceWorkspaceId, srcManifestFull);
@@ -1581,7 +1579,7 @@ export class SyncEngine {
     if (!entAfter) {
       throw new Error("источник пропал после putManifest (evacuate)");
     }
-    await this.pushMetaJson(sourceWorkspaceId, EMPTY_META_JSON, entAfter.metaEtag);
+    await this.pushMetaJson(sourceWorkspaceId, EMPTY_META_JSON, entAfter.metaEtag, "push");
   }
 
   /**
@@ -2174,7 +2172,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2292,7 +2290,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2379,7 +2377,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2503,7 +2501,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -3008,7 +3006,7 @@ export class SyncEngine {
       applied += 1;
     }
     if (applied > 0) {
-      await this.pushMetaJson(workspaceId, updated, ent.metaEtag);
+      await this.pushMetaJson(workspaceId, updated, ent.metaEtag, "push");
     }
     return { applied, skippedMissing, skippedDrift, skippedAlreadyDone };
   }
@@ -3045,9 +3043,23 @@ export class SyncEngine {
     }
   }
 
-  private async pushMetaJson(workspaceId: string, meta: MetaJson, ifMatch: string | undefined): Promise<string> {
+  /**
+   * `reason` is required: every `_meta` write states whether it records a push
+   * or completes a pull. The distinction used to travel through a process-wide
+   * depth counter (`withPullCloudMetaWriteAllowed`) — while any parallel pull
+   * held the window open, an unrelated push on a read-only secondary instance
+   * slipped through the check (F7). An argument cannot leak across operations.
+   */
+  private async pushMetaJson(
+    workspaceId: string,
+    meta: MetaJson,
+    ifMatch: string | undefined,
+    reason: "push" | "pull-completion",
+  ): Promise<string> {
     this.assertMayMutate("pushMetaJson");
-    if (isSecondaryWorkspaceInstanceReadOnly() && !isPullMetaCloudWriteActive()) {
+    // A secondary window may finish its own pull (recording what it just
+    // downloaded); everything else is a cloud write it must not make.
+    if (reason !== "pull-completion") {
       rejectIfSecondaryWorkspaceInstanceReadOnly();
     }
     await this.ensureNotFrozenForCloudWrites(workspaceId);
@@ -3754,7 +3766,18 @@ export class SyncEngine {
           total: ids.length,
         });
         let pushedFiles = 0;
-        await this.syncWorkspace(id);
+        // Push means push. This used to be `syncWorkspace(id)`, so the Push
+        // command started with a two-way pass: pulling cloud-newer files over
+        // local ones and auto-resolving conflicts before a single byte went
+        // up (B17). Now it refreshes statuses the way the detector does —
+        // manifest, meta, per-file compare, no data movement — and then only
+        // uploads. Adopt/prune still applies here (user-triggered pass).
+        const ctxPush = await this.loadWorkspaceSyncContext(id);
+        if (ctxPush) {
+          await this.iterateTrackedFiles(
+            ctxPush.cfg, id, ctxPush.manifest, ctxPush.trackedFiles, ctxPush.meta, true,
+          );
+        }
         const c2 = await this.loadCfg();
         const entry = c2.activeWorkspaces.find((w) => w.workspaceId === id);
         if (!entry) {
@@ -4095,7 +4118,7 @@ export class SyncEngine {
             [posixRel]: row,
           },
         };
-        await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag);
+        await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "push");
         if (this.deps.onPushFile) {
           try {
             this.deps.onPushFile(workspaceId, posixRel, plaintextBufLocked, {
@@ -4458,7 +4481,7 @@ export class SyncEngine {
         [posixRel]: rowMeta,
       },
     };
-    await withPullCloudMetaWriteAllowed(() => this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag));
+    await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "pull-completion");
     file.localHash = hash;
     file.lastSync = new Date().toISOString();
     file.syncStatus = "ok";
