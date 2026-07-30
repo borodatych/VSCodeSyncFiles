@@ -101,6 +101,26 @@ export const STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT = 3 * 3600_000;
 /** Backwards-compat alias — engine callers can still read the default directly. */
 export const STALE_MANIFEST_EDITING_LOCK_MS = STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT;
 
+/**
+ * Cloud manifest could not be parsed.
+ *
+ * Distinct from "manifest absent": absence means the workspace was deleted
+ * elsewhere and local detach is correct, whereas a corrupt body means we simply
+ * do not know, and destroying local tracking over it is never right.
+ */
+export class ManifestCorruptError extends Error {
+  constructor(
+    readonly workspaceId: string,
+    readonly reason: string,
+  ) {
+    super(
+      `VSCodeSync: облачный манифест воркспейса ${workspaceId} повреждён (${reason}). ` +
+        "Локальный трекинг сохранён. Используйте «Repair cloud manifest», если повреждение постоянное.",
+    );
+    this.name = "ManifestCorruptError";
+  }
+}
+
 /** Файл, потерявший синхронизацию: отслеживался локально, но исчез из облачного манифеста (tombstone очищен). */
 export interface PurgeLostFileItem {
   workspaceId: string;
@@ -2385,7 +2405,6 @@ export class SyncEngine {
       }
       const full = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
       const m = this.parseManifestSafe(workspaceId, full.body);
-      if (!m) return null;
       this.manifestByWs.set(workspaceId, m);
       if (full.etag) {
         await this.patchEntry(workspaceId, {
@@ -2396,7 +2415,6 @@ export class SyncEngine {
       return m;
     }
     const m = this.parseManifestSafe(workspaceId, dl.body);
-    if (!m) return null;
     this.manifestByWs.set(workspaceId, m);
     if (dl.etag) {
       await this.patchEntry(workspaceId, {
@@ -2412,7 +2430,7 @@ export class SyncEngine {
    * returns `null` so callers fall through to the «manifest gone» recovery
    * path — which will surface to the user (auto-detach or rebuild).
    */
-  private parseManifestSafe(workspaceId: string, body: Buffer): CloudManifest | null {
+  private parseManifestSafe(workspaceId: string, body: Buffer): CloudManifest {
     try {
       const parsed = JSON.parse(body.toString("utf8")) as CloudManifest;
       if (!parsed.workspaceId || !Array.isArray(parsed.files)) {
@@ -2423,7 +2441,13 @@ export class SyncEngine {
       const reason = e instanceof Error ? e.message : String(e);
       warnLog("syncEngine", `manifest corrupt for ${workspaceId}: ${reason}`);
       this.deps.onCorruptManifest?.(workspaceId, reason);
-      return null;
+      // Throwing rather than returning null on purpose. `downloadManifest`
+      // returns null only for NOT_FOUND, and callers read that as "another
+      // machine deleted this workspace" — they detach it locally and wipe the
+      // tracking. A truncated response, a half-written manifest or a schema
+      // change would have taken the exact same branch and silently destroyed
+      // local state over what may well be a transient read.
+      throw new ManifestCorruptError(workspaceId, reason);
     }
   }
 
@@ -2865,6 +2889,10 @@ export class SyncEngine {
     }
     const manifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
     if (!manifest) {
+      // Reached only when the provider answered NOT_FOUND. A manifest that
+      // exists but fails to parse throws `ManifestCorruptError` instead, so it
+      // can no longer be mistaken for a deletion.
+      //
       // Manifest is gone from cloud — regardless of whether the folder has leftover content,
       // treat this as intentional deletion by another machine. Auto-detach locally and let
       // the user decide: remove locally (default) or re-upload to cloud.
@@ -3206,7 +3234,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set(cfg.activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces);
     const results: SyncPreviewWorkspace[] = [];
 
     for (const wsId of ids) {
@@ -3416,7 +3444,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set(cfg.activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces);
     const fileConcurrency = this.resolveFileConcurrency();
     const workspaceConcurrency = this.resolveWorkspaceConcurrency();
     const results: PushAllResult[] = new Array<PushAllResult>(ids.length);
@@ -3489,7 +3517,7 @@ export class SyncEngine {
   async pullAll(workspaceId?: string): Promise<void> {
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set((await this.loadCfg()).activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider((await this.loadCfg()).activeWorkspaces);
     const workspaceConcurrency = this.resolveWorkspaceConcurrency();
     await parallelLimit(
       ids,
@@ -3869,6 +3897,30 @@ export class SyncEngine {
       encrypt: this.deps.encrypt,
       decrypt: this.deps.decrypt,
     });
+  }
+
+  /**
+   * Workspaces that belong to the provider currently signed in.
+   *
+   * `providerType` is cached on the entry from the cloud manifest. Bulk
+   * operations used to walk *every* active workspace with whatever provider was
+   * active: a workspace created on Google Drive, visited with OneDrive selected,
+   * produced NOT_FOUND on its manifest — which the caller reads as "another
+   * machine deleted it" and responds to by detaching it locally and wiping its
+   * tracking. Entries with no cached `providerType` are kept: they predate the
+   * field, and excluding them would be its own kind of silent loss.
+   */
+  private workspaceIdsForCurrentProvider(entries: readonly ActiveWorkspaceEntry[]): string[] {
+    const active = this.deps.provider.type;
+    const kept = entries.filter((w) => w.providerType === undefined || w.providerType === active);
+    const skipped = entries.length - kept.length;
+    if (skipped > 0) {
+      verboseLog(
+        "syncEngine",
+        `пропущено воркспейсов чужого провайдера: ${String(skipped)} (активен ${active})`,
+      );
+    }
+    return [...new Set(kept.map((w) => w.workspaceId))];
   }
 
   private assertEncryptionReady(): void {
