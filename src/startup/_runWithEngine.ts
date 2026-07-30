@@ -61,29 +61,19 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
     const encKey = await getEncKey();
     const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, encKey);
     statusBar.setSyncing(true);
+    let failure: unknown;
     try {
       await fn(engine, root, globalConfig);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (options?.showErrorDialog !== false) {
-        // Special handling for expired/missing credentials
-        if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
-          const gc = await globalConfig.load();
-          const providerName = gc.activeProvider ?? "провайдер";
-          const choice = await vscode.window.showErrorMessage(
-            `VSCodeSync: сессия ${providerName} истекла или недействительна. Необходима повторная авторизация.`,
-            "Войти снова",
-          );
-          if (choice === "Войти снова") {
-            await vscode.commands.executeCommand("vscodesync.setActiveProvider");
-          }
-        } else {
-          await vscode.window.showErrorMessage(`VSCodeSync: ${msg}`);
-        }
-      } else {
-        throw e;
-      }
+      failure = e;
     } finally {
+      // Refresh runs before any notification is shown. Previously the error
+      // branch awaited `showErrorMessage`, whose promise settles only when the
+      // user dismisses the toast — and a toast carrying a button does not
+      // self-dismiss, it parks in the notification centre. Until the user
+      // clicked, this `finally` never ran: the status bar kept claiming
+      // "Синхронизация…", the tree and decorations stayed stale. That is the
+      // wrapper around all 167 commands.
       verboseLog("rwe", `#${String(n)} finally`);
       statusBar.setSyncing(false);
       await statusBar.refresh();
@@ -91,5 +81,41 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
       fileDecorations.refresh();
       void refreshActiveEditorSyncContext();
     }
+
+    if (failure === undefined) return;
+    if (options?.showErrorDialog === false) throw toError(failure);
+    // Fire-and-forget: the dialog only offers a follow-up action, so the
+    // command promise must not hang on the user reading it.
+    void reportEngineFailure(failure, globalConfig);
   };
+}
+
+/** Normalise anything a rejected promise may carry into a real `Error`. */
+function toError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  if (typeof value === "string") return new Error(value);
+  if (typeof value === "number" || typeof value === "boolean") return new Error(String(value));
+  if (value === undefined || value === null) return new Error("Unknown error");
+  return new Error(JSON.stringify(value));
+}
+
+/** Surface a failed engine run. Never awaited by the caller — see `finally` above. */
+async function reportEngineFailure(
+  failure: unknown,
+  globalConfig: GlobalConfigManager,
+): Promise<void> {
+  if (failure instanceof ProviderError && failure.code === "UNAUTHORIZED") {
+    const gc = await globalConfig.load();
+    const providerName = gc.activeProvider ?? "провайдер";
+    const choice = await vscode.window.showErrorMessage(
+      `VSCodeSync: сессия ${providerName} истекла или недействительна. Необходима повторная авторизация.`,
+      "Войти снова",
+    );
+    if (choice === "Войти снова") {
+      await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+    }
+    return;
+  }
+  const msg = failure instanceof Error ? failure.message : String(failure);
+  await vscode.window.showErrorMessage(`VSCodeSync: ${msg}`);
 }

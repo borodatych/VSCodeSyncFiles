@@ -20,6 +20,16 @@ import { readPassiveOnlineHint } from "../utils/readNavigatorOnline.js";
 import { loadActivityFile } from "../core/activityLog.js";
 import { sparkline, bucketHourly } from "../utils/sparkline.js";
 import { parseAutoSyncMode } from "../core/autoSyncMode.js";
+import { warnLog } from "../utils/log.js";
+
+/**
+ * If the "syncing" depth stays positive this long, some caller incremented it
+ * and never decremented. Sitting on a permanent spinner is exactly what the
+ * extension looked like when it hung, so the depth is force-reset and logged.
+ * Comfortably above the file-lock hold deadline, so a legitimately slow
+ * operation is never cut short by this.
+ */
+const SYNCING_WATCHDOG_MS = 10 * 60_000;
 
 function autoSyncModeBadge(mode: ReturnType<typeof parseAutoSyncMode>): string {
   switch (mode) {
@@ -114,7 +124,17 @@ export class SyncStatusBarController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   /** Watchers for `.vscode/vscodesync.json` per folder — rebound on workspace folder changes. */
   private workspaceJsonWatchDisposables: vscode.Disposable[] = [];
-  private syncing = false;
+  /**
+   * Nesting depth of "sync in progress", not a flag.
+   *
+   * Seven independent call sites toggle this — commands, save triggers, offline
+   * flush, schedule flush, quiet full sync, scheduled helpers — and with a plain
+   * boolean whichever finished first switched the spinner off for everyone else
+   * (and, symmetrically, could leave it on after everything had finished).
+   */
+  private syncingDepth = 0;
+  /** Fires when the depth stays positive implausibly long — see `armSyncingWatchdog`. */
+  private syncingWatchdog: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: SyncStatusBarDeps) {
     this.item = vscode.window.createStatusBarItem("vscodesync.syncStatus", vscode.StatusBarAlignment.Left, 100);
@@ -218,9 +238,37 @@ export class SyncStatusBarController implements vscode.Disposable {
   }
 
   setSyncing(on: boolean): void {
-    this.syncing = on;
-    this.deps.onSyncingChange?.(on);
+    const was = this.syncingDepth > 0;
+    this.syncingDepth = on ? this.syncingDepth + 1 : Math.max(0, this.syncingDepth - 1);
+    const now = this.syncingDepth > 0;
+    this.armSyncingWatchdog(now);
+    if (was !== now) {
+      this.deps.onSyncingChange?.(now);
+    }
     void this.refresh();
+  }
+
+  /**
+   * Backstop against a caller that increments and never decrements — a `finally`
+   * that never runs leaves the status bar claiming "Синхронизация…" forever,
+   * which is exactly what the extension looked like when it hung.
+   */
+  private armSyncingWatchdog(active: boolean): void {
+    if (this.syncingWatchdog !== undefined) {
+      clearTimeout(this.syncingWatchdog);
+      this.syncingWatchdog = undefined;
+    }
+    if (!active) return;
+    this.syncingWatchdog = setTimeout(() => {
+      warnLog(
+        "statusBar",
+        `spinner stuck for ${String(SYNCING_WATCHDOG_MS)}ms with depth=${String(this.syncingDepth)} — forcing reset`,
+      );
+      this.syncingDepth = 0;
+      this.syncingWatchdog = undefined;
+      this.deps.onSyncingChange?.(false);
+      void this.refresh();
+    }, SYNCING_WATCHDOG_MS);
   }
 
   private async loadAllFolderStates(): Promise<FolderWorkspaceState[]> {
@@ -254,7 +302,7 @@ export class SyncStatusBarController implements vscode.Disposable {
     const offlineBadge =
       offlinePending > 0 || (hasStickyUnreachableHint() && !passiveOn);
 
-    if (this.syncing) {
+    if (this.syncingDepth > 0) {
       this.item.text = `$(loading~spin) ${plabel}`;
       this.item.tooltip = "VSCodeSync · синхронизация…";
       this.item.backgroundColor = undefined;
@@ -532,6 +580,10 @@ export class SyncStatusBarController implements vscode.Disposable {
   }
 
   dispose(): void {
+    if (this.syncingWatchdog !== undefined) {
+      clearTimeout(this.syncingWatchdog);
+      this.syncingWatchdog = undefined;
+    }
     this.item.dispose();
     for (const d of this.workspaceJsonWatchDisposables) {
       d.dispose();

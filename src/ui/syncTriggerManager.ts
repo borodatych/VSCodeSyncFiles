@@ -32,7 +32,16 @@ import {
   bumpOfflineFlushBackoff,
 } from "../core/syncOfflineFlushBackoff.js";
 import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
-import { verboseLog } from "../utils/log.js";
+import { verboseLog, warnLog } from "../utils/log.js";
+import { createTriggerLanes, type TriggerLane } from "../core/syncTriggerLanes.js";
+
+/**
+ * Per-step backstop inside a trigger lane. A step that outlives this is assumed
+ * wedged and its lane is released, so later triggers keep working instead of
+ * queueing behind it forever. Above the file-lock hold deadline on purpose:
+ * a legitimately slow operation should hit its own deadline, not this one.
+ */
+const TRIGGER_STEP_TIMEOUT_MS = 6 * 60_000;
 
 const CFG = "vscodesync";
 const GIT_EXT = "vscode.git";
@@ -84,32 +93,75 @@ type EngineUnreachableEnqueue =
  * document open (pull if syncOnOpen), Git post-commit (push tracked paths when pushOnCommit).
  */
 export function registerSyncTriggerManager(context: vscode.ExtensionContext, deps: SyncTriggerManagerDeps): void {
-  let chain: Promise<void> = Promise.resolve();
-  const serialize = (fn: () => Promise<void>): void => {
-    chain = chain.then(fn, fn).then(
-      () => undefined,
-      () => undefined,
-    );
+  // Trigger scheduling lives in `syncTriggerLanes` — pure and unit-tested there.
+  // Everything used to share a single promise chain, so a full pass over every
+  // workspace blocked the quick per-file push queued right after a save, and one
+  // step that never settled froze every later trigger for the lifetime of the
+  // window with the status bar stuck on "Синхронизация…".
+  const lanes = createTriggerLanes({
+    stepTimeoutMs: TRIGGER_STEP_TIMEOUT_MS,
+    onStepTimeout: (label, ms) => {
+      warnLog("trigger", `шаг "${label}" не завершился за ${String(ms)} мс — освобождаю очередь`);
+    },
+    onStepError: (label, e) => {
+      verboseLog("trigger", `шаг "${label}" завершился ошибкой: ${e instanceof Error ? e.message : String(e)}`);
+    },
+    onFullSkipped: (label) => {
+      verboseLog("trigger", `полный проход уже запланирован — пропускаю "${label}"`);
+    },
+  });
+
+  const serializeIn = (lane: TriggerLane, fn: () => Promise<void>, label: string): void => {
+    lanes.run(lane, fn, label);
   };
 
-  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const serialize = (fn: () => Promise<void>): void => {
+    serializeIn("file", fn, "file-op");
+  };
+
+  /**
+   * Pending debounced push per absolute path, together with the means to arm it
+   * again. `rearm` matters: a pull entering the same file used to *delete* the
+   * timer and stop there, so a file saved seconds before a background pull was
+   * never pushed at all — no status, no log, nothing. That is the "sometimes it
+   * just will not upload" report.
+   */
+  interface PendingSavePush {
+    timer: ReturnType<typeof setTimeout>;
+    rearm: () => void;
+  }
+  const saveTimers = new Map<string, PendingSavePush>();
+  /** Pushes parked because a pull holds the file; re-armed when the pull leaves. */
+  const parkedPushes = new Map<string, () => void>();
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const clearSaveDebounceForFile = (normalizedAbsLower: string): void => {
-    const target = normalizedAbsLower;
-    for (const [k, tid] of [...saveTimers.entries()]) {
-      const nk = path.normalize(k).replace(/\\/g, "/").toLowerCase();
-      if (nk === target) {
-        clearTimeout(tid);
-        saveTimers.delete(k);
-      }
+  const normalizeAbs = (abs: string): string =>
+    path.normalize(abs).replace(/\\/g, "/").toLowerCase();
+
+  /** Park (do not drop) the debounced push for a file a pull is about to touch. */
+  const parkSaveDebounceForFile = (normalizedAbsLower: string): void => {
+    for (const [k, pending] of [...saveTimers.entries()]) {
+      if (normalizeAbs(k) !== normalizedAbsLower) continue;
+      clearTimeout(pending.timer);
+      saveTimers.delete(k);
+      parkedPushes.set(normalizedAbsLower, pending.rearm);
+      verboseLog("trigger", `push отложен на время pull: ${k}`);
     }
+  };
+
+  /** Re-arm whatever the pull displaced, now that the file is free again. */
+  const resumeParkedPushForFile = (normalizedAbsLower: string): void => {
+    const rearm = parkedPushes.get(normalizedAbsLower);
+    if (!rearm) return;
+    parkedPushes.delete(normalizedAbsLower);
+    verboseLog("trigger", `pull завершён — возвращаю отложенный push: ${normalizedAbsLower}`);
+    rearm();
   };
 
   context.subscriptions.push(
     new vscode.Disposable(
       subscribeSyncFileLock((ev) => {
-        if (ev.type !== "enter" || ev.op !== "pull") {
+        if (ev.op !== "pull") {
           return;
         }
         void (async () => {
@@ -121,7 +173,12 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
           } catch {
             return;
           }
-          clearSaveDebounceForFile(path.normalize(abs).replace(/\\/g, "/").toLowerCase());
+          const key = normalizeAbs(abs);
+          if (ev.type === "enter") {
+            parkSaveDebounceForFile(key);
+          } else {
+            resumeParkedPushForFile(key);
+          }
         })();
       }),
     ),
@@ -306,13 +363,16 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
         const key = doc.uri.fsPath;
         const prev = saveTimers.get(key);
         if (prev !== undefined) {
-          clearTimeout(prev);
+          clearTimeout(prev.timer);
         }
-        const tid = setTimeout(() => {
-          saveTimers.delete(key);
-          serialize(() => pushAfterSave(folder.uri.fsPath, rel, fileEntry.workspaceId));
-        }, ms);
-        saveTimers.set(key, tid);
+        const arm = (): void => {
+          const timer = setTimeout(() => {
+            saveTimers.delete(key);
+            serialize(() => pushAfterSave(folder.uri.fsPath, rel, fileEntry.workspaceId));
+          }, ms);
+          saveTimers.set(key, { timer, rearm: arm });
+        };
+        arm();
       })();
     }),
 
@@ -338,7 +398,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
         if (!vscode.window.state.focused) {
           return;
         }
-        serialize(async () => {
+        serializeIn("full", async () => {
           if (syncSessionPause.isPaused()) {
             return;
           }
@@ -352,7 +412,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
             return;
           }
           await runFocusSyncAll();
-        });
+        }, "focus-full-sync");
       }, Math.max(0, delay));
     }),
 
@@ -414,10 +474,11 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
     }),
 
     new vscode.Disposable(() => {
-      for (const t of saveTimers.values()) {
-        clearTimeout(t);
+      for (const pending of saveTimers.values()) {
+        clearTimeout(pending.timer);
       }
       saveTimers.clear();
+      parkedPushes.clear();
       if (focusTimer !== undefined) {
         clearTimeout(focusTimer);
       }
