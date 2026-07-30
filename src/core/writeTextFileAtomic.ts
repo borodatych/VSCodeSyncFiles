@@ -41,8 +41,21 @@ export async function renameReplacingFileWithRetries(fromPath: string, toPath: s
   }
 }
 
+/**
+ * Monotonic per-process counter for temp names.
+ *
+ * The name used to be `<file>.<pid>.<Date.now()>.tmp`, which is *not* unique:
+ * two writes from the same process within the same millisecond produced
+ * identical paths. With workspaces syncing in parallel that is the normal case,
+ * not a corner case — both writers wrote into one temp file and both renamed it
+ * over the target, so one config version vanished entirely.
+ */
+let tmpSequence = 0;
+
 function tmpPathNextTo(filePath: string): string {
-  return `${filePath}.${String(process.pid)}.${String(Date.now())}.tmp`;
+  tmpSequence += 1;
+  const unique = `${String(process.pid)}.${String(Date.now())}.${String(tmpSequence)}`;
+  return `${filePath}.${unique}.tmp`;
 }
 
 /**

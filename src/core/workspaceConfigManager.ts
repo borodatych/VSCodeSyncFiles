@@ -1,60 +1,47 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
+/**
+ * Public façade over `.vscode/vscodesync.json`.
+ *
+ * Every read and write in the extension goes through here, and every one of
+ * them is now served by the single per-root owner in `workspaceConfigStore`:
+ * reads come from one in-memory copy, writes run on a serialised queue.
+ *
+ * Before that, each of the ~15 call sites did its own open read-modify-write
+ * against the file. With `sync.workspaceConcurrency` defaulting to 2 the steps
+ * interleaved and the later write silently discarded whatever the earlier one
+ * had recorded — statuses, etags, `lastSync`, tracked files.
+ *
+ * The façade is deliberately kept: routing 15 call sites through a new API
+ * would have left the old one available, and the next call site added would
+ * have reached for it.
+ */
 import type { WorkspaceConfig } from "./types.js";
-import { writeTextFileAtomic } from "./writeTextFileAtomic.js";
-
-const REL_PATH = path.join(".vscode", "vscodesync.json");
-
-function sanitizePathMapping(raw: unknown): Record<string, string> | undefined {
-  if (raw === undefined || raw === null || typeof raw !== "object") {
-    return undefined;
-  }
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    const kk = k.trim();
-    if (!kk || typeof v !== "string") {
-      continue;
-    }
-    const vv = v.trim();
-    if (vv.length > 0) {
-      out[kk] = vv;
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function defaultWorkspaceConfig(): WorkspaceConfig {
-  return { activeWorkspaces: [], files: [] };
-}
-
-function getConfigPath(workspaceRoot: string): string {
-  return path.join(workspaceRoot, REL_PATH);
-}
+import { workspaceConfigPath } from "./workspaceConfigFile.js";
+import { getWorkspaceConfigStore } from "./workspaceConfigStore.js";
 
 export const WorkspaceConfigManager = {
-  getConfigPath,
+  getConfigPath: workspaceConfigPath,
 
-  async load(workspaceRoot: string): Promise<WorkspaceConfig> {
-    const filePath = getConfigPath(workspaceRoot);
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      const data = JSON.parse(raw) as Partial<WorkspaceConfig>;
-      return {
-        activeWorkspaces: data.activeWorkspaces ?? [],
-        files: data.files ?? [],
-        pathMapping: sanitizePathMapping(data.pathMapping),
-      };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw e;
-      }
-      return defaultWorkspaceConfig();
-    }
+  load(workspaceRoot: string): Promise<WorkspaceConfig> {
+    return getWorkspaceConfigStore(workspaceRoot).load();
   },
 
-  async save(config: WorkspaceConfig, workspaceRoot: string): Promise<void> {
-    const filePath = getConfigPath(workspaceRoot);
-    const body = `${JSON.stringify(config, null, 2)}\n`;
-    await writeTextFileAtomic(filePath, body);
+  save(config: WorkspaceConfig, workspaceRoot: string): Promise<void> {
+    return getWorkspaceConfigStore(workspaceRoot).save(config);
+  },
+
+  /**
+   * Serialised read-modify-write. Prefer this over `load` + mutate + `save`:
+   * only this form is atomic against a concurrent workspace branch.
+   */
+  mutate<T>(
+    workspaceRoot: string,
+    fn: (config: WorkspaceConfig) => Promise<T> | T,
+  ): Promise<T> {
+    return getWorkspaceConfigStore(workspaceRoot).mutate(fn);
+  },
+
+  /** Drop the in-memory copy — next `load` re-reads from disk. */
+  invalidate(workspaceRoot: string): void {
+    getWorkspaceConfigStore(workspaceRoot).invalidate();
   },
 };

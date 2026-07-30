@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 import { normalizeWorkspaceSyncState } from "./types.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
+import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./workspaceConfigStore.js";
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
   CLOUD_ROOT_DIR,
@@ -1025,12 +1026,17 @@ export class SyncEngine {
     }
   }
 
+  /** Single owner of `.vscode/vscodesync.json` for this workspace root. */
+  private get cfgStore(): WorkspaceConfigStore {
+    return getWorkspaceConfigStore(this.deps.workspaceRoot);
+  }
+
   private async loadCfg(): Promise<WorkspaceConfig> {
-    return WorkspaceConfigManager.load(this.deps.workspaceRoot);
+    return this.cfgStore.load();
   }
 
   private async saveCfg(c: WorkspaceConfig): Promise<void> {
-    return WorkspaceConfigManager.save(c, this.deps.workspaceRoot);
+    return this.cfgStore.save(c);
   }
 
   private posixRel(cfg: WorkspaceConfig, fsPath: string): string {
@@ -1055,13 +1061,15 @@ export class SyncEngine {
   }
 
   private async patchEntry(workspaceId: string, patch: Partial<ActiveWorkspaceEntry>): Promise<void> {
-    const cfg = await this.loadCfg();
-    const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
-    if (ix < 0) {
-      throw new Error(`active workspace not found: ${workspaceId}`);
-    }
-    cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], ...patch };
-    await this.saveCfg(cfg);
+    // Runs inside the store's serialised queue: load, mutate and save cannot be
+    // interleaved by another workspace branch any more.
+    await this.cfgStore.mutate((cfg) => {
+      const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
+      if (ix < 0) {
+        throw new Error(`active workspace not found: ${workspaceId}`);
+      }
+      cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], ...patch };
+    });
   }
 
   private findTracked(cfg: WorkspaceConfig, workspaceId: string, posixRel: string): TrackedFile | undefined {
