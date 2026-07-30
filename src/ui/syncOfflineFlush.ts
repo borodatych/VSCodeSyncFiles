@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { OfflineQuickTransferQueueItem, OfflineQueueItem, SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
+import { warnLog } from "../utils/log.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
@@ -87,8 +88,15 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
   deps.statusBar.setSyncing(true);
   let abortedQtForNetwork = false;
+  // The queue is drained *before* anything runs, so an item whose operation
+  // fails is simply gone: the old code swallowed every file-op error with
+  // `catch { /* best-effort */ }`, the user was told "processed N items", and
+  // the work was never retried. Failures are collected here and put back.
+  const failedOps: OfflineQueueItem[] = [];
+  let abortedOpsForNetwork = false;
   try {
-    for (const item of fileOps) {
+    for (let opIx = 0; opIx < fileOps.length; opIx += 1) {
+      const item = fileOps[opIx];
       const root = item.root;
       const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName);
       const cfg = await WorkspaceConfigManager.load(root);
@@ -110,20 +118,39 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
         try {
           await engine.pushFile(cfg, item.workspaceId, item.rel, entry);
           await WorkspaceConfigManager.save(cfg, root);
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          if (isLikelyUnreachableError(e)) {
+            // Network is gone again: keep this item and everything after it.
+            await store.prependItems(fileOps.slice(opIx));
+            bumpOfflineFlushBackoff();
+            allowImmediateOfflineFlushRetry();
+            noteCloudTransportFailure();
+            abortedOpsForNetwork = true;
+            break;
+          }
+          failedOps.push(item);
+          warnLog("offlineFlush", `push ${item.rel}: ${e instanceof Error ? e.message : String(e)}`);
         }
       } else {
         try {
           await engine.pullFile(cfg, item.workspaceId, item.rel, entry);
           await WorkspaceConfigManager.save(cfg, root);
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          if (isLikelyUnreachableError(e)) {
+            await store.prependItems(fileOps.slice(opIx));
+            bumpOfflineFlushBackoff();
+            allowImmediateOfflineFlushRetry();
+            noteCloudTransportFailure();
+            abortedOpsForNetwork = true;
+            break;
+          }
+          failedOps.push(item);
+          warnLog("offlineFlush", `pull ${item.rel}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
 
-    for (let i = 0; i < activeQt.length; i++) {
+    for (let i = 0; i < activeQt.length && !abortedOpsForNetwork; i++) {
       const qt = activeQt[i];
       try {
         await sendQuickTransferFile(provider, {
@@ -157,12 +184,25 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
     await deps.statusBar.refresh();
   }
 
-  if (abortedQtForNetwork) {
+  if (abortedQtForNetwork || abortedOpsForNetwork) {
     return;
+  }
+
+  // Items that failed for a non-network reason go back into the queue instead
+  // of disappearing. They are appended, not prepended, so a permanently broken
+  // item cannot starve the rest of the queue on every flush.
+  if (failedOps.length > 0) {
+    await store.prependItems(failedOps);
+    void vscode.window.showWarningMessage(
+      `VSCodeSync: оффлайн-очередь — не удалось выполнить элементов: ${String(failedOps.length)}. ` +
+        "Они возвращены в очередь, подробности — в канале Diagnostics.",
+    );
   }
 
   resetOfflineFlushBackoff();
   noteCloudTransportSuccess();
-  const n = tail.length + (hadFull ? 1 : 0);
-  void vscode.window.showInformationMessage(`VSCodeSync: оффлайн-очередь — обработано элементов: ${String(n)}.`);
+  const processed = tail.length + (hadFull ? 1 : 0) - failedOps.length;
+  void vscode.window.showInformationMessage(
+    `VSCodeSync: оффлайн-очередь — обработано элементов: ${String(processed)}.`,
+  );
 }

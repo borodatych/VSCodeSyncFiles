@@ -2078,22 +2078,23 @@ export class SyncEngine {
     };
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
 
+    // Two passes on purpose. Deletion used to happen inside the same loop that
+    // built the tombstones, while the mass-change guard only runs later, inside
+    // `putManifest`. By the time the user was asked "about to tombstone 500
+    // files, continue?" all 500 blobs were already gone — and answering "no"
+    // left the data deleted and the manifest untouched, the worst of both.
+    // Pass 1 computes what the manifest would become and asks; pass 2 deletes.
+    const plannedRemovals: { posixRel: string; cloudPath: string }[] = [];
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
       const tracked = this.findTracked(cfg, workspaceId, posixRel);
-      const cloudPath = tracked?.cloudPath ?? trackedFileCloudPath(workspaceId, posixRel);
+      const cloudPath =
+        tracked?.cloudPath ??
+        blobCloudPath(workspaceId, posixRel, meta.files[posixRel]?.wireGzip === true);
+      plannedRemovals.push({ posixRel, cloudPath });
+    }
 
-      try {
-        await this.deps.provider.deleteFile(cloudPath);
-      } catch (e) {
-        if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
-          throw e;
-        }
-      }
-      meta.files = Object.fromEntries(
-        Object.entries(meta.files).filter(([key]) => key !== posixRel),
-      );
-
+    for (const { posixRel } of plannedRemovals) {
       const mfIx = localCopy.files.findIndex((f) => f.path === posixRel);
       const nextVer = this.nextManifestVersion(localCopy.files);
       if (mfIx >= 0) {
@@ -2112,6 +2113,32 @@ export class SyncEngine {
           removedAt: now,
         });
       }
+    }
+
+    // Ask before anything is destroyed.
+    if (this.deps.onMassChange) {
+      const report = detectMassChange(remoteManifest, localCopy);
+      if (report.triggered) {
+        const proceed = await this.deps.onMassChange(workspaceId, report);
+        if (!proceed) {
+          throw new WorkspacePolicyError(
+            "VSCodeSync: удаление отменено пользователем (защита от массового изменения). Ничего не удалено.",
+          );
+        }
+      }
+    }
+
+    for (const { posixRel, cloudPath } of plannedRemovals) {
+      try {
+        await this.deps.provider.deleteFile(cloudPath);
+      } catch (e) {
+        if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
+          throw e;
+        }
+      }
+      meta.files = Object.fromEntries(
+        Object.entries(meta.files).filter(([key]) => key !== posixRel),
+      );
       this.fireActivity({
         kind: "remove",
         workspaceId,
@@ -2122,7 +2149,7 @@ export class SyncEngine {
       });
     }
 
-    const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
+    const relSet = new Set(plannedRemovals.map((r) => r.posixRel));
     cfg.files = cfg.files.filter((f) => !(f.workspaceId === workspaceId && relSet.has(f.localPath)));
 
     let diskCfg = await this.loadCfg();
