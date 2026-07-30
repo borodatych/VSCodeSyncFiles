@@ -2,9 +2,11 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
     tags:
       - "v*"
+  pull_request:
+    branches: [main, next]
 
 jobs:
   release:
@@ -19,8 +21,8 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
+      # `verify` = typecheck + lint + compile + web-bundle check + unit tests.
+      - run: npm run verify
       - run: npm run package
       - name: Pick VSIX
         id: pick
@@ -57,9 +59,14 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run compile
+      # `verify` = typecheck + lint + compile + web-bundle check + unit tests.
+      # Typecheck and the web-bundle check were previously absent from CI, so
+      # `tsc` errors and Node builtins leaking into the browser bundle could
+      # only be caught by hand.
+      - run: npm run verify
+      - name: Integration tests (headless VS Code)
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run -a npm run test:integration
       - name: Upload VSIX (artifact)
         if: matrix.os == 'ubuntu-latest'
         run: npm run package

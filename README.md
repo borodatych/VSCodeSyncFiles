@@ -117,21 +117,21 @@
 |----------|-------------|----------|
 | `vscodesync.notificationLevel` | `normal` | `silent` · `normal` · `verbose` |
 | `vscodesync.showFileDecorations` | `true` | Значки статуса синхронизации в Проводнике |
-| `vscodesync.maxFileSizeMB` | `10` | Пропускать файлы крупнее этого размера |
+| `vscodesync.maxFileSizeMB` | `5` | Пропускать файлы крупнее этого размера |
 | `vscodesync.encryption` | `false` | Шифровать блобы воркспейса (AES-256-GCM) |
 | `vscodesync.aiMerge.enabled` | `false` | Использовать GitHub Copilot для разрешения конфликтов |
 | `vscodesync.watchMode` | `false` | Автосинхронизация при сохранении файла |
 | `vscodesync.watchIntervalSeconds` | `30` | Минимальный интервал опроса в watch-режиме |
-| `vscodesync.deltaSync` | `true` | Загружать только изменённые части файла |
-| `vscodesync.compressUploads` | `true` | Gzip-сжатие перед загрузкой (отключить при шифровании) |
-| `vscodesync.lineEnding` | `preserve` | `lf` · `crlf` · `preserve` |
+| `vscodesync.deltaSync` | `false` | Загружать только изменённые части файла |
+| `vscodesync.compressUploads` | `false` | Gzip-сжатие перед загрузкой (отключить при шифровании) |
+| `vscodesync.lineEnding` | `lf` | `lf` · `crlf` · `preserve` |
 | `vscodesync.syncSchedule` | — | Ограничить синхронизацию определёнными часами/днями |
 | `vscodesync.localBackupEnabled` | `true` | Хранить локальные резервные копии перед перезаписью |
-| `vscodesync.snapshotRetentionDays` | `30` | Автоудаление старых снимков |
+| `vscodesync.snapshotRetentionDays` | `180` | Автоудаление старых снимков |
 | `vscodesync.quickTransferTtlDays` | `7` | Срок хранения файлов быстрой передачи в облаке |
-| `vscodesync.gitBranchAutoSync` | `false` | Переключать активный воркспейс при смене Git-ветки |
+| `vscodesync.gitBranchAutoSync` | `true` | Переключать активный воркспейс при смене Git-ветки |
 | `vscodesync.p2p.experimental` | `false` | Включить P2P-сессии (WebRTC прямой канал) |
-| `vscodesync.aiMerge.endpointModel` | `vscode-lm` | Endpoint AI-merge: `vscode-lm` · `ollama` · `lm-studio` · custom URL |
+| `vscodesync.aiMerge.endpointModel` | `llama3.2` | Endpoint AI-merge: `vscode-lm` · `ollama` · `lm-studio` · custom URL |
 | `vscodesync.ai.sessionSummary.enabled` | `false` | Разрешить отправку метаданных для AI-сводки сессии |
 | `vscodesync.ai.suggestWorkspaceTags.enabled` | `false` | Разрешить AI-подсказку тегов воркспейса |
 | `vscodesync.ai.pathMapper.enabled` | `false` | Разрешить AI-сопоставление путей при миграции |

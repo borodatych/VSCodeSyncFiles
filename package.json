@@ -286,6 +286,12 @@
           "minimum": 1,
           "description": "%cfg.snapshotRetentionDays.description%"
         },
+        "vscodesync.tombstonePurgeDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "%cfg.tombstonePurgeDays.description%"
+        },
         "vscodesync.maxSnapshotsPerWorkspace": {
           "type": "number",
           "default": 20,
@@ -523,7 +529,11 @@
         },
         "vscodesync.autoSyncMode": {
           "type": "string",
-          "enum": ["off", "check-only", "full"],
+          "enum": [
+            "off",
+            "check-only",
+            "full"
+          ],
           "default": "check-only",
           "markdownDescription": "%cfg.autoSyncMode.description%",
           "enumDescriptions": [
@@ -565,7 +575,10 @@
         },
         "vscodesync.verifyUploadHash": {
           "type": "string",
-          "enum": ["plaintext-only", "never"],
+          "enum": [
+            "plaintext-only",
+            "never"
+          ],
           "default": "plaintext-only",
           "markdownDescription": "%cfg.verifyUploadHash.description%",
           "enumDescriptions": [
@@ -582,7 +595,11 @@
         },
         "vscodesync.historyMode": {
           "type": "string",
-          "enum": ["inline", "lazy", "off"],
+          "enum": [
+            "inline",
+            "lazy",
+            "off"
+          ],
           "default": "inline",
           "markdownDescription": "%cfg.historyMode.description%",
           "enumDescriptions": [
@@ -708,37 +725,72 @@
       {
         "id": "vscodeSync.health.conflict",
         "description": "Workspace tree cloud icon — files in conflict (manual resolution required).",
-        "defaults": { "dark": "#DA3633", "light": "#CF222E", "highContrast": "#FF0000", "highContrastLight": "#B30000" }
+        "defaults": {
+          "dark": "#DA3633",
+          "light": "#CF222E",
+          "highContrast": "#FF0000",
+          "highContrastLight": "#B30000"
+        }
       },
       {
         "id": "vscodeSync.health.editing",
         "description": "Workspace tree cloud icon — soft-lock held by another machine.",
-        "defaults": { "dark": "#DAAA3F", "light": "#9A6700", "highContrast": "#FFD700", "highContrastLight": "#7A5200" }
+        "defaults": {
+          "dark": "#DAAA3F",
+          "light": "#9A6700",
+          "highContrast": "#FFD700",
+          "highContrastLight": "#7A5200"
+        }
       },
       {
         "id": "vscodeSync.health.noData",
         "description": "Workspace tree cloud icon — no tracked files or no valid lastSync (cold state).",
-        "defaults": { "dark": "#54AEFF", "light": "#0969DA", "highContrast": "#00BFFF", "highContrastLight": "#003F8F" }
+        "defaults": {
+          "dark": "#54AEFF",
+          "light": "#0969DA",
+          "highContrast": "#00BFFF",
+          "highContrastLight": "#003F8F"
+        }
       },
       {
         "id": "vscodeSync.health.staleDeep",
         "description": "Workspace tree cloud icon — all files in sync, but max(lastSync) > 14 days (very-very dark green).",
-        "defaults": { "dark": "#0E4019", "light": "#022A0F", "highContrast": "#003300", "highContrastLight": "#001A07" }
+        "defaults": {
+          "dark": "#0E4019",
+          "light": "#022A0F",
+          "highContrast": "#003300",
+          "highContrastLight": "#001A07"
+        }
       },
       {
         "id": "vscodeSync.health.staleOk",
         "description": "Workspace tree cloud icon — all files in sync, 48 h ≤ max(lastSync) ≤ 14 d (dark green).",
-        "defaults": { "dark": "#1A6B33", "light": "#044F1E", "highContrast": "#005500", "highContrastLight": "#02340F" }
+        "defaults": {
+          "dark": "#1A6B33",
+          "light": "#044F1E",
+          "highContrast": "#005500",
+          "highContrastLight": "#02340F"
+        }
       },
       {
         "id": "vscodeSync.health.recent",
         "description": "Workspace tree cloud icon — all files in sync, 12 h ≤ max(lastSync) < 48 h (medium green).",
-        "defaults": { "dark": "#2DA44E", "light": "#116329", "highContrast": "#00AA00", "highContrastLight": "#055A1B" }
+        "defaults": {
+          "dark": "#2DA44E",
+          "light": "#116329",
+          "highContrast": "#00AA00",
+          "highContrastLight": "#055A1B"
+        }
       },
       {
         "id": "vscodeSync.health.fresh",
         "description": "Workspace tree cloud icon — all files in sync, max(lastSync) < 12 h (bright green).",
-        "defaults": { "dark": "#3FB950", "light": "#1A7F37", "highContrast": "#00FF00", "highContrastLight": "#0E7A2D" }
+        "defaults": {
+          "dark": "#3FB950",
+          "light": "#1A7F37",
+          "highContrast": "#00FF00",
+          "highContrastLight": "#0E7A2D"
+        }
       }
     ],
     "viewsContainers": {
@@ -2026,13 +2078,15 @@
     ]
   },
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "compile": "node scripts/generate-web-stub-commands.mjs && node esbuild.mjs",
     "verify:web": "node scripts/verify-web-bundle.mjs",
     "watch": "node esbuild.mjs --watch",
     "lint": "eslint ./src ./tests ./cli/src",
-    "pretest": "npm run compile",
+    "pretest": "node scripts/generate-web-stub-commands.mjs",
     "test": "vitest run",
     "test:integration": "npm run compile && node ./tests/integration/runTest.cjs",
+    "verify": "npm run typecheck && npm run lint && npm run compile && npm run verify:web && npm run test",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies --allow-missing-repository",
     "prepare": "husky"
@@ -2042,7 +2096,7 @@
     "@types/mocha": "^10.0.9",
     "@types/node": "^20.17.6",
     "@types/vscode": "~1.80.0",
-    "@vscode/test-electron": "^2.4.1",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.0",
     "eslint": "^9.15.0",

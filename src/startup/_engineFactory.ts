@@ -161,6 +161,10 @@ export function createEngineFactory(): EngineFactory {
       leRaw === "crlf" || leRaw === "preserve" ? leRaw : "lf";
     const localBackupEnabled = cfg.get<boolean>("localBackupEnabled", true);
     const localBackupRetentionDays = cfg.get<number>("localBackupRetentionDays", 7);
+    // The engine already accepted `tombstonePurgeDays` and a user-facing warning
+    // quoted its value, but nothing ever passed it and the setting was not even
+    // declared — the number in that warning was always the hardcoded 30.
+    const tombstonePurgeDays = cfg.get<number>("tombstonePurgeDays", 30);
     const encryptionOn = cfg.get<boolean>("encryption", false);
     const compressUploads = cfg.get<boolean>("compressUploads", false);
     const key = encryptionOn && encKey ? encKey : null;
@@ -175,6 +179,7 @@ export function createEngineFactory(): EngineFactory {
       encodingLint: true,
       localBackupEnabled,
       localBackupRetentionDays,
+      tombstonePurgeDays,
       encrypt: key ? (buf) => encryptBuffer(key, buf) : undefined,
       decrypt: key ? (buf) => decryptBuffer(key, buf) : undefined,
       onFilePulled: makeOnFilePulledCallback(),

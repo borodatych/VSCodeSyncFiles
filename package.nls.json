@@ -200,6 +200,7 @@
   "cfg.localBackupEnabled.description": "Keep a local backup before overwriting on pull",
   "cfg.localBackupRetentionDays.description": "Days to retain files in vscodesync-local-backup",
   "cfg.snapshotRetentionDays.description": "Cloud snapshot TTL (days)",
+  "cfg.tombstonePurgeDays.description": "Days a deletion marker (tombstone) stays in the manifest. A machine that was offline longer than this loses the tracking of files deleted elsewhere.",
   "cfg.maxSnapshotsPerWorkspace.description": "Maximum snapshots per workspace",
   "cfg.longAbsenceThresholdDays.description": "«Long absence» threshold for hints (days)",
   "cfg.monthlyBandwidthLimitMB.description": "Monthly bandwidth limit (MB), 0 = unlimited",

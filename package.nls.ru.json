@@ -212,6 +212,7 @@
   "cfg.localBackupEnabled.description": "Локальный бэкап перед перезаписью при pull",
   "cfg.localBackupRetentionDays.description": "Сколько дней хранить файлы в vscodesync-local-backup",
   "cfg.snapshotRetentionDays.description": "TTL снапшотов workspace в облаке (дней)",
+  "cfg.tombstonePurgeDays.description": "Сколько дней метка удаления (tombstone) живёт в манифесте. Машина, пробывшая офлайн дольше, теряет отслеживание файлов, удалённых на другой машине.",
   "cfg.maxSnapshotsPerWorkspace.description": "Максимум снапшотов на один workspace",
   "cfg.longAbsenceThresholdDays.description": "Порог «долгого отсутствия» для подсказок (дней)",
   "cfg.monthlyBandwidthLimitMB.description": "Лимит трафика в месяц (МБ), 0 — без лимита",
