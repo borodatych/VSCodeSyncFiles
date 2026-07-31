@@ -22,7 +22,8 @@ export type WebviewKind =
   | "machineGraph"
   | "sankey"
   | "activityFeed"
-  | "quickTransferDrop";
+  | "quickTransferDrop"
+  | "divergences";
 
 export interface WebviewKindDescriptor {
   /** Stable id used by `createWebviewPanel(viewType, ...)` and consumed by
@@ -98,6 +99,17 @@ const REGISTRY: Record<WebviewKind, WebviewKindDescriptor> = {
     title: "Quick Transfer Drop",
     retainContextWhenHidden: false,
     enableScripts: true,
+    enableCommandUris: false,
+  },
+  divergences: {
+    viewType: "vscodesync.divergences",
+    title: "VSCodeSync · Расхождения",
+    // Selection is the user's work in progress — losing ten ticked checkboxes
+    // to a tab switch would be worse than the memory it costs to keep them.
+    retainContextWhenHidden: true,
+    enableScripts: true,
+    // The panel routes every action through a closed message protocol; command
+    // URIs would reintroduce "any command by name from the webview".
     enableCommandUris: false,
   },
 };

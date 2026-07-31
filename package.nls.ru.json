@@ -73,6 +73,7 @@
   "cmd.detachWorkspace.title": "VSCodeSync: Отвязать воркспейс...",
   "cmd.renameWorkspaceNote.title": "VSCodeSync: Переименовать заметку воркспейса",
   "cmd.showSyncSummary.title": "VSCodeSync: Показать сводку синхронизации",
+  "cmd.openDivergences.title": "VSCodeSync: Показать расхождения (отправить / скачать / конфликты)",
   "cmd.previewSync.title": "VSCodeSync: Предпросмотр синхронизации...",
   "cmd.onedriveSignIn.title": "VSCodeSync: Войти в OneDrive",
   "cmd.onedriveSignInHeadless.title": "VSCodeSync: Войти в OneDrive (Device Code, headless)",

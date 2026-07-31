@@ -82,6 +82,7 @@
   "cmd.detachWorkspace.title": "VSCodeSync: Detach workspace…",
   "cmd.renameWorkspaceNote.title": "VSCodeSync: Rename workspace note",
   "cmd.showSyncSummary.title": "VSCodeSync: Show sync summary",
+  "cmd.openDivergences.title": "VSCodeSync: Show divergences (push / pull / conflicts)",
   "cmd.previewSync.title": "VSCodeSync: Preview sync…",
   "cmd.onedriveSignIn.title": "VSCodeSync: Sign in to OneDrive",
   "cmd.onedriveSignInHeadless.title": "VSCodeSync: Sign in to OneDrive (Device Code, headless)",

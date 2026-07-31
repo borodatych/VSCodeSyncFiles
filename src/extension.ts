@@ -48,6 +48,7 @@ import { registerFileTreeContextCommands } from "./commands/registerFileTreeCont
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
+import { registerDivergenceNotice, registerDivergencesCommands, type DivergencesCommandsDeps } from "./commands/registerDivergences.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
 import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
 import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
@@ -264,6 +265,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerGitBranchWorkspaceActivation(context, gitBranchActivationDeps);
 
+  const divergencesDeps: DivergencesCommandsDeps = {
+    runWithEngine,
+    workspaceFolders: roots,
+    refreshUi: gitBranchActivationDeps.refreshUi,
+  };
+
+  registerDivergenceNotice(context, divergencesDeps);
+
   registerSyncMonitors({
     context,
     globalConfig,
@@ -355,6 +364,8 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerWorkspaceCreateCommands({ context, runWithEngine }),
 
     ...registerSyncOpsCommands({ runWithEngine }),
+
+    ...registerDivergencesCommands(divergencesDeps),
 
     ...registerDiagnosticsCommands({
       globalConfig,

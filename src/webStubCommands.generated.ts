@@ -24,6 +24,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.openSyncSettings",
   "vscodesync.toggleTelemetry",
   "vscodesync.showSyncSummary",
+  "vscodesync.openDivergences",
   "vscodesync.previewSync",
   "vscodesync.resolveConflicts",
   "vscodesync.keepMine",

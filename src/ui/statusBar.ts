@@ -138,8 +138,10 @@ export class SyncStatusBarController implements vscode.Disposable {
 
   constructor(private readonly deps: SyncStatusBarDeps) {
     this.item = vscode.window.createStatusBarItem("vscodesync.syncStatus", vscode.StatusBarAlignment.Left, 100);
-    this.item.command = "vscodesync.focusWorkspacesView";
-    this.item.tooltip = "VSCodeSync · клик — открыть панель Workspaces";
+    // §624 — the status bar is the entry point to the divergences panel: it
+    // shows the counts, the panel shows what they are and lets the user act.
+    this.item.command = "vscodesync.openDivergences";
+    this.item.tooltip = "VSCodeSync · клик — показать расхождения";
 
     this.rebindWorkspaceJsonWatchers();
 
@@ -330,7 +332,7 @@ export class SyncStatusBarController implements vscode.Disposable {
       this.item.show();
       return;
     }
-    this.item.command = "vscodesync.focusWorkspacesView";
+    this.item.command = "vscodesync.openDivergences";
 
     const loaded = await this.loadAllFolderStates();
     let wsCount = 0;
