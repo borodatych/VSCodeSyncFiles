@@ -37,8 +37,6 @@ function autoSyncModeBadge(mode: ReturnType<typeof parseAutoSyncMode>): string {
       return "$(eye-closed) auto:off";
     case "check-only":
       return "$(eye) auto:check";
-    case "full":
-      return "$(sync) auto:full";
   }
 }
 

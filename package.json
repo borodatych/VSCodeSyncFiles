@@ -536,33 +536,19 @@
           "type": "string",
           "enum": [
             "off",
-            "check-only",
-            "full"
+            "check-only"
           ],
           "default": "check-only",
           "markdownDescription": "%cfg.autoSyncMode.description%",
           "enumDescriptions": [
-            "Отключить любую автоматику. Никаких push/pull/проверок без явной команды пользователя.",
-            "Только проверять состояние файлов и подсвечивать в дереве (cloud_newer / local_newer / conflict). Никаких автоматических push и pull — пользователь жмёт Sync/Push/Pull сам.",
-            "Полная автосинхронизация — push на save (debounce), pull на open, full sync на focus, watch poll. Историческое поведение."
+            "Отключить любую автоматику. Никаких проверок и обращений к облаку без явной команды пользователя.",
+            "Только проверять состояние файлов и подсвечивать расхождения (панель, дерево, статус-бар). Отправка и скачивание — всегда по вашей команде."
           ]
-        },
-        "vscodesync.quietHours.start": {
-          "type": "string",
-          "default": "",
-          "pattern": "^(|([01]?[0-9]|2[0-3]):[0-5][0-9])$",
-          "markdownDescription": "Начало тихих часов в формате `HH:MM`. Если задано вместе с `quietHours.end` — `check-only` режим в эти часы апгрейдится до `full` (никто не работает — фоновая синхронизация безопасна). Пусто = выключено."
         },
         "vscodesync.webhookDigestUrl": {
           "type": "string",
           "default": "",
           "markdownDescription": "URL для webhook-дайджеста активности (Discord webhook, Slack webhook, Telegram bot `/sendMessage`, или generic JSON). Формат определяется по hostname URL. Команда — `VSCodeSync: Send Webhook Digest`."
-        },
-        "vscodesync.quietHours.end": {
-          "type": "string",
-          "default": "",
-          "pattern": "^(|([01]?[0-9]|2[0-3]):[0-5][0-9])$",
-          "markdownDescription": "Конец тихих часов (`HH:MM`). Может быть меньше `start` — окно переходит через полночь (например `22:00`→`08:00`)."
         },
         "vscodesync.sync.concurrency": {
           "type": "number",

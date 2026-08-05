@@ -412,7 +412,7 @@ function getSettingsHtml(): string {
   <div id="performance" class="section">
     <h2>🚀 Производительность и авто-режим</h2>
 
-    ${select("autoSyncMode","Режим автосинхронизации","Что делают автоматические триггеры (save / open / focus / watch / commit). off — ничего, check-only — только статусы, full — историческое поведение.",["off","check-only","full"])}
+    ${select("autoSyncMode","Режим авто-проверки","Что делают автоматические триггеры (save / open / focus / watch / commit). off — ничего, check-only — пересчёт статусов; отправка и скачивание всегда по команде.",["off","check-only"])}
     ${number("sync.concurrency","Параллелизм файлов","Сколько файлов синхронизировать параллельно в одном workspace. 1 = последовательно (старое).",1,32)}
     ${number("sync.workspaceConcurrency","Параллелизм workspace'ов","Сколько workspace'ов синкать параллельно при pushAll. Учитывайте rate-limit провайдера.",1,16)}
     ${select("verifyUploadHash","Проверка хэша после upload","plaintext-only — проверять только для незашифрованных файлов (старое). never — не проверять, экономия 1 GET на push.",["plaintext-only","never"])}

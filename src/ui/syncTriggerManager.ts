@@ -10,25 +10,14 @@ import type { SyncEngine } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { isIgnoredSyncTriggerPath, resolveSaveDebounceMs } from "../core/syncTriggerLogic.js";
-import {
-  isAutoCheckEnabled,
-  isAutoFullSyncEnabled,
-  parseAutoSyncMode,
-} from "../core/autoSyncMode.js";
+import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { subscribeSyncFileLock } from "../core/syncFileLock.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { fileLooksBinary } from "../utils/binaryDetect.js";
-import {
-  binarySkipMessage,
-  shouldAnnounceBinarySkip,
-} from "../core/binarySkipNotice.js";
 import type { SyncStatusBarController } from "./statusBar.js";
 import { runQuietFullSyncAllFolders } from "./quietFullSyncAllFolders.js";
-import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
-import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
@@ -52,7 +41,7 @@ const CFG = "vscodesync";
 const GIT_EXT = "vscode.git";
 
 /** v0.7 — read live setting `vscodesync.autoSyncMode`. */
-function currentAutoSyncMode(): "off" | "check-only" | "full" {
+function currentAutoSyncMode(): "off" | "check-only" {
   return parseAutoSyncMode(
     vscode.workspace.getConfiguration(CFG).get<string>("autoSyncMode", "check-only"),
   );
@@ -266,57 +255,24 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
     });
   };
 
-  const pushAfterSave = async (root: string, rel: string, workspaceId: string): Promise<void> => {
-    if (isSecondaryWorkspaceInstanceReadOnly()) {
-      return;
-    }
-    const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
-    const abs = path.join(root, ...rel.split("/"));
-    if (warnBin && (await fileLooksBinary(abs))) {
-      // Silence here used to mean the file was never pushed by automation and
-      // the user had no way to find out.
-      if (shouldAnnounceBinarySkip(root, rel)) {
-        void vscode.window.showWarningMessage(binarySkipMessage(rel));
+  /**
+   * Detector reaction shared by the save / open / commit triggers (stage 3.4).
+   *
+   * These used to call `pushFile` / `pullFile` when the mode was `full`; the
+   * mode is gone, so the events recount the file's workspace instead — cheap
+   * conditional GETs that refresh `syncStatus`, the tree and the panel. No
+   * offline enqueue on failure: a status pass that could not run has nothing
+   * to retry later, the next event recounts anyway.
+   */
+  const recountWorkspaceStatus = async (root: string, workspaceId: string): Promise<void> => {
+    await withEngine(root, async (engine) => {
+      const cfg = await WorkspaceConfigManager.load(root);
+      const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+      if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
+        return;
       }
-      return;
-    }
-    await withEngine(
-      root,
-      async (engine) => {
-        const cfg = await WorkspaceConfigManager.load(root);
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-        if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
-          return;
-        }
-        const fe = cfg.files.find((f) => f.localPath === rel && f.workspaceId === workspaceId);
-        if (!fe || fe.syncStatus === "conflict" || fe.editingBy) {
-          return;
-        }
-        await engine.pushFile(cfg, workspaceId, rel, entry);
-        await WorkspaceConfigManager.save(cfg, root);
-      },
-      { kind: "push", rel, workspaceId },
-    );
-  };
-
-  const pullOnOpen = async (root: string, rel: string, workspaceId: string): Promise<void> => {
-    await withEngine(
-      root,
-      async (engine) => {
-        const cfg = await WorkspaceConfigManager.load(root);
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-        if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
-          return;
-        }
-        const fe = cfg.files.find((f) => f.localPath === rel && f.workspaceId === workspaceId);
-        if (!fe || fe.syncStatus === "conflict") {
-          return;
-        }
-        await engine.pullFile(cfg, workspaceId, rel, entry);
-        await WorkspaceConfigManager.save(cfg, root);
-      },
-      { kind: "pull", rel, workspaceId },
-    );
+      await engine.checkWorkspaceStatus(workspaceId);
+    });
   };
 
   context.subscriptions.push(
@@ -327,10 +283,9 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       if (isIgnoredSyncTriggerPath(doc.uri.fsPath)) {
         return;
       }
-      // v0.7 — autoSyncMode: only `full` triggers an automatic push.
-      // `check-only` / `off` rely on the user pressing Push manually; the
-      // file-decoration tree will still show `pending_push`.
-      if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
+      // Stage 3.4 — a save recounts the file's workspace (detector); the
+      // automatic push it used to fire under `full` is gone with the mode.
+      if (!isAutoCheckEnabled(currentAutoSyncMode())) {
         return;
       }
       const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
@@ -365,11 +320,6 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
           await deps.statusBar.refresh();
           return;
         }
-        if (isAutoSyncBlockedBySchedule()) {
-          await deps.scheduleDeferred.enqueuePush(folder.uri.fsPath, rel, fileEntry.workspaceId);
-          await deps.statusBar.refresh();
-          return;
-        }
         const ms = resolveSaveDebounceMs(entry);
         const key = doc.uri.fsPath;
         const prev = saveTimers.get(key);
@@ -379,7 +329,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
         const arm = (): void => {
           const timer = setTimeout(() => {
             saveTimers.delete(key);
-            serialize(() => pushAfterSave(folder.uri.fsPath, rel, fileEntry.workspaceId));
+            serialize(() => recountWorkspaceStatus(folder.uri.fsPath, fileEntry.workspaceId));
           }, ms);
           saveTimers.set(key, { timer, rearm: arm });
         };
@@ -417,11 +367,6 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
             await deps.statusBar.refresh();
             return;
           }
-          if (isAutoSyncBlockedBySchedule()) {
-            await deps.scheduleDeferred.enqueueFullSync();
-            await deps.statusBar.refresh();
-            return;
-          }
           await runFocusSyncAll();
         }, "focus-full-sync");
       }, Math.max(0, delay));
@@ -438,10 +383,9 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
       if (!conf.get<boolean>("syncOnOpen", true)) {
         return;
       }
-      // v0.7 — auto pull-on-open requires `full` mode. In check-only the
-      // tree decoration tells the user a fresher version exists; they pull
-      // manually.
-      if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
+      // Stage 3.4 — opening a file recounts its workspace so the decoration
+      // and the panel are fresh; the automatic pull is gone with `full`.
+      if (!isAutoCheckEnabled(currentAutoSyncMode())) {
         return;
       }
       const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
@@ -475,12 +419,7 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
           await deps.statusBar.refresh();
           return;
         }
-        if (isAutoSyncBlockedBySchedule()) {
-          await deps.scheduleDeferred.enqueuePull(folder.uri.fsPath, rel, fileEntry.workspaceId);
-          await deps.statusBar.refresh();
-          return;
-        }
-        serialize(() => pullOnOpen(folder.uri.fsPath, rel, fileEntry.workspaceId));
+        serialize(() => recountWorkspaceStatus(folder.uri.fsPath, fileEntry.workspaceId));
       })();
     }),
 
@@ -515,27 +454,32 @@ async function gitFilesInCommit(repoRoot: string, commitHash: string): Promise<s
   }
 }
 
-async function enqueueDeferredGitPushesForRepo(
+/**
+ * Recount every workspace whose tracked files a commit touched (stage 3.4).
+ *
+ * Replaces the old push-on-commit body, which resolved each committed path,
+ * skipped binaries and pushed file by file. A recount needs none of that:
+ * `checkWorkspaceStatus` covers the whole workspace, so this only maps
+ * committed paths to workspace ids and deduplicates.
+ */
+async function recountCommittedWorkspaces(
   deps: SyncTriggerManagerDeps,
   workspaceFolderRoot: string,
   gitRepoRoot: string,
   committedRelToGit: string[],
+  withEngine: (root: string, fn: (engine: SyncEngine) => Promise<void>) => Promise<void>,
 ): Promise<void> {
-  if (isSecondaryWorkspaceInstanceReadOnly()) {
-    return;
-  }
   const normFolder = workspaceFolderRoot.replace(/\\/g, "/").toLowerCase();
   const normGit = gitRepoRoot.replace(/\\/g, "/").toLowerCase();
   if (!normFolder.startsWith(normGit) && !normGit.startsWith(normFolder)) {
     return;
   }
-
   const cfg = await WorkspaceConfigManager.load(workspaceFolderRoot);
   const gc = await deps.globalConfig.load();
+  const touchedWorkspaces = new Set<string>();
   for (const gitRel of committedRelToGit) {
     const abs = path.normalize(path.join(gitRepoRoot, gitRel.split("/").join(path.sep)));
-    const normAbs = abs.replace(/\\/g, "/").toLowerCase();
-    if (!normAbs.startsWith(normFolder)) {
+    if (!abs.replace(/\\/g, "/").toLowerCase().startsWith(normFolder)) {
       continue;
     }
     let relW: string;
@@ -545,15 +489,23 @@ async function enqueueDeferredGitPushesForRepo(
       continue;
     }
     const fe = cfg.files.find((f) => f.localPath === relW);
-    if (!fe || fe.syncStatus === "conflict" || fe.editingBy) {
-      continue;
+    if (fe) {
+      touchedWorkspaces.add(fe.workspaceId);
     }
-    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === fe.workspaceId);
-    if (!ent || normalizeWorkspaceSyncState(ent) !== "active") {
-      continue;
-    }
-    await deps.scheduleDeferred.enqueuePush(workspaceFolderRoot, relW, fe.workspaceId);
   }
+  if (touchedWorkspaces.size === 0) {
+    return;
+  }
+  await withEngine(workspaceFolderRoot, async (engine) => {
+    for (const wsId of touchedWorkspaces) {
+      const fresh = await WorkspaceConfigManager.load(workspaceFolderRoot);
+      const entry = fresh.activeWorkspaces.find((w) => w.workspaceId === wsId);
+      if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
+        continue;
+      }
+      await engine.checkWorkspaceStatus(wsId);
+    }
+  });
 }
 
 function registerGitPushOnCommit(
@@ -587,8 +539,10 @@ function registerGitPushOnCommit(
           if (syncSessionPause.isPaused()) {
             return;
           }
-          // v0.7 — auto push-on-commit requires `full` mode.
-          if (!isAutoFullSyncEnabled(currentAutoSyncMode())) {
+          // Stage 3.4 — a commit recounts the workspaces whose tracked files
+          // it touched; the automatic push is gone with `full`. `pushOnCommit`
+          // keeps its name but now only opts the recount in.
+          if (!isAutoCheckEnabled(currentAutoSyncMode())) {
             return;
           }
           if (!vscode.workspace.getConfiguration(CFG).get<boolean>("pushOnCommit", false)) {
@@ -598,26 +552,13 @@ function registerGitPushOnCommit(
           if (relPaths.length === 0) {
             return;
           }
-          const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
-
           if (syncAutoPause.isActive()) {
             return;
           }
-          if (isAutoSyncBlockedBySchedule()) {
-            serialize(async () => {
-              const folders = vscode.workspace.workspaceFolders ?? [];
-              for (const folder of folders) {
-                await enqueueDeferredGitPushesForRepo(deps, folder.uri.fsPath, repoRoot, relPaths);
-              }
-              await deps.statusBar.refresh();
-            });
-            return;
-          }
-
           serialize(async () => {
             const folders = vscode.workspace.workspaceFolders ?? [];
             for (const folder of folders) {
-              await maybePushCommittedFilesForFolder(deps, folder.uri.fsPath, repoRoot, relPaths, warnBin, withEngine);
+              await recountCommittedWorkspaces(deps, folder.uri.fsPath, repoRoot, relPaths, withEngine);
             }
           });
         })();
@@ -658,92 +599,3 @@ function registerGitPushOnCommit(
   );
 }
 
-async function maybePushCommittedFilesForFolder(
-  deps: SyncTriggerManagerDeps,
-  workspaceFolderRoot: string,
-  gitRepoRoot: string,
-  committedRelToGit: string[],
-  warnOnBinary: boolean,
-  withEngine: (
-    root: string,
-    fn: (engine: SyncEngine) => Promise<void>,
-    enqueue?: EngineUnreachableEnqueue,
-  ) => Promise<void>,
-): Promise<void> {
-  if (isSecondaryWorkspaceInstanceReadOnly()) {
-    return;
-  }
-  const normFolder = workspaceFolderRoot.replace(/\\/g, "/").toLowerCase();
-  const normGit = gitRepoRoot.replace(/\\/g, "/").toLowerCase();
-  if (!normFolder.startsWith(normGit) && !normGit.startsWith(normFolder)) {
-    return;
-  }
-
-  const trackedToPush: { relW: string; wsId: string }[] = [];
-  const cfg = await WorkspaceConfigManager.load(workspaceFolderRoot);
-  const gc = await deps.globalConfig.load();
-  for (const gitRel of committedRelToGit) {
-    const abs = path.normalize(path.join(gitRepoRoot, gitRel.split("/").join(path.sep)));
-    const normAbs = abs.replace(/\\/g, "/").toLowerCase();
-    if (!normAbs.startsWith(normFolder)) {
-      continue;
-    }
-    let relW: string;
-    try {
-      relW = absoluteToTrackedPosix(workspaceFolderRoot, cfg.pathMapping, gc.machineName, abs);
-    } catch {
-      continue;
-    }
-    const fe = cfg.files.find((f) => f.localPath === relW);
-    if (!fe || fe.syncStatus === "conflict" || fe.editingBy) {
-      continue;
-    }
-    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === fe.workspaceId);
-    if (!ent || normalizeWorkspaceSyncState(ent) !== "active") {
-      continue;
-    }
-    if (warnOnBinary && (await fileLooksBinary(abs))) {
-      if (shouldAnnounceBinarySkip(workspaceFolderRoot, relW)) {
-        void vscode.window.showWarningMessage(binarySkipMessage(relW));
-      }
-      continue;
-    }
-    trackedToPush.push({ relW, wsId: fe.workspaceId });
-  }
-
-  if (trackedToPush.length === 0) {
-    return;
-  }
-
-  let sawUnreachable = false;
-  await withEngine(workspaceFolderRoot, async (engine) => {
-    const fresh = await WorkspaceConfigManager.load(workspaceFolderRoot);
-    for (const row of trackedToPush) {
-      const entry = fresh.activeWorkspaces.find((w) => w.workspaceId === row.wsId);
-      if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
-        continue;
-      }
-      const fe = fresh.files.find((f) => f.localPath === row.relW && f.workspaceId === row.wsId);
-      if (!fe || fe.syncStatus === "conflict" || fe.editingBy) {
-        continue;
-      }
-      try {
-        await engine.pushFile(fresh, row.wsId, row.relW, entry, { pushOnCommit: true });
-        await WorkspaceConfigManager.save(fresh, workspaceFolderRoot);
-      } catch (e) {
-        if (isLikelyUnreachableError(e)) {
-          sawUnreachable = true;
-        }
-      }
-    }
-  });
-
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- sawUnreachable set in catch when transport fails
-  if (sawUnreachable) {
-    bumpOfflineFlushBackoff();
-    noteCloudTransportFailure();
-    await deps.offlineQueue.enqueueFullSync();
-    allowImmediateOfflineFlushRetry();
-    await deps.statusBar.refresh();
-  }
-}

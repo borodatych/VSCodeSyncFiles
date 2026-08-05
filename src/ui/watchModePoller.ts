@@ -3,14 +3,12 @@ import type { QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { runQuietFullSyncAllFolders } from "./quietFullSyncAllFolders.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import {
   isWebhookSubscriptionActive,
   isWebhookWatchPollingSuppressed,
 } from "./webhookChannelCoordinator.js";
 import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
-import { effectiveAutoSyncMode } from "../core/autoSyncModeAdaptive.js";
 import { verboseLog, warnLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
@@ -86,15 +84,10 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
     if (!cfg.get<boolean>("watchMode", false)) {
       return;
     }
-    // v0.7 — Watch Mode also obeys autoSyncMode. `off` → silent; `check-only`
-    // → quietFullSync runs in check-only branch (statuses only).
-    // F5 — `check-only` is upgraded to `full` inside the user's quiet-hours
-    // window (background sync at night when no one's editing).
-    const rawMode = parseAutoSyncMode(cfg.get<string>("autoSyncMode", "check-only"));
-    const autoMode = effectiveAutoSyncMode(rawMode, {
-      start: cfg.get<string>("quietHours.start", ""),
-      end: cfg.get<string>("quietHours.end", ""),
-    });
+    // Watch Mode is a scheduled detector pass: `off` → silent, `check-only`
+    // → statuses only. The quiet-hours upgrade to `full` is gone with the
+    // mode (stage 3.4, B9) — "no one is looking" is not consent.
+    const autoMode = parseAutoSyncMode(cfg.get<string>("autoSyncMode", "check-only"));
     if (!isAutoCheckEnabled(autoMode)) {
       return;
     }
@@ -102,9 +95,6 @@ export function registerWatchModePoller(context: vscode.ExtensionContext, deps: 
       return;
     }
     if (syncAutoPause.isActive()) {
-      return;
-    }
-    if (isAutoSyncBlockedBySchedule()) {
       return;
     }
     if (isAutoSyncBlockedByRateLimit()) {

@@ -10,11 +10,7 @@ import { isCloudConnectivityOffline } from "./connectivityProbeWidget.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
 import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
-import {
-  isAutoCheckEnabled,
-  isAutoFullSyncEnabled,
-  parseAutoSyncMode,
-} from "../core/autoSyncMode.js";
+import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import {
   allowImmediateOfflineFlushRetry,
   bumpOfflineFlushBackoff,
@@ -63,7 +59,9 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
   const autoMode = parseAutoSyncMode(
     vscode.workspace.getConfiguration("vscodesync").get<string>("autoSyncMode", "check-only"),
   );
-  const allowFull = byUser || isAutoFullSyncEnabled(autoMode);
+  // Only a human gets the two-way pass; an automatic run is always a detector.
+  // `full` used to widen this for timers — the mode is gone (stage 3.4).
+  const allowFull = byUser;
   if (!byUser && !isAutoCheckEnabled(autoMode)) {
     return false;
   }

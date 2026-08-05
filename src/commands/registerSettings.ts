@@ -93,14 +93,8 @@ export function registerSettingsCommands(deps: SettingsCommandsDeps): vscode.Dis
           {
             label: "check-only",
             description:
-              "Только проверять статусы (cloud_newer / pending_push / conflict). Push / Pull — вручную. Рекомендуется при работе с одним workspace на нескольких машинах.",
+              "Только проверять статусы (cloud_newer / pending_push / conflict). Push / Pull — вручную, через панель «Расхождения». Рекомендуется при работе с одним workspace на нескольких машинах.",
             value: "check-only" as const,
-          },
-          {
-            label: "full",
-            description:
-              "Полная синхронизация: push на save (debounce), pull на open, full sync на focus, watch poll. Историческое поведение.",
-            value: "full" as const,
           },
         ],
         { placeHolder: `Сейчас: ${cur}` },

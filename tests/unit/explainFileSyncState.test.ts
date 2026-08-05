@@ -9,7 +9,7 @@ const base = (): ExplainFileSyncStateInput => ({
   workspaceRoot: "/r",
   posixRel: "src/a.ts",
   trusted: true,
-  autoSyncMode: "full",
+  autoSyncMode: "check-only",
   sessionPaused: false,
   autoPauseActive: false,
   scheduleBlocked: false,

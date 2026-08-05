@@ -26,9 +26,8 @@ export function registerAutoSyncModeStatusBar(
     const mode = parseAutoSyncMode(
       vscode.workspace.getConfiguration(CFG).get<string>("autoSyncMode", "check-only"),
     );
-    const icon =
-      mode === "off" ? "$(eye-closed)" : mode === "check-only" ? "$(eye)" : "$(sync)";
-    const label = mode === "check-only" ? "check" : mode;
+    const icon = mode === "off" ? "$(eye-closed)" : "$(eye)";
+    const label = mode === "off" ? "off" : "check";
     item.text = `${icon} ${label}`;
     item.tooltip = `${describeAutoSyncMode(mode)}\n\nКлик: сменить режим.`;
     item.show();

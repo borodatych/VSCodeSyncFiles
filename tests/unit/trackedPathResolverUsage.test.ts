@@ -32,8 +32,7 @@ const NOT_YET_CONVERTED = new Set([
   // build backup and history paths, which are not tracked-file conversions.
   "commands/_engineFlows.ts",
   // Git paths are relative to the *repo* root, not to the sync root.
-  "ui/syncTriggerManager.ts",
-  // Conversion pending — see `.cursor/plans/stabilization100.plan.md`, C13.
+    // Conversion pending — see `.cursor/plans/stabilization100.plan.md`, C13.
   "ui/vscodeSyncUriHandler.ts",
   "ui/workspacesTree.ts",
   "ui/quickTransferDropPanel.ts",

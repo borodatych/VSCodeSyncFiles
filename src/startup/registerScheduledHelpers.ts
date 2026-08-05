@@ -22,7 +22,6 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
 import { scheduleStartupSyncSummary } from "../ui/syncSummaryStartup.js";
@@ -34,8 +33,7 @@ import { newestTrackedLastSyncMs } from "../utils/workspaceLastActivity.js";
 import { evaluateLongAbsence, type LongAbsenceWorkspaceInput } from "../core/longAbsenceEvaluator.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { isAutoFullSyncEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
-import { isAutoSyncBlockedBySchedule } from "../ui/syncScheduleGate.js";
+import { parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { guardPathsBeforeAdd } from "../ui/syncGuards.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { readOneDriveTokenBundle } from "../providers/onedrive/onedriveProvider.js";
@@ -51,7 +49,6 @@ export interface ScheduledHelpersDeps {
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
   fileDecorations: SyncFileDecorationController;
-  scheduleDeferredStore: SyncScheduleDeferredStore;
   makeEngine: (
     root: string,
     provider: ICloudProvider,
@@ -73,7 +70,6 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
     statusBar,
     workspacesTree,
     fileDecorations,
-    scheduleDeferredStore,
     makeEngine,
   } = deps;
 
@@ -90,31 +86,28 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
       if (syncSessionPause.isPaused()) {
         return;
       }
-      // v0.7 — startup pull is an *automatic* action: only run when
-      // `autoSyncMode = full`. In check-only / off, fall back to a status
-      // refresh so the tree still shows what's stale, but no file moves.
+      // Stage 3.4 — startup is an automatic moment, so it only refreshes
+      // statuses (B7). The `full` branch that overwrote local files across
+      // every workspace before the user saw anything is gone with the mode.
       const autoMode = parseAutoSyncMode(
         vscode.workspace.getConfiguration(CFG_SECTION).get<string>("autoSyncMode", "check-only"),
       );
+      if (autoMode === "off") {
+        return;
+      }
       const provider = await tryAuthenticatedProvider(registry);
       if (!provider) {
         return;
       }
       const cfg = await globalConfig.load();
       const engine = makeEngine(folderRoot, provider, cfg.machineId, cfg.machineName, "auto");
-      verboseLog("startup", `pullAll START ${folderRoot} mode=${autoMode}`);
+      verboseLog("startup", `status refresh START ${folderRoot}`);
       statusBar.setSyncing(true);
       try {
-        if (isAutoFullSyncEnabled(autoMode)) {
-          await engine.pullAll();
-        } else if (autoMode === "check-only") {
-          // Status-only refresh — no files overwritten.
-          const wc = await WorkspaceConfigManager.load(folderRoot);
-          for (const aw of wc.activeWorkspaces) {
-            await engine.checkWorkspaceStatus(aw.workspaceId);
-          }
+        const wc = await WorkspaceConfigManager.load(folderRoot);
+        for (const aw of wc.activeWorkspaces) {
+          await engine.checkWorkspaceStatus(aw.workspaceId);
         }
-        // autoMode === "off": skip entirely.
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         startupChannel.appendLine(`Pull (${folderRoot}): ${msg}`);
@@ -128,15 +121,10 @@ export function registerScheduledHelpers(deps: ScheduledHelpersDeps): ScheduledH
       }
     },
     deferAutomaticStartupPull: async () => {
-      if (isAutoSyncBlockedBySchedule()) {
-        await scheduleDeferredStore.enqueueFullSync();
-        return true;
-      }
-      if (syncAutoPause.isActive()) {
-        await scheduleDeferredStore.enqueueFullSync();
-        return true;
-      }
-      return false;
+      // A status refresh needs no deferred queue: postponed detection is just
+      // detection later, and the next trigger recounts anyway.
+      await Promise.resolve();
+      return syncAutoPause.isActive();
     },
   });
 

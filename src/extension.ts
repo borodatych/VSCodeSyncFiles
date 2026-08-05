@@ -452,7 +452,6 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     workspacesTree,
     fileDecorations,
-    scheduleDeferredStore,
     makeEngine,
   });
 

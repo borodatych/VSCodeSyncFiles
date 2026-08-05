@@ -3,7 +3,7 @@ import { buildWelcomeMessage } from "../../src/core/welcomeModeFormatter.js";
 
 describe("buildWelcomeMessage", () => {
   it("conflicts win regardless of mode", () => {
-    const m = buildWelcomeMessage("full", 0, 0, 3);
+    const m = buildWelcomeMessage("check-only", 0, 0, 3);
     expect(m.headline).toContain("конфликте");
     expect(m.ctaCommandId).toBe("vscodesync.resolveConflicts");
   });
@@ -30,8 +30,8 @@ describe("buildWelcomeMessage", () => {
     expect(m.ctaCommandId).toBe("vscodesync.pullAll");
   });
 
-  it("mode=full + idle → 'all synced'", () => {
-    const m = buildWelcomeMessage("full", 0, 0, 0);
+  it("mode=check-only + idle → 'all synced'", () => {
+    const m = buildWelcomeMessage("check-only", 0, 0, 0);
     expect(m.headline).toContain("актуально");
     expect(m.ctaCommandId).toBeUndefined();
   });
