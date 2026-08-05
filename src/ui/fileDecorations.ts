@@ -1,13 +1,12 @@
 import * as vscode from "vscode";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { computeHash, type HashConfig } from "../utils/hash.js";
-import type { LineEndingMode } from "../utils/normalize.js";
 import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 function decoHashConfig(): HashConfig {
-  const raw = vscode.workspace.getConfiguration("vscodesync").get<string>("lineEnding", "lf");
-  const lineEnding: LineEndingMode = raw === "crlf" || raw === "preserve" ? raw : "lf";
-  return { lineEnding };
+  // The canonical hash is always LF since 1.0.0 — the `lineEnding` setting is
+  // gone (stage 3.4, C25) and the engine hardcodes the same value.
+  return { lineEnding: "lf" };
 }
 
 function formatRelative(iso: string | undefined): string {

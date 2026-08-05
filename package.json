@@ -725,13 +725,13 @@
           {
             "id": "addFile",
             "title": "Добавьте файл в синхронизацию",
-            "description": "ПКМ на любом файле в Explorer → VSCodeSync → Add file. Файл попадёт в облако и автоматически синхронизируется со всеми вашими машинами.",
+            "description": "ПКМ на любом файле в Explorer → VSCodeSync → Добавить файл. Файл попадёт в облако; на других машинах расширение покажет его в панели «Расхождения», а скачивание подтверждаете вы.",
             "media": {
               "image": "media/vscodesync.png",
               "altText": "VSCodeSync logo"
             },
             "completionEvents": [
-              "onCommand:vscodesync.addFile"
+              "onCommand:vscodesync.addCurrentFile"
             ]
           },
           {

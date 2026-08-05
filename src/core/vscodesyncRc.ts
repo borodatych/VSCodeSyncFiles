@@ -21,8 +21,6 @@ export const RC_OVERRIDE_ALLOWLIST: ReadonlySet<string> = new Set([
   "verifyUploadHash",
   "historyVersions",
   "historyMode",
-  "saveDebounceSecDefault",
-  "watchIdleCyclesBeforeBackoff",
   "warnOnBinaryFiles",
   "compressUploads",
   "gitBranchAutoSync",

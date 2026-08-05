@@ -144,8 +144,7 @@ const ALL_KEYS = [
   "sync.concurrency", "sync.workspaceConcurrency",
   "verifyUploadHash", "historyVersions", "historyMode", "historyLazyDrainMinutes",
   "metaWriteRetries", "verifyRetries", "softLockStaleHours",
-  "tokenRefreshSkewMinutes", "saveDebounceSecDefault",
-  "watchIdleCyclesBeforeBackoff", "localBackupDir",
+  "tokenRefreshSkewMinutes", "localBackupDir",
   "gdrive.folderCacheTtlSec",
   "onedrive.uploadSessionThresholdMB", "onedrive.uploadChunkMB",
   "yandex.apiTimeoutMs", "yandex.dataTimeoutMs", "yandex.lockedRetryDelayMs",
@@ -393,11 +392,11 @@ function getSettingsHtml(): string {
     <h2>☁ Синхронизация</h2>
     ${number("maxFileSizeMB","Макс. размер файла (МБ)","0 — без лимита. Файлы больше лимита не синхронизируются.",0,1000)}
     ${toggle("showPreview","Предпросмотр перед sync","Показывать план синхронизации перед Push/Pull/Sync из панели.")}
-    ${toggle("syncSummaryOnStartup","Pull при старте VS Code","Тихий Pull при запуске и сводка изменений.")}
-    ${toggle("syncOnOpen","Pull при открытии файла","Тихий conditional GET при открытии отслеживаемого файла.")}
-    ${number("syncOnFocusDelayMs","Задержка sync при фокусе (мс)","Sync через N мс после получения фокуса окном VS Code.",0,60000)}
-    ${toggle("pushOnCommit","Push при Git коммите","Автоматически пушить отслеживаемые файлы после git commit.")}
-    ${toggle("gitBranchAutoSync","Git branch auto-sync","Suspend/Resume workspace при смене git-ветки.")}
+    ${toggle("syncSummaryOnStartup","Сводка при старте VS Code","Пересчитать статусы при запуске и показать сводку расхождений.")}
+    ${toggle("syncOnOpen","Проверка при открытии файла","Пересчитать статусы воркспейса файла (тихий conditional GET). Скачивание — по вашей команде.")}
+    ${number("syncOnFocusDelayMs","Задержка проверки при фокусе (мс)","Пересчёт статусов через N мс после получения фокуса окном VS Code.",0,60000)}
+    ${toggle("pushOnCommit","Проверка после Git-коммита","Пересчитать статусы затронутых воркспейсов после git commit. Отправка — по вашей команде.")}
+    ${toggle("gitBranchAutoSync","Git branch auto-suspend","Suspend/Resume воркспейсов по привязанной git-ветке; накопившиеся расхождения предлагаются, не выполняются.")}
     ${toggle("warnOnBinaryFiles","Предупреждать о бинарных файлах","Спрашивать подтверждение перед добавлением бинарного файла.")}
     ${toggle("smartSuggestions","Умные подсказки","Предлагать группировку часто редактируемых файлов в workspace.")}
     ${number("workspaceInactiveDays","Дней до архивирования","Предлагать архивировать workspace если нет активности (0 — не проверять).",0,3650)}
@@ -420,8 +419,6 @@ function getSettingsHtml(): string {
     ${number("verifyRetries","Retry для verify-hash","Сколько раз перепроверять хэш blob'а после upload.",1,10)}
     ${number("softLockStaleHours","Soft-lock TTL (часы)","Через сколько часов editingSince считается устаревшим.",1,168)}
     ${number("tokenRefreshSkewMinutes","Обновление токена за (мин)","За сколько минут до истечения обновлять OAuth-токен.",1,60)}
-    ${number("saveDebounceSecDefault","Save-debounce по умолчанию (сек)","Дефолтная задержка push после save (если workspace не задал свою).",0,300)}
-    ${number("watchIdleCyclesBeforeBackoff","Циклов watch до backoff","Сколько пустых watch-циклов ждать до удвоения интервала.",1,100)}
     ${text("localBackupDir","Папка локальных бэкапов","Относительно корня workspace. Дефолт: .vscode/vscodesync-local-backup")}
     ${number("gdrive.folderCacheTtlSec","TTL кэша Google Drive folder-id (сек)","Кэш ускоряет деревообход путей. 0 = отключить.",0,86400)}
     ${number("onedrive.uploadSessionThresholdMB","OneDrive: порог session upload (МБ)","Выше — multipart session.",1,250)}
@@ -451,7 +448,7 @@ function getSettingsHtml(): string {
   <!-- ── WATCH MODE ──────────────────────────────────────────── -->
   <div id="watchmode" class="section">
     <h2>👁 Watch Mode</h2>
-    ${toggle("watchMode","Включить Watch Mode","Фоновый периодический sync всех активных workspace.")}
+    ${toggle("watchMode","Включить Watch Mode","Фоновый периодический пересчёт статусов всех активных воркспейсов.")}
     ${number("watchIntervalSeconds","Интервал опроса (сек)","Базовый интервал проверки изменений. Минимум 5 сек.",5,3600)}
     ${number("watchMaxIntervalSeconds","Макс. интервал backoff (сек)","При отсутствии изменений интервал растёт до этого значения.",30,86400)}
     ${toggle("watchAdaptive","Адаптивный интервал","При обнаружении изменений сбросить интервал к минимуму.")}
@@ -477,7 +474,6 @@ function getSettingsHtml(): string {
     ${toggle("encryption","E2E шифрование (AES-256-GCM)","Шифровать файлы перед загрузкой на облако. Требует настройки ключа. Несовместимо с compression.")}
     ${toggle("aiMerge.enabled","AI Merge конфликтов","Кнопка «✨ Merge with AI» в диалоге конфликтов. Требует GitHub Copilot.")}
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-secondary" onclick="runCmd('vscodesync.setupEncryptionKey')">Настроить ключ шифрования</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.exportEncryptionKey')">Экспортировать ключ</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.importEncryptionKey')">Импортировать ключ</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.rotateEncryptionKey')">Сменить ключ</button>

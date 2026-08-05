@@ -1,7 +1,6 @@
 /**
  * Tests for conflict resolution:
  *  - resolveConflictKeepMine / resolveConflictTakeTheirs (manual resolution)
- *  - conflictRules auto-resolution (keep-mine, take-theirs, first-rule-wins, no-match)
  *  - tombstone purge on putManifest
  */
 import * as fs from "node:fs/promises";

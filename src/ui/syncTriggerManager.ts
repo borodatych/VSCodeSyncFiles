@@ -18,13 +18,6 @@ import { syncAutoPause } from "../core/syncAutoPause.js";
 import type { SyncStatusBarController } from "./statusBar.js";
 import { runQuietFullSyncAllFolders } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
-import { isLikelyUnreachableError } from "../utils/networkErrors.js";
-import { ProviderError } from "../providers/cloudProviderTypes.js";
-import {
-  allowImmediateOfflineFlushRetry,
-  bumpOfflineFlushBackoff,
-} from "../core/syncOfflineFlushBackoff.js";
-import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
 import { verboseLog, warnLog } from "../utils/log.js";
 import { createTriggerLanes, type TriggerLane } from "../core/syncTriggerLanes.js";
 
@@ -73,12 +66,6 @@ interface GitRepoLike {
 interface GitExtLike {
   getAPI(version: 1): GitApiLike;
 }
-
-type EngineUnreachableEnqueue =
-  | { kind: "none" }
-  | { kind: "push"; rel: string; workspaceId: string }
-  | { kind: "pull"; rel: string; workspaceId: string }
-  | { kind: "fullSync" };
 
 /**
  * Subscribes VS Code events: onSave (debounced per workspace saveDebounceSec), window focus (full sync after delay),
@@ -185,15 +172,9 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
   const withEngine = async (
     root: string,
     fn: (engine: SyncEngine) => Promise<void>,
-    enqueueOnUnreachable: EngineUnreachableEnqueue = { kind: "none" },
   ): Promise<void> => {
     const seq = ++_trigSeq;
-    const label = enqueueOnUnreachable.kind === "push"
-      ? `push:${"rel" in enqueueOnUnreachable ? enqueueOnUnreachable.rel : "?"}`
-      : enqueueOnUnreachable.kind === "pull"
-        ? `pull:${"rel" in enqueueOnUnreachable ? enqueueOnUnreachable.rel : "?"}`
-        : "fullSync";
-    verboseLog("trigger", `#${String(seq)} START ${label}`);
+    verboseLog("trigger", `#${String(seq)} START recount`);
     if (!vscode.workspace.isTrusted) {
       return;
     }
@@ -216,26 +197,13 @@ export function registerSyncTriggerManager(context: vscode.ExtensionContext, dep
     try {
       await fn(engine);
     } catch (e: unknown) {
-      if (enqueueOnUnreachable.kind !== "none" && isLikelyUnreachableError(e)) {
-        bumpOfflineFlushBackoff();
-        noteCloudTransportFailure();
-        if (enqueueOnUnreachable.kind === "fullSync") {
-          await deps.offlineQueue.enqueueFullSync();
-        } else if (enqueueOnUnreachable.kind === "push") {
-          await deps.offlineQueue.enqueuePush(root, enqueueOnUnreachable.rel, enqueueOnUnreachable.workspaceId);
-        } else {
-          await deps.offlineQueue.enqueuePull(root, enqueueOnUnreachable.rel, enqueueOnUnreachable.workspaceId);
-        }
-        allowImmediateOfflineFlushRetry();
-        await deps.statusBar.refresh();
-      } else if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
-        // Auth expired during auto-trigger: queue for retry after user re-authenticates.
-        await deps.offlineQueue.enqueueFullSync();
-        allowImmediateOfflineFlushRetry();
-        await deps.statusBar.refresh();
-      }
+      // A detector pass that could not run has nothing to queue: the next
+      // trigger recounts anyway. This used to enqueue a fullSync on expired
+      // auth — inventing an operation the user never asked for and burying
+      // their real deferred intents behind it.
+      warnLog("trigger", `recount failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      verboseLog("trigger", `#${String(seq)} finally ${label}`);
+      verboseLog("trigger", `#${String(seq)} finally recount`);
       deps.statusBar.setSyncing(false);
       await refreshAfter();
     }
@@ -513,7 +481,6 @@ function registerGitPushOnCommit(
   withEngine: (
     root: string,
     fn: (engine: SyncEngine) => Promise<void>,
-    enqueue?: EngineUnreachableEnqueue,
   ) => Promise<void>,
 ): void {
   const lastHeadByRepo = new Map<string, string | undefined>();

@@ -18,39 +18,33 @@
  * machine where this failed still behaves safely.
  */
 import * as vscode from "vscode";
+import {
+  REMOVED_SETTINGS_100,
+  planSettingsMigration,
+  type MigrationScope,
+  type SettingSnapshot,
+} from "../core/settingsMigrationPlan.js";
 
 const CFG_SECTION = "vscodesync";
 const DONE_KEY = "vscodesync.migration.100.done";
 
-/** Settings deleted in 1.0.0 — cleaned from user files, with a log line. */
-const REMOVED_KEYS: readonly string[] = [
-  "syncSchedule",
-  "syncScheduleExtended",
-  "quietHours.start",
-  "quietHours.end",
-  "deltaSync",
-  "deltaThresholdKB",
-  "conflictRules",
-  "lineEnding",
-  "saveDebounceSecDefault",
-  "watchIdleCyclesBeforeBackoff",
-];
+const SCOPE_TARGET: Record<MigrationScope, vscode.ConfigurationTarget> = {
+  user: vscode.ConfigurationTarget.Global,
+  workspace: vscode.ConfigurationTarget.Workspace,
+  folder: vscode.ConfigurationTarget.WorkspaceFolder,
+};
 
-interface MigratableScope {
-  readonly target: vscode.ConfigurationTarget;
-  readonly label: string;
-  readonly read: (info: ReturnType<vscode.WorkspaceConfiguration["inspect"]>) => unknown;
+/** Fold one `inspect` result into the planner's scope→value shape. */
+function snapshotOf(
+  info: ReturnType<vscode.WorkspaceConfiguration["inspect"]>,
+): SettingSnapshot | undefined {
+  if (!info) return undefined;
+  return {
+    user: info.globalValue,
+    workspace: info.workspaceValue,
+    folder: info.workspaceFolderValue,
+  };
 }
-
-const SCOPES: readonly MigratableScope[] = [
-  { target: vscode.ConfigurationTarget.Global, label: "user", read: (i) => i?.globalValue },
-  { target: vscode.ConfigurationTarget.Workspace, label: "workspace", read: (i) => i?.workspaceValue },
-  {
-    target: vscode.ConfigurationTarget.WorkspaceFolder,
-    label: "folder",
-    read: (i) => i?.workspaceFolderValue,
-  },
-];
 
 export interface MigrateSettingsDeps {
   context: vscode.ExtensionContext;
@@ -66,42 +60,33 @@ export function migrateSettingsTo100(deps: MigrateSettingsDeps): void {
       return;
     }
     const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
-    let hadFull = false;
+
+    // Decide first (pure, tested), then execute. `planSettingsMigration` only
+    // returns actions for values that exist, so re-running is a no-op.
+    const snapshots: Record<string, SettingSnapshot | undefined> = {};
+    for (const key of ["autoSyncMode", ...REMOVED_SETTINGS_100]) {
+      try {
+        snapshots[key] = snapshotOf(cfg.inspect(key));
+      } catch {
+        /* inspect can throw on exotic configuration providers — skip key */
+      }
+    }
+    const plan = planSettingsMigration(snapshots);
+    const hadFull = plan.hadFull;
     const cleaned: string[] = [];
 
-    // 1. autoSyncMode: full → check-only, per scope that actually set it.
-    try {
-      const mode = cfg.inspect<string>("autoSyncMode");
-      for (const scope of SCOPES) {
-        if (scope.read(mode) !== "full") continue;
-        hadFull = true;
-        try {
-          await cfg.update("autoSyncMode", "check-only", scope.target);
-          deps.log(`migration 1.0.0: autoSyncMode full → check-only (${scope.label})`);
-        } catch {
-          // Read-only settings surface (remote overrides) — parse fallback covers it.
-        }
-      }
-    } catch {
-      /* inspect can throw on exotic configuration providers — non-fatal */
-    }
-
-    // 2. Removed keys: wipe user values, log each.
-    for (const key of REMOVED_KEYS) {
+    for (const action of plan.actions) {
       try {
-        const info = cfg.inspect(key);
-        for (const scope of SCOPES) {
-          if (scope.read(info) === undefined) continue;
-          try {
-            await cfg.update(key, undefined, scope.target);
-            cleaned.push(`${key} (${scope.label})`);
-            deps.log(`migration 1.0.0: removed setting ${key} (${scope.label})`);
-          } catch {
-            /* best-effort */
-          }
+        await cfg.update(action.key, action.value, SCOPE_TARGET[action.scope]);
+        if (action.kind === "rewrite-mode") {
+          deps.log(`migration 1.0.0: autoSyncMode full → check-only (${action.scope})`);
+        } else {
+          cleaned.push(`${action.key} (${action.scope})`);
+          deps.log(`migration 1.0.0: removed setting ${action.key} (${action.scope})`);
         }
       } catch {
-        /* unknown key shapes — skip */
+        // Read-only settings surface (remote overrides) — best-effort; the
+        // `parseAutoSyncMode` fallback keeps a stray "full" safe regardless.
       }
     }
 

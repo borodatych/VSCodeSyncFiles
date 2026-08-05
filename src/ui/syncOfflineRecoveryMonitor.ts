@@ -4,7 +4,10 @@ import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { readPassiveOnlineHint } from "../utils/readNavigatorOnline.js";
-import { allowImmediateOfflineFlushRetry } from "../core/syncOfflineFlushBackoff.js";
+import {
+  allowImmediateOfflineFlushRetry,
+  canAttemptOfflineFlushNow,
+} from "../core/syncOfflineFlushBackoff.js";
 import { flushOfflineQueue, type OfflineFlushDeps } from "./syncOfflineFlush.js";
 
 export interface OfflineRecoveryMonitorDeps extends OfflineFlushDeps {
@@ -71,6 +74,12 @@ export function registerOfflineRecoveryMonitor(context: vscode.ExtensionContext,
         return;
       }
       if (isAutoSyncBlockedByRateLimit()) {
+        return;
+      }
+      // Backoff armed by transport failures (providers bump it on 5xx): after
+      // a failed flush the next offer waits the backoff out instead of
+      // re-appearing on the very next tick.
+      if (!canAttemptOfflineFlushNow()) {
         return;
       }
       if (n === lastOfferedCount) {
