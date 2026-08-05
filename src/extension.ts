@@ -36,6 +36,7 @@ import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceI
 import { createSyncOutputChannels } from "./startup/createSyncOutputChannels.js";
 import { unpausePersistedSync } from "./startup/unpausePersistedSync.js";
 import { migrateAiMergeFlag } from "./startup/migrateAiMergeFlag.js";
+import { migrateSettingsTo100 } from "./startup/migrateSettingsTo100.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
@@ -440,7 +441,7 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  registerScheduledHelpers({
+  const { startupChannel } = registerScheduledHelpers({
     context,
     globalConfig,
     registry,
@@ -448,6 +449,12 @@ export function activate(context: vscode.ExtensionContext): void {
     workspacesTree,
     fileDecorations,
     makeEngine,
+  });
+
+  migrateSettingsTo100({
+    context,
+    log: (line) => { startupChannel.appendLine(line); },
+    countPendingOfflineOps: () => offlineQueueStore.totalPending(),
   });
 
   startDigestTimer(context);

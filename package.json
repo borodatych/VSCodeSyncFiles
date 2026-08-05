@@ -886,10 +886,6 @@
         "title": "%cmd.pullAll.title%"
       },
       {
-        "command": "vscodesync.bulkPullSelected",
-        "title": "%cmd.bulkPullSelected.title%"
-      },
-      {
         "command": "vscodesync.goHomePreflight",
         "title": "%cmd.goHomePreflight.title%"
       },

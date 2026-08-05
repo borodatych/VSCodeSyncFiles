@@ -5,7 +5,6 @@
   "cmd.pushAll.title": "VSCodeSync: Push all files",
   "cmd.bulkPush.title": "VSCodeSync: Bulk Push wizard (pick workspaces → push)",
   "cmd.pullAll.title": "VSCodeSync: Pull all files",
-  "cmd.bulkPullSelected.title": "VSCodeSync: Bulk Pull (pick cloud-newer files → pull selected)",
   "cmd.goHomePreflight.title": "VSCodeSync: Pre-flight before closing (check pending push / conflicts)",
   "cmd.showSmartPullDigest.title": "VSCodeSync: Smart Pull Digest — what colleagues changed",
   "cmd.compareWithCloud.title": "VSCodeSync: Compare with cloud version",
