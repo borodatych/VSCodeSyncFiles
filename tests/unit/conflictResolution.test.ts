@@ -14,7 +14,6 @@ import { WorkspaceConfigManager } from "../../src/core/workspaceConfigManager.js
 import { metaCloudPath, manifestCloudPath, trackedFileCloudPath } from "../../src/core/cloudLayout.js";
 import type { MetaJson, CloudManifest } from "../../src/core/cloudLayout.js";
 import { computeHash } from "../../src/utils/hash.js";
-import type { ConflictRule } from "../../src/core/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,85 +147,6 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
   });
 });
 
-// ---------------------------------------------------------------------------
-// conflictRules auto-resolution
-// ---------------------------------------------------------------------------
-
-async function setupWithRules(conflictRules: ConflictRule[]) {
-  const { provider, rootA, wid, rel } = await setupBase();
-  const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
-  const engineB = new SyncEngine({
-    workspaceRoot: rootB,
-    provider,
-    machineId: "B",
-    machineName: "B",
-    trigger: "user",
-    conflictRules,
-  });
-  await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
-  return { provider, rootA, rootB, wid, rel, engineB };
-}
-
-describe("conflictRules — auto-resolution", () => {
-  const roots: string[] = [];
-
-  afterEach(async () => {
-    for (const r of roots.splice(0)) {
-      await fs.rm(r, { recursive: true, force: true });
-    }
-  });
-
-  it("keep-mine rule: local version wins automatically, no conflict status", async () => {
-    const ctx = await setupWithRules([{ pattern: "src/**", strategy: "keep-mine" }]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).not.toBe("conflict");
-
-    // Cloud should now have B's (local mine) content
-    const dl = await ctx.provider.downloadFile(trackedFileCloudPath(ctx.wid, ctx.rel));
-    expect(dl.body.toString("utf8")).toBe("// version-B\n");
-  });
-
-  it("take-theirs rule: cloud version wins automatically", async () => {
-    const ctx = await setupWithRules([
-      { pattern: "*.lock", strategy: "keep-mine" },
-      { pattern: "src/**", strategy: "take-theirs" },
-    ]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).not.toBe("conflict");
-
-    const absB = path.join(ctx.rootB, ...ctx.rel.split("/"));
-    expect(await fs.readFile(absB, "utf8")).toBe("// version-A\n");
-  });
-
-  it("first matching rule wins: ** take-theirs overrides nothing-before", async () => {
-    const ctx = await setupWithRules([
-      { pattern: "*.lock", strategy: "keep-mine" },
-      { pattern: "**", strategy: "take-theirs" },
-    ]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    // src/config.ts doesn't match *.lock → falls through to ** → take-theirs
-    const absB = path.join(ctx.rootB, ...ctx.rel.split("/"));
-    expect(await fs.readFile(absB, "utf8")).toBe("// version-A\n");
-  });
-
-  it("no matching rule: conflict surfaces normally", async () => {
-    const ctx = await setupWithRules([{ pattern: "*.lock", strategy: "keep-mine" }]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    // src/config.ts doesn't match *.lock → conflict stays
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).toBe("conflict");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Tombstone purge

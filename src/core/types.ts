@@ -95,16 +95,6 @@ export interface WorkspaceConfig {
   pathMapping?: Record<string, string>;
 }
 
-/** Strategy for auto-resolving a conflict without user interaction. */
-export type ConflictStrategy = "keep-mine" | "take-theirs" | "newer";
-
-/** Auto-conflict-resolution rule: if the tracked file path matches `pattern` (minimatch glob), apply `strategy`. */
-export interface ConflictRule {
-  /** Minimatch glob relative to workspace root (e.g. "*.lock", "config/shared/**"). */
-  pattern: string;
-  strategy: ConflictStrategy;
-}
-
 /** Хранилище секретов (VS Code SecretStorage или мок в тестах). */
 export interface SecretStore {
   get(key: string): Thenable<string | undefined>;

@@ -10,7 +10,6 @@ import {
 } from "../core/binarySkipNotice.js";
 import { runQuietFullSyncAllFolders, type QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
-import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { noteCloudTransportFailure, noteCloudTransportSuccess } from "../core/syncOfflineHints.js";
 import {
   allowImmediateOfflineFlushRetry,
@@ -30,7 +29,7 @@ export type OfflineFlushDeps = QuietFullSyncAllFoldersDeps;
  *
  * Since B2 this is a *user* action: the recovery monitor only counts pending
  * items and offers a notification, and the deps carry `trigger: "user"` from
- * the button press. The rate-limit and schedule gates below apply to what is
+ * the button press. The rate-limit gate below applies to what is
  * still an automatic environment signal (they stop a user click from landing
  * into a rate-limited provider), but nothing calls this on a timer any more.
  */
@@ -40,9 +39,6 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
   }
 
   if (isAutoSyncBlockedByRateLimit()) {
-    return;
-  }
-  if (isAutoSyncBlockedBySchedule()) {
     return;
   }
 

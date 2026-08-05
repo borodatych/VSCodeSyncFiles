@@ -29,7 +29,6 @@ import { parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { isAutoSyncBlockedBySchedule } from "../ui/syncScheduleGate.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { planRepairManifest, describeRepairPlan } from "../core/repairManifestPlanner.js";
@@ -190,7 +189,6 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
         autoSyncMode: autoMode,
         sessionPaused: syncSessionPause.isPaused(),
         autoPauseActive: syncAutoPause.isActive(),
-        scheduleBlocked: isAutoSyncBlockedBySchedule(),
         rateLimited: isAutoSyncBlockedByRateLimit(),
         workspaceState: wsEntry
           ? (normalizeWorkspaceSyncState(wsEntry) === "active"

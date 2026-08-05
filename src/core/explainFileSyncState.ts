@@ -35,7 +35,6 @@ export interface ExplainFileSyncStateInput {
   /** Auto-pause active (battery / metered). */
   autoPauseActive: boolean;
   /** Schedule gate blocking. */
-  scheduleBlocked: boolean;
   /** Provider rate-limit cooldown active. */
   rateLimited: boolean;
   /** Workspace exists in active set + state. */
@@ -106,13 +105,6 @@ export function explainFileSyncState(input: ExplainFileSyncStateInput): ExplainF
       "auto_pause",
       "Авто-пауза активна",
       "Низкий заряд батареи или лимитированное соединение",
-    ));
-  }
-  if (input.scheduleBlocked) {
-    items.push(itemBlock(
-      "schedule",
-      "Окно расписания закрыто",
-      "Операции уйдут в schedule-deferred очередь и выполнятся при открытии окна",
     ));
   }
   if (input.rateLimited) {

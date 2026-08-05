@@ -22,7 +22,6 @@ import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import {
   forceAcquireWorkspaceInstanceLock,
   peekWorkspaceInstanceLockHolder,
@@ -37,7 +36,6 @@ export interface DiagnosticsCommandsDeps {
   globalConfig: GlobalConfigManager;
   registry: ProviderRegistry;
   offlineQueueStore: SyncOfflineQueueStore;
-  scheduleDeferredStore: SyncScheduleDeferredStore;
   healthCheckChannel: vscode.OutputChannel;
   refreshWorkspaceInstanceLock: () => void;
   /** Auth-aware lookup of the active provider; returns null when not signed in. */
@@ -65,7 +63,6 @@ export function registerDiagnosticsCommands(
     globalConfig,
     registry,
     offlineQueueStore,
-    scheduleDeferredStore,
     healthCheckChannel,
     refreshWorkspaceInstanceLock,
     tryAuthenticatedProvider,
@@ -117,7 +114,6 @@ export function registerDiagnosticsCommands(
         machineName: gcData.machineName,
         createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, "user"),
         offlineQueue: offlineQueueStore,
-        scheduleDeferred: scheduleDeferredStore,
       });
       healthCheckChannel.clear();
       for (const ln of report.lines) {

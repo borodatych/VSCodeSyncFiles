@@ -9,7 +9,6 @@ import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { isCloudConnectivityOffline } from "./connectivityProbeWidget.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
-import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import {
   allowImmediateOfflineFlushRetry,
@@ -70,9 +69,6 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
   }
   // v0.18 W5 — skip silently when the connectivity probe says we're offline.
   if (!byUser && isCloudConnectivityOffline()) {
-    return false;
-  }
-  if (!byUser && isAutoSyncBlockedBySchedule()) {
     return false;
   }
   if (!byUser && syncAutoPause.isActive()) {

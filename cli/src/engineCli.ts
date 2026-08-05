@@ -47,13 +47,6 @@ export function createCliSyncEngine(
   const maxMb = raw !== undefined && raw !== "" ? Number(raw) : 5;
   const maxB = Number.isFinite(maxMb) && maxMb >= 0 ? maxMb * MB : 5 * MB;
   const lineEnding: LineEndingMode = "lf";
-  const deltaRaw = process.env.VSCODESYNC_DELTA_SYNC?.trim();
-  const deltaSync = deltaRaw === "1" || deltaRaw?.toLowerCase() === "true";
-  const thRaw = process.env.VSCODESYNC_DELTA_THRESHOLD_KB?.trim();
-  const deltaThresholdKB =
-    thRaw !== undefined && thRaw !== "" && Number.isFinite(Number(thRaw)) && Number(thRaw) > 0
-      ? Number(thRaw)
-      : 100;
   const encryption = readEncryptionFromEnv();
   const encKey = encryption.key;
   return new SyncEngine({
@@ -74,7 +67,5 @@ export function createCliSyncEngine(
     encrypt: encKey !== null ? (buf: Buffer): Buffer => encryptBuffer(encKey, buf) : undefined,
     decrypt: encKey !== null ? (buf: Buffer): Buffer => decryptBuffer(encKey, buf) : undefined,
     requireMachineApproval: () => false,
-    deltaSync,
-    deltaThresholdKB,
   });
 }

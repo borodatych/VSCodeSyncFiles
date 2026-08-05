@@ -6,8 +6,6 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { describeScheduleActiveHint } from "../core/syncSchedule.js";
-import { getWorkspaceSyncScheduleNormalized, isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import {
   getRateLimitRemainingMs,
@@ -105,8 +103,6 @@ export interface SyncStatusBarDeps {
   globalConfig: GlobalConfigManager;
   /** Вызывается при смене флага синхронизации (декорации «🔄»). */
   onSyncingChange?: (syncing: boolean) => void;
-  /** Deferred ops while outside `syncSchedule` window (pending count in status bar). */
-  scheduleDeferredStore?: import("../core/syncScheduleDeferredStore.js").SyncScheduleDeferredStore;
   /** Transport-failed sync ops persisted for flush when online. */
   offlineQueue?: SyncOfflineQueueStore;
 }
@@ -357,23 +353,16 @@ export class SyncStatusBarController implements vscode.Disposable {
       cloudNewer > 0 ? `  $(arrow-down) ${String(cloudNewer)}` : "";
 
     const autoPaused = !sessionPaused && syncAutoPause.isActive();
-    const scheduleBlocked = !sessionPaused && !autoPaused && isAutoSyncBlockedBySchedule();
     const rateLimited = isAutoSyncBlockedByRateLimit();
     const rateSec = rateLimited ? Math.max(1, Math.ceil(getRateLimitRemainingMs() / 1000)) : 0;
-    let deferredPending = 0;
-    if (scheduleBlocked && this.deps.scheduleDeferredStore) {
-      deferredPending = await this.deps.scheduleDeferredStore.totalPending();
-    }
 
     const pausePrefix = sessionPaused
       ? "$(debug-pause) "
       : autoPaused
         ? "$(warning) "
-        : scheduleBlocked
-          ? "$(calendar) "
-          : rateLimited
-            ? "$(hourglass) "
-            : "$(cloud) ";
+        : rateLimited
+          ? "$(hourglass) "
+          : "$(cloud) ";
     const pendingSuffix =
       sessionPaused && pendingDuringPause > 0
         ? `  · $(git-pull-request-pending) ${String(pendingDuringPause)} pending`
@@ -388,15 +377,6 @@ export class SyncStatusBarController implements vscode.Disposable {
           : ar === "battery"
             ? `  · $(zap) авто-пауза · battery`
             : `  · авто-пауза`;
-    }
-
-    const scheduleHint = describeScheduleActiveHint(getWorkspaceSyncScheduleNormalized());
-    let scheduleSuffix = "";
-    if (scheduleBlocked) {
-      scheduleSuffix = `  · $(clock) Scheduled pause · ${scheduleHint}`;
-      if (deferredPending > 0) {
-        scheduleSuffix += `  · $(git-pull-request-pending) ${String(deferredPending)} queued`;
-      }
     }
 
     let rateSuffix = "";
@@ -436,7 +416,7 @@ export class SyncStatusBarController implements vscode.Disposable {
     );
     const autoModeBadge = `  · ${autoSyncModeBadge(autoModeParsed)}`;
 
-    this.item.text = `${pausePrefix}${plabel}${autoModeBadge}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
+    this.item.text = `${pausePrefix}${plabel}${autoModeBadge}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
     let tooltip =
       loaded.length === 1 && loaded[0]
         ? this.buildTooltip(loaded[0].wc, plabel, gc.activeProvider, sessionPaused)
@@ -444,9 +424,6 @@ export class SyncStatusBarController implements vscode.Disposable {
     if (autoPaused) {
       const ar = syncAutoPause.getReason();
       tooltip += `\n\n⚡ Авто-пауза: ${ar === "metered" ? "лимитированное соединение" : "низкий заряд батареи"}. Ручные команды доступны.`;
-    }
-    if (scheduleBlocked) {
-      tooltip += `\n\n⏰ Scheduled pause — активное окно ${scheduleHint}. Автотриггеры отключены; очередь отложенных: ${String(deferredPending)}.`;
     }
     if (rateLimited) {
       tooltip += `\n\n⏳ Ответ провайдера 429/503 (throttle). Автосинк отложен ~${String(rateSec)} с. Ручные команды не блокируются.`;

@@ -8,7 +8,6 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { readMachinesRegistrySafe } from "../core/machineRegistry.js";
 import { setLastHealthReport } from "../core/lastHealthReportStore.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { describeWorkspaceInstanceLockForHealth } from "../core/workspaceInstanceLock.js";
 import { workspaceHealthEmoji, workspaceHealthFromLocalCfg } from "./workspaceHealthLocal.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
@@ -52,7 +51,6 @@ export async function buildHealthCheckReport(ctx: {
   machineName: string;
   createEngine: (folderRoot: string, cloud: ICloudProvider) => SyncEngine;
   offlineQueue: SyncOfflineQueueStore;
-  scheduleDeferred: SyncScheduleDeferredStore;
 }): Promise<HealthCheckReport> {
   const lines: string[] = [];
   const staleLockTargets: StaleLockTarget[] = [];
@@ -102,13 +100,6 @@ export async function buildHealthCheckReport(ctx: {
 
   const offlineN = await ctx.offlineQueue.totalPending();
   lines.push(offlineN === 0 ? "✅ Оффлайн-очередь: пуста" : `⚠ Оффлайн-очередь: ${String(offlineN)} операций в queue.json`);
-
-  const defN = await ctx.scheduleDeferred.totalPending();
-  lines.push(
-    defN === 0
-      ? "✅ Отложенные операции (расписание): нет"
-      : `⚠ Отложенные операции (расписание): ${String(defN)} в очереди`,
-  );
 
   lines.push(await describeWorkspaceInstanceLockForHealth(storageDir, roots));
   if (isSecondaryWorkspaceInstanceReadOnly()) {

@@ -11,7 +11,6 @@ import type { SyncTrigger } from "../core/syncPolicy.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { isIgnoredSyncTriggerPath, resolveSaveDebounceMs } from "../core/syncTriggerLogic.js";
 import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { subscribeSyncFileLock } from "../core/syncFileLock.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
@@ -55,7 +54,6 @@ export interface SyncTriggerManagerDeps {
   makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
   statusBar: Pick<SyncStatusBarController, "setSyncing" | "refresh">;
   refreshUi: () => void;
-  scheduleDeferred: SyncScheduleDeferredStore;
   offlineQueue: SyncOfflineQueueStore;
 }
 

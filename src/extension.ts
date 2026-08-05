@@ -14,7 +14,6 @@ import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from 
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
 import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
-import { SyncScheduleDeferredStore } from "./core/syncScheduleDeferredStore.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
 import { startDigestTimer } from "./ui/notificationService.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
@@ -119,7 +118,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const globalDir = GlobalConfigManager.resolveDefaultConfigDir();
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);
-  const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
   const offlineQueueStore = new SyncOfflineQueueStore(globalConfig.getStorageDir());
 
   const p2pSessionRegistry = createP2PSessionRegistry(); const p2pMirrorRegistry = createMirrorRegistry();
@@ -185,7 +183,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const statusBar = new SyncStatusBarController({
     globalConfig,
-    scheduleDeferredStore,
     offlineQueue: offlineQueueStore,
     onSyncingChange: (syncing) => {
       fileDecorations.setSyncInProgress(syncing);
@@ -280,7 +277,6 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     workspacesTree,
     fileDecorations,
-    scheduleDeferredStore,
     offlineQueueStore,
     makeEngine,
   });
@@ -371,7 +367,6 @@ export function activate(context: vscode.ExtensionContext): void {
       globalConfig,
       registry,
       offlineQueueStore,
-      scheduleDeferredStore,
       healthCheckChannel,
       refreshWorkspaceInstanceLock,
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
@@ -464,7 +459,6 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     workspacesTree,
     offlineQueueStore,
-    scheduleDeferredStore,
     makeEngine,
     workspaceFolders: roots,
   });

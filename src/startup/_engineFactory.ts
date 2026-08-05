@@ -30,7 +30,6 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ActiveWorkspaceEntry, TrackedFile } from "../core/types.js";
 import type { ActivityEventInput } from "../core/activityLog.js";
 import type { SyncTransferEvent } from "../core/syncStatsStore.js";
-import type { LineEndingMode } from "../utils/normalize.js";
 import { createSyncProfileBuffer, type SyncProfileBuffer } from "../core/syncProfileBuffer.js";
 import { decideAdaptiveConcurrency } from "../core/adaptiveConcurrency.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
@@ -165,7 +164,6 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
   };
 
   const warnedEncodingIssueKeys = new Set<string>();
-  const warnedPreserveLfConflictKeys = new Set<string>();
   const warnedPurgeLostKeys = new Set<string>();
   const warnedSchemaVersionKeys = new Set<string>();
   const warnedCorruptManifestKeys = new Set<string>();
@@ -186,9 +184,6 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
     const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
     const mb = cfg.get<number>("maxFileSizeMB", 5);
     const maxB = Math.max(0, mb) * 1024 * 1024;
-    const leRaw = cfg.get<string>("lineEnding", "lf");
-    const lineEnding: LineEndingMode =
-      leRaw === "crlf" || leRaw === "preserve" ? leRaw : "lf";
     const localBackupEnabled = cfg.get<boolean>("localBackupEnabled", true);
     const localBackupRetentionDays = cfg.get<number>("localBackupRetentionDays", 7);
     // The engine already accepted `tombstonePurgeDays` and a user-facing warning
@@ -205,7 +200,6 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       machineName,
       trigger,
       maxFileSizeBytes: maxB > 0 ? maxB : undefined,
-      lineEnding,
       // VSCodeSync v1 supports UTF-8 only; surface BOM / invalid UTF-8.
       encodingLint: true,
       localBackupEnabled,
@@ -229,19 +223,6 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
             : `«${rel}»: недопустимые UTF‑8 последовательности; канон использует замену символов.`;
         void vscode.window.showWarningMessage(`VSCodeSync: ${tip}`);
       },
-      onPreserveLineEndingConflictHint:
-        lineEnding === "preserve"
-          ? (rel) => {
-              const k = syncWarnDedupeKey(workspaceRoot, "preserve-le", rel);
-              if (warnedPreserveLfConflictKeys.has(k)) {
-                return;
-              }
-              warnedPreserveLfConflictKeys.add(k);
-              void vscode.window.showWarningMessage(
-                `VSCodeSync: возможный конфликт только из‑за переводов строк («${rel}»). При lineEnding=preserve хэш зависит от CR/LF; рассмотрите lf или crlf.`,
-              );
-            }
-          : undefined,
       requireMachineApproval: () =>
         vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("requireMachineApproval", false),
       canonicalHashAlgo: () => {
@@ -263,8 +244,6 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       onCompressionSaving: (saved) => {
         refs.logSyncCompression?.(saved);
       },
-      deltaSync: cfg.get<boolean>("deltaSync", false),
-      deltaThresholdKB: cfg.get<number>("deltaThresholdKB", 100),
       // v0.7 — performance / safety knobs read live from settings so changes
       // take effect without rebuilding the engine.
       syncFileConcurrency: (): number => {

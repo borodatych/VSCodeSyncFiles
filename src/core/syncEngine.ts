@@ -7,7 +7,6 @@ import type {
   ActiveWorkspaceEntry,
   ManifestMachineCacheEntry,
   WorkspaceSyncState,
-  ConflictRule,
 } from "./types.js";
 import { normalizeWorkspaceSyncState } from "./types.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
@@ -47,7 +46,6 @@ import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
-import { isDeltaSyncEligible } from "./deltaSyncGate.js";
 import { assertMutationAllowed, mutationPolicy, type MutationOp, type SyncTrigger } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
 import {
@@ -82,18 +80,6 @@ const LAST_SYNC_REFRESH_THROTTLE_MS = 5 * 60_000;
  * Minimal glob matcher for conflict rules.
  * Supports `*` (within one path segment) and `**` (any depth).
  */
-function minimatchGlob(str: string, pattern: string): boolean {
-  // Use \uE000 (private-use) as a safe sentinel for `**` so we can rewrite it
-  // to `.*` after escaping `*` → `[^/]*` for single segments.
-  const SENTINEL = "\uE000";
-  const reStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, SENTINEL)
-    .replace(/\*/g, "[^/]*")
-    .replaceAll(SENTINEL, ".*");
-  return new RegExp(`^${reStr}$`).test(str);
-}
-
 const LOCAL_BACKUP_DIR_DEFAULT = path.join(".vscode", "vscodesync-local-backup");
 
 /** Soft lock (`ManifestFile.editingSince`) older than this is stale (Health Check / repair). */
@@ -280,17 +266,6 @@ export interface SyncEngineDeps {
    * Estimated plaintext bytes spared when gzip wire encoding is smaller than raw UTF-8 plaintext.
    */
   onCompressionSaving?: (plaintextBytesSaved: number) => void;
-  /**
-   * §8.2 Delta sync (roadmap): when true and file size ≥ threshold, rolling-hash path will apply (not implemented yet — full upload).
-   */
-  deltaSync?: boolean;
-  /** Minimum plaintext size in KB for delta consideration. Default 100. */
-  deltaThresholdKB?: number;
-  /**
-   * Ordered list of auto-conflict-resolution rules. Checked before showing conflict to user.
-   * First matching rule wins. Strategies: keep-mine (push local), take-theirs (pull cloud), newer (compare updatedAt).
-   */
-  conflictRules?: ConflictRule[];
   /** Days after which tombstone entries (removedAt) are purged from the manifest on next PUT. Default 30. */
   tombstonePurgeDays?: number;
   /**
@@ -2746,59 +2721,6 @@ export class SyncEngine {
     return { ...manifest, files };
   }
 
-  /**
-   * Find first matching ConflictRule for the given posixRel path.
-   * Uses simple glob matching: `*` matches within segment, `**` matches any depth.
-   */
-  private matchConflictRule(posixRel: string): ConflictRule | undefined {
-    const rules = this.deps.conflictRules;
-    if (!rules || rules.length === 0) {
-      return undefined;
-    }
-    for (const rule of rules) {
-      if (minimatchGlob(posixRel, rule.pattern)) {
-        return rule;
-      }
-    }
-    return undefined;
-  }
-
-  /** Apply a matched ConflictRule during syncOneFile (before surfacing conflict to user). */
-  private async applyConflictRule(
-    cfg: WorkspaceConfig,
-    workspaceId: string,
-    file: TrackedFile,
-    entry: ActiveWorkspaceEntry,
-    meta: MetaJson,
-    rule: ConflictRule,
-  ): Promise<void> {
-    let strategy = rule.strategy;
-    if (strategy === "newer") {
-      const localMtime = await fs.stat(this.localAbs(cfg, file.localPath)).then((s) => s.mtimeMs).catch(() => 0);
-      const cloudUpdatedAt = meta.files[file.localPath]?.updatedAt;
-      const cloudMs = cloudUpdatedAt ? Date.parse(cloudUpdatedAt) : 0;
-      strategy = localMtime >= cloudMs ? "keep-mine" : "take-theirs";
-    }
-    if (strategy === "keep-mine") {
-      if (!isSecondaryWorkspaceInstanceReadOnly() && !(await this.shouldSkipPushDueToMachineApproval(workspaceId))) {
-        // pushFile internally fires resolve_keep_mine activity with asAutoResolvedKeepMine=true
-        await this.pushFile(cfg, workspaceId, file.localPath, entry, { asAutoResolvedKeepMine: true });
-      }
-    } else {
-      // take-theirs: pullFile fires "pull" activity
-      file.syncStatus = "ok";
-      await this.pullFile(cfg, workspaceId, file.localPath, entry, meta);
-      this.fireActivity({
-        kind: "resolve_take_theirs",
-        workspaceId,
-        workspaceNote: entry.workspaceNote,
-        relPath: file.localPath,
-        machineName: this.deps.machineName,
-        provider: this.deps.provider.type,
-        meta: { autoResolved: true, rule: rule.pattern },
-      });
-    }
-  }
 
   /**
    * Resolve a conflict by keeping the local (mine) version: push local file to cloud, clear conflict status.
@@ -3527,11 +3449,6 @@ export class SyncEngine {
       if (file.syncStatus === "conflict") {
         return;
       }
-      const rule = this.matchConflictRule(file.localPath);
-      if (rule) {
-        await this.applyConflictRule(cfg, workspaceId, file, entry, meta, rule);
-        return;
-      }
       file.syncStatus = "conflict";
       await this.persistMutatedCfg(cfg);
       if (this.deps.onNewConflict) {
@@ -3735,11 +3652,6 @@ export class SyncEngine {
       return false;
     }
     if (file.syncStatus === "conflict") {
-      return false;
-    }
-    const rule = this.matchConflictRule(file.localPath);
-    if (rule) {
-      await this.applyConflictRule(cfg, workspaceId, file, entry, meta, rule);
       return false;
     }
     file.syncStatus = "conflict";
@@ -4040,16 +3952,6 @@ export class SyncEngine {
       // `hash` above stays as it is: it feeds the pre-lock three-way check that
       // decides whether to upload at all. Only the value recorded in `_meta`
       // had to become the hash of the bytes actually sent.
-
-      if (
-        isDeltaSyncEligible({
-          deltaSync: this.deps.deltaSync ?? false,
-          deltaThresholdKB: this.deps.deltaThresholdKB ?? 100,
-          plaintextByteLength: plaintextBufLocked.length,
-        })
-      ) {
-        // §8.2: rolling-hash delta + conditional GET — not implemented; upload proceeds as full body below.
-      }
 
       const encoded = encodeCloudBlob(plaintextBufLocked, posixRel, {
         encrypt: this.deps.encrypt,

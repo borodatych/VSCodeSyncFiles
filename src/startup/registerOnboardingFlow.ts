@@ -26,7 +26,6 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
 import { ensureWorkspaceGitignoreEntry } from "../core/workspaceGitignore.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
@@ -41,7 +40,6 @@ export interface OnboardingFlowDeps {
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
   offlineQueueStore: SyncOfflineQueueStore;
-  scheduleDeferredStore: SyncScheduleDeferredStore;
   makeEngine: (
     root: string,
     provider: ICloudProvider,
@@ -65,7 +63,6 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
     statusBar,
     workspacesTree,
     offlineQueueStore,
-    scheduleDeferredStore,
     makeEngine,
     workspaceFolders,
   } = deps;
@@ -128,7 +125,6 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
       machineId: gcInit.machineId,
       machineName: gcInit.machineName,
       offlineQueue: offlineQueueStore,
-      scheduleDeferred: scheduleDeferredStore,
     });
   })();
 

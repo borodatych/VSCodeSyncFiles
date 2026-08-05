@@ -12,7 +12,6 @@ const base = (): ExplainFileSyncStateInput => ({
   autoSyncMode: "check-only",
   sessionPaused: false,
   autoPauseActive: false,
-  scheduleBlocked: false,
   rateLimited: false,
   workspaceState: "active",
   tracked: true,

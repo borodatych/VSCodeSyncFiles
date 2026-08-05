@@ -126,14 +126,12 @@ const ALL_KEYS = [
   "yandexOAuthClientId", "yandexUseAppFolder",
   "notificationLevel", "showFileDecorations", "digestIntervalMinutes",
   "maxFileSizeMB", "warnOnBinaryFiles", "showPreview", "syncSummaryOnStartup",
-  "lineEnding",
   "localBackupEnabled", "localBackupRetentionDays",
   "syncOnOpen", "syncOnFocusDelayMs", "pushOnCommit",
   "smartSuggestions", "requireMachineApproval",
   "pauseOnMeteredConnection", "pauseBatteryThreshold",
   "watchMode", "watchIntervalSeconds", "watchMaxIntervalSeconds", "watchAdaptive",
   "compressUploads", "encryption", "aiMerge.enabled",
-  "deltaSync", "deltaThresholdKB",
   "webhooks.enabled", "webhooks.url", "webhooks.fallbackAfterMinutes", "webhooks.tunnelEnabled",
   "gitBranchAutoSync",
   "snapshotRetentionDays", "maxSnapshotsPerWorkspace",
@@ -393,7 +391,6 @@ function getSettingsHtml(): string {
   <!-- ── СИНХРОНИЗАЦИЯ ───────────────────────────────────────── -->
   <div id="sync" class="section">
     <h2>☁ Синхронизация</h2>
-    ${select("lineEnding","Окончания строк","Нормализация при хэше: lf (рекомендуется), crlf, preserve (без нормализации).",["lf","crlf","preserve"])}
     ${number("maxFileSizeMB","Макс. размер файла (МБ)","0 — без лимита. Файлы больше лимита не синхронизируются.",0,1000)}
     ${toggle("showPreview","Предпросмотр перед sync","Показывать план синхронизации перед Push/Pull/Sync из панели.")}
     ${toggle("syncSummaryOnStartup","Pull при старте VS Code","Тихий Pull при запуске и сводка изменений.")}
@@ -502,8 +499,6 @@ function getSettingsHtml(): string {
   <div id="advanced" class="section">
     <h2>⚙ Расширенные</h2>
     ${toggle("compressUploads","Gzip сжатие загрузок","Сжимать текстовые файлы перед загрузкой. Несовместимо с шифрованием.")}
-    ${toggle("deltaSync","Delta Sync (экспериментально)","Загружать только изменённые части файлов (rolling-hash CDC).")}
-    ${number("deltaThresholdKB","Порог delta sync (КБ)","Delta sync применяется только для файлов крупнее N КБ.",1,102400)}
   </div>
 
   <!-- ── ТЕЛЕМЕТРИЯ ──────────────────────────────────────────── -->

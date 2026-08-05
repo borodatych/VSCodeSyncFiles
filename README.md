@@ -125,10 +125,7 @@
 | `vscodesync.softLock.enabled` | `false` | Сообщать другим машинам «сейчас редактируется» для открытого файла (soft-lock в манифесте) |
 | `vscodesync.watchMode` | `false` | Автосинхронизация при сохранении файла |
 | `vscodesync.watchIntervalSeconds` | `30` | Минимальный интервал опроса в watch-режиме |
-| `vscodesync.deltaSync` | `false` | Загружать только изменённые части файла |
 | `vscodesync.compressUploads` | `false` | Gzip-сжатие перед загрузкой (отключить при шифровании) |
-| `vscodesync.lineEnding` | `lf` | `lf` · `crlf` · `preserve` |
-| `vscodesync.syncSchedule` | — | Ограничить синхронизацию определёнными часами/днями |
 | `vscodesync.localBackupEnabled` | `true` | Хранить локальные резервные копии перед перезаписью |
 | `vscodesync.snapshotRetentionDays` | `180` | Автоудаление старых снимков |
 | `vscodesync.quickTransferTtlDays` | `7` | Срок хранения файлов быстрой передачи в облаке |

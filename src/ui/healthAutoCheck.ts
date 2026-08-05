@@ -12,7 +12,6 @@ import type { SyncEngine } from "../core/syncEngine.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ProviderType } from "../core/types.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { buildHealthCheckReport } from "./healthCheckReport.js";
 import { warnLog, verboseLog } from "../utils/log.js";
 
@@ -28,7 +27,6 @@ export interface HealthAutoDeps {
   machineId: string;
   machineName: string;
   offlineQueue: SyncOfflineQueueStore;
-  scheduleDeferred: SyncScheduleDeferredStore;
 }
 
 export function registerHealthAutoCheck(
@@ -66,7 +64,6 @@ async function runIfDue(
       machineName: deps.machineName,
       createEngine: deps.createEngine,
       offlineQueue: deps.offlineQueue,
-      scheduleDeferred: deps.scheduleDeferred,
     });
 
     await context.globalState.update(STATE_KEY, now);

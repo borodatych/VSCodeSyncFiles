@@ -108,16 +108,12 @@ function configReads(sources: string[]): Set<string> {
  * (policy rework) and E (provider parity).
  */
 const UNWIRED: Record<string, string> = {
-  "vscodesync.conflictRules": "объявлена, но не подключена — этап 3 (B14): удаление либо переосмысление как «предлагаемое действие»",
-  "vscodesync.syncScheduleExtended": "мёртвая с рождения — этап 3 (B3): удаляется вместе с расписанием",
   "vscodesync.autoPause.learnedSchedule.enabled": "обучаемое расписание не реализовано — этап 3",
   "vscodesync.ai.sessionSummary.enabled": "флаг AI-сводки не читается — этап 6",
   "vscodesync.ai.suggestWorkspaceTags.enabled": "флаг AI-тегов не читается — этап 6",
   "vscodesync.ai.pathMapper.enabled": "флаг AI path mapper не читается — этап 6",
   "vscodesync.historyLazyDrainMinutes": "отложенный drain истории не подключён — этап 1",
   "vscodesync.tokenRefreshSkewMinutes": "запас на обновление токена не подключён — этап 4 (E4)",
-  "vscodesync.saveDebounceSecDefault": "дефолт дебаунса сохранения не подключён — этап 3",
-  "vscodesync.watchIdleCyclesBeforeBackoff": "бэкофф watch-режима не подключён — этап 3",
   "vscodesync.onedrive.uploadSessionThresholdMB": "чанковая заливка OneDrive не подключена — этап 4 (E6)",
   "vscodesync.onedrive.uploadChunkMB": "чанковая заливка OneDrive не подключена — этап 4 (E6)",
   "vscodesync.yandex.apiTimeoutMs": "таймауты Яндекса не подключены — этап 4",

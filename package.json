@@ -214,16 +214,6 @@
           "default": false,
           "description": "%cfg.compressUploads.description%"
         },
-        "vscodesync.lineEnding": {
-          "type": "string",
-          "enum": [
-            "lf",
-            "crlf",
-            "preserve"
-          ],
-          "default": "lf",
-          "description": "%cfg.lineEnding.description%"
-        },
         "vscodesync.workspaceInactiveDays": {
           "type": "number",
           "default": 90,
@@ -241,33 +231,6 @@
           "type": "boolean",
           "default": false,
           "description": "%cfg.pushOnCommit.description%"
-        },
-        "vscodesync.conflictRules": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "object",
-            "required": [
-              "pattern",
-              "strategy"
-            ],
-            "properties": {
-              "pattern": {
-                "type": "string",
-                "description": "Minimatch-glob относительно корня workspace (например '*.lock' или 'config/shared/**')"
-              },
-              "strategy": {
-                "type": "string",
-                "enum": [
-                  "keep-mine",
-                  "take-theirs",
-                  "newer"
-                ],
-                "description": "Автостратегия разрешения конфликта при матче по pattern"
-              }
-            }
-          },
-          "description": "%cfg.conflictRules.description%"
         },
         "vscodesync.localBackupEnabled": {
           "type": "boolean",
@@ -303,11 +266,6 @@
           "default": "",
           "pattern": "^$|^daily \\d{1,2}:\\d{2}$|^weekly (sun|mon|tue|wed|thu|fri|sat) \\d{1,2}:\\d{2}$",
           "description": "%cfg.snapshotSchedule.description%"
-        },
-        "vscodesync.syncScheduleExtended": {
-          "type": "string",
-          "default": "",
-          "description": "%cfg.syncScheduleExtended.description%"
         },
         "vscodesync.autoPause.learnedSchedule.enabled": {
           "type": "boolean",
@@ -449,65 +407,6 @@
           "default": true,
           "description": "%cfg.watchAdaptive.description%"
         },
-        "vscodesync.syncSchedule": {
-          "type": "object",
-          "markdownDescription": "Окно времени для **автоматических** триггеров (onSave debounce, onFocus, onOpen, Git push-on-commit, watch poll, startup pull). Ручные команды VSCodeSync выполняются всегда. Вне окна операции накапливаются в `schedule-deferred.json` в каталоге расширения и выполняются при входе в активное окно.",
-          "default": {
-            "enabled": false,
-            "activeHours": "09:00-18:00",
-            "activeDays": [
-              "Mon",
-              "Tue",
-              "Wed",
-              "Thu",
-              "Fri"
-            ],
-            "timezone": "auto"
-          },
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": false,
-              "description": "Включить ограничение автосинхронизации по расписанию"
-            },
-            "activeHours": {
-              "type": "string",
-              "default": "09:00-18:00",
-              "description": "Интервал локального времени «HH:mm-HH:mm» (допускается переход через полночь)"
-            },
-            "activeDays": {
-              "type": "array",
-              "default": [
-                "Mon",
-                "Tue",
-                "Wed",
-                "Thu",
-                "Fri"
-              ],
-              "items": {
-                "type": "string"
-              },
-              "description": "Дни недели (Mon…Sun или полные имена). Пустой список = все дни"
-            },
-            "timezone": {
-              "type": "string",
-              "default": "auto",
-              "description": "IANA (Europe/Moscow) или auto — системная зона"
-            }
-          },
-          "additionalProperties": true
-        },
-        "vscodesync.deltaSync": {
-          "type": "boolean",
-          "default": false,
-          "description": "%cfg.deltaSync.description%"
-        },
-        "vscodesync.deltaThresholdKB": {
-          "type": "number",
-          "default": 100,
-          "minimum": 1,
-          "description": "%cfg.deltaThresholdKB.description%"
-        },
         "vscodesync.webhooks.enabled": {
           "type": "boolean",
           "default": false,
@@ -638,20 +537,6 @@
           "minimum": 1,
           "maximum": 60,
           "markdownDescription": "%cfg.tokenRefreshSkewMinutes.description%"
-        },
-        "vscodesync.saveDebounceSecDefault": {
-          "type": "number",
-          "default": 3,
-          "minimum": 0,
-          "maximum": 300,
-          "markdownDescription": "%cfg.saveDebounceSecDefault.description%"
-        },
-        "vscodesync.watchIdleCyclesBeforeBackoff": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 100,
-          "markdownDescription": "%cfg.watchIdleCyclesBeforeBackoff.description%"
         },
         "vscodesync.localBackupDir": {
           "type": "string",
