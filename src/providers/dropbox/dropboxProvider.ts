@@ -9,6 +9,8 @@ import type {
   UploadResult,
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
+import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -98,7 +100,10 @@ export class DropboxProvider implements ICloudProvider {
       body: body.toString(),
     }, { channel: "dropbox.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     if (!r.ok) {
-      throw new ProviderError("UNAUTHORIZED", await r.text());
+      // A token endpoint answers 400/401 for a dead grant but 5xx when it is
+      // merely unwell; calling both UNAUTHORIZED would sign the user out over
+      // a blip, so the status decides.
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as {
       access_token: string;
@@ -126,15 +131,53 @@ export class DropboxProvider implements ICloudProvider {
     return bundle.accessToken;
   }
 
+  /**
+   * Turn an error response into a typed {@link ProviderError} (E1).
+   *
+   * Every non-ok branch in this provider goes through here, so a revoked token
+   * surfaces as UNAUTHORIZED — and reaches the "sign in again" dialog — instead
+   * of NETWORK_ERROR, which the offline queue would retry forever.
+   */
+  private async classifyResponse(r: Response): Promise<ProviderError> {
+    const body = await r.text().catch(() => "");
+    return this.classifyBody(r.status, body, r.headers.get("Retry-After"));
+  }
+
+  /** Same classification when the caller already consumed the body. */
+  private classifyBody(status: number, bodyText: string, retryAfter?: string | null): ProviderError {
+    return classifyProviderHttpError({ provider: "Dropbox", status, bodyText, retryAfter });
+  }
+
+  /**
+   * Force a refresh after a 401 — the stored expiry cannot see a grant that the
+   * provider revoked server-side.
+   */
+  private async forceRefreshAccessToken(): Promise<string> {
+    const bundle = await readDropboxTokens(this.secrets);
+    if (!bundle?.refreshToken) {
+      throw new ProviderError("UNAUTHORIZED", "Dropbox: сессия истекла. Выполните повторный вход.");
+    }
+    const refreshed = await this.refreshAccessToken(bundle.refreshToken);
+    return refreshed.accessToken;
+  }
+
   private async apiFetch(url: string, init?: RequestInit): Promise<Response> {
     let r: Response;
     try {
       const isDataPath = /\/files\/(upload|download)/.test(url);
-      r = await fetchWithTimeout(url, init ?? {}, {
-        channel: "dropbox.fetch",
-        timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+      r = await sendWithForcedRefreshOn401({
+        init: init ?? {},
+        send: (i) =>
+          fetchWithTimeout(url, i, {
+            channel: "dropbox.fetch",
+            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+          }),
+        forceRefresh: () => this.forceRefreshAccessToken(),
       });
     } catch (e) {
+      if (e instanceof ProviderError) {
+        throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
+      }
       bumpOfflineFlushBackoff();
       noteCloudTransportFailure();
       throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
@@ -184,7 +227,7 @@ export class DropboxProvider implements ICloudProvider {
     if (r.status === 409 && (tag === "path" || txt.includes("conflict"))) {
       return;
     }
-    throw new ProviderError("NETWORK_ERROR", txt);
+    throw this.classifyBody(r.status, txt);
   }
 
   /** Ensures parent folders exist for a file path (segments except leaf name). */
@@ -231,7 +274,7 @@ export class DropboxProvider implements ICloudProvider {
       if (r.status === 409 && options?.ifMatch) {
         throw new ProviderError("PRECONDITION_FAILED", t);
       }
-      throw new ProviderError("NETWORK_ERROR", t);
+      throw this.classifyBody(r.status, t);
     }
     const metaHdr = r.headers.get("Dropbox-API-Result");
     let rev: string | undefined;
@@ -271,7 +314,7 @@ export class DropboxProvider implements ICloudProvider {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const buf = Buffer.from(await r.arrayBuffer());
     let etag: string | undefined;
@@ -295,7 +338,7 @@ export class DropboxProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as {
       ".tag"?: string;
@@ -320,7 +363,7 @@ export class DropboxProvider implements ICloudProvider {
       if (r.status === 409 && txt.includes("not_found")) {
         return;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(r.status, txt);
     }
   }
 
@@ -364,7 +407,7 @@ export class DropboxProvider implements ICloudProvider {
         return [];
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const page = (await r.json()) as {
         entries?: typeof entries;

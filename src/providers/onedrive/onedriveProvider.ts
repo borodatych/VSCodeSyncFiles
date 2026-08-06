@@ -9,6 +9,8 @@ import type {
   UploadResult,
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
+import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -88,11 +90,28 @@ async function storeOneDriveTokenBundle(secrets: SecretStore, bundle: OneDriveTo
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000; // refresh 5 min before expiry
 const TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
-export async function maybeRefreshToken(secrets: SecretStore, bundle: OneDriveTokenBundle): Promise<OneDriveTokenBundle> {
+/**
+ * Refresh the access token when it is about to expire, or unconditionally when
+ * `force` is set — the caller saw a 401, which means the stored expiry lies
+ * (the grant was revoked server-side).
+ *
+ * A failed refresh falls back to the stored token **only while that token is
+ * still valid**. Returning a token that has already expired, as this used to do
+ * on every network hiccup and on every non-`invalid_grant` error, guarantees a
+ * 401 on the next call and hides the real reason.
+ */
+export async function maybeRefreshToken(
+  secrets: SecretStore,
+  bundle: OneDriveTokenBundle,
+  opts?: { force?: boolean },
+): Promise<OneDriveTokenBundle> {
   if (!bundle.refreshToken || !bundle.clientId) {
+    if (opts?.force === true) {
+      throw new ProviderError("UNAUTHORIZED", "OneDrive: сессия истекла. Выполните повторный вход.");
+    }
     return bundle;
   }
-  if (bundle.expiresAtMs > Date.now() + TOKEN_REFRESH_SKEW_MS) {
+  if (opts?.force !== true && bundle.expiresAtMs > Date.now() + TOKEN_REFRESH_SKEW_MS) {
     return bundle;
   }
   // Access token is expiring soon — refresh it
@@ -109,15 +128,34 @@ export async function maybeRefreshToken(secrets: SecretStore, bundle: OneDriveTo
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     }, { channel: "onedrive.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
-  } catch {
-    return bundle; // Network error — use existing token
+  } catch (e) {
+    // Unreachable token endpoint: the old token is still worth trying while it
+    // has time left, but pretending an expired one is usable is a lie.
+    if (stillUsable(bundle)) {
+      return bundle;
+    }
+    throw new ProviderError(
+      "NETWORK_ERROR",
+      `OneDrive: не удалось обновить истёкший токен — ${e instanceof Error ? e.message : String(e)}`,
+      { cause: e },
+    );
   }
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string };
-    if (err.error === "invalid_grant" || err.error === "interaction_required") {
+    const bodyText = await res.text().catch(() => "");
+    const err = safeJsonError(bodyText);
+    if (err === "invalid_grant" || err === "interaction_required") {
       throw new ProviderError("UNAUTHORIZED", "OneDrive: сессия истекла. Выполните повторный вход.");
     }
-    return bundle; // Non-fatal refresh failure — use existing token
+    const classified = classifyProviderHttpError({
+      provider: "OneDrive",
+      status: res.status,
+      bodyText,
+      retryAfter: res.headers.get("Retry-After"),
+    });
+    if (classified.code === "UNAUTHORIZED" || !stillUsable(bundle)) {
+      throw classified;
+    }
+    return bundle; // Transient refresh failure and the current token still works.
   }
   const j = (await res.json()) as { access_token: string; refresh_token?: string; expires_in: number };
   const refreshed: OneDriveTokenBundle = {
@@ -132,6 +170,19 @@ export async function maybeRefreshToken(secrets: SecretStore, bundle: OneDriveTo
 
 async function readTokens(secrets: SecretStore): Promise<OneDriveTokenBundle | null> {
   return readOneDriveTokenBundle(secrets);
+}
+
+/** The stored access token has not expired yet, so a failed refresh is survivable. */
+function stillUsable(bundle: OneDriveTokenBundle): boolean {
+  return bundle.expiresAtMs > Date.now();
+}
+
+function safeJsonError(bodyText: string): string | undefined {
+  try {
+    return (JSON.parse(bodyText) as { error?: string }).error;
+  } catch {
+    return undefined;
+  }
 }
 
 export class OneDriveProvider implements ICloudProvider {
@@ -162,6 +213,36 @@ export class OneDriveProvider implements ICloudProvider {
     return fresh.accessToken;
   }
 
+  /**
+   * Turn an error response into a typed {@link ProviderError} (E1).
+   *
+   * Every non-ok branch in this provider goes through here, so a revoked token
+   * surfaces as UNAUTHORIZED — and reaches the "sign in again" dialog — instead
+   * of NETWORK_ERROR, which the offline queue would retry forever.
+   */
+  private async classifyResponse(r: Response): Promise<ProviderError> {
+    const body = await r.text().catch(() => "");
+    return this.classifyBody(r.status, body, r.headers.get("Retry-After"));
+  }
+
+  /** Same classification when the caller already consumed the body. */
+  private classifyBody(status: number, bodyText: string, retryAfter?: string | null): ProviderError {
+    return classifyProviderHttpError({ provider: "OneDrive", status, bodyText, retryAfter });
+  }
+
+  /**
+   * Force a token refresh after a 401 and hand back the fresh access token.
+   * Throws UNAUTHORIZED when the grant is gone — nothing left to retry with.
+   */
+  private async forceRefreshAccessToken(): Promise<string> {
+    const bundle = await readTokens(this.secrets);
+    if (!bundle?.accessToken) {
+      throw new ProviderError("UNAUTHORIZED", "OneDrive: нет токена. Выполните вход.");
+    }
+    const fresh = await maybeRefreshToken(this.secrets, bundle, { force: true });
+    return fresh.accessToken;
+  }
+
   private async graphFetch(url: string, init?: RequestInit): Promise<Response> {
     // v0.17 D03 — uniform retry envelope.
     return withRetry(
@@ -170,11 +251,19 @@ export class OneDriveProvider implements ICloudProvider {
         let r: Response;
         try {
           const isDataPath = /\/content(\?|$)|uploadSession/.test(url);
-          r = await fetchWithTimeout(url, init ?? {}, {
-            channel: "onedrive.fetch",
-            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+          r = await sendWithForcedRefreshOn401({
+            init: init ?? {},
+            send: (i) =>
+              fetchWithTimeout(url, i, {
+                channel: "onedrive.fetch",
+                timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+              }),
+            forceRefresh: () => this.forceRefreshAccessToken(),
           });
         } catch (e) {
+          if (e instanceof ProviderError) {
+            throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
+          }
           bumpOfflineFlushBackoff();
           noteCloudTransportFailure();
           throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
@@ -228,7 +317,7 @@ export class OneDriveProvider implements ICloudProvider {
       if (r.status === 401) {
         throw new ProviderError("UNAUTHORIZED", t);
       }
-      throw new ProviderError("NETWORK_ERROR", `${String(r.status)} ${t}`);
+      throw this.classifyBody(r.status, t);
     }
     return { etag: normalizeEtag(r.headers.get("etag")) };
   }
@@ -267,7 +356,7 @@ export class OneDriveProvider implements ICloudProvider {
     if (!sessionRes.ok) {
       const t = await sessionRes.text();
       if (sessionRes.status === 401) throw new ProviderError("UNAUTHORIZED", t);
-      throw new ProviderError("NETWORK_ERROR", `createUploadSession ${String(sessionRes.status)} ${t}`);
+      throw this.classifyBody(sessionRes.status, `createUploadSession: ${t}`);
     }
     const session = (await sessionRes.json()) as { uploadUrl: string };
     const uploadUrl = session.uploadUrl;
@@ -323,7 +412,7 @@ export class OneDriveProvider implements ICloudProvider {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const buf = Buffer.from(await r.arrayBuffer());
     return { body: buf, etag: normalizeEtag(r.headers.get("etag")) };
@@ -338,7 +427,7 @@ export class OneDriveProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { size?: number; eTag?: string; lastModifiedDateTime?: string };
     return {
@@ -359,7 +448,7 @@ export class OneDriveProvider implements ICloudProvider {
       return;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
   }
 
@@ -380,7 +469,7 @@ export class OneDriveProvider implements ICloudProvider {
         return firstHop ? [] : out;
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const j = (await r.json()) as {
         value?: {
@@ -424,7 +513,7 @@ export class OneDriveProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { webUrl?: string };
     return j.webUrl ?? null;

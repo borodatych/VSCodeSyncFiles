@@ -10,6 +10,8 @@ import type {
   UploadResult,
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
+import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -120,7 +122,10 @@ export class GdriveProvider implements ICloudProvider {
       body: body.toString(),
     }, { channel: "gdrive.fetch", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     if (!r.ok) {
-      throw new ProviderError("UNAUTHORIZED", await r.text());
+      // A token endpoint answers 400/401 for a dead grant but 5xx when it is
+      // merely unwell; calling both UNAUTHORIZED would sign the user out over
+      // a blip, so the status decides.
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as {
       access_token: string;
@@ -150,6 +155,36 @@ export class GdriveProvider implements ICloudProvider {
     return bundle.accessToken;
   }
 
+  /**
+   * Force a refresh after a 401 — the stored expiry cannot see a grant that the
+   * provider revoked server-side.
+   */
+  private async forceRefreshAccessToken(): Promise<string> {
+    const bundle = await readGdriveTokens(this.secrets);
+    if (!bundle?.refreshToken) {
+      throw new ProviderError("UNAUTHORIZED", "Google Drive: сессия истекла. Выполните повторный вход.");
+    }
+    const refreshed = await this.refreshAccessToken(bundle.refreshToken);
+    return refreshed.accessToken;
+  }
+
+  /**
+   * Turn an error response into a typed {@link ProviderError} (E1).
+   *
+   * Every non-ok branch in this provider goes through here, so a revoked token
+   * surfaces as UNAUTHORIZED — and reaches the "sign in again" dialog — instead
+   * of NETWORK_ERROR, which the offline queue would retry forever.
+   */
+  private async classifyResponse(r: Response): Promise<ProviderError> {
+    const body = await r.text().catch(() => "");
+    return this.classifyBody(r.status, body, r.headers.get("Retry-After"));
+  }
+
+  /** Same classification when the caller already consumed the body. */
+  private classifyBody(status: number, bodyText: string, retryAfter?: string | null): ProviderError {
+    return classifyProviderHttpError({ provider: "Google Drive", status, bodyText, retryAfter });
+  }
+
   private async driveFetch(url: string, init?: RequestInit): Promise<Response> {
     // v0.17 D03 — uniform retry envelope. We wrap each fetch attempt so
     // transient NETWORK_ERROR / SERVER_ERROR (5xx other than 503 which is
@@ -163,11 +198,19 @@ export class GdriveProvider implements ICloudProvider {
           // Download/upload paths may stream multi-MB blobs — give them
           // a wider timeout than metadata requests.
           const isDataPath = /(\/upload\/|alt=media)/.test(url);
-          r = await fetchWithTimeout(url, init ?? {}, {
-            channel: "gdrive.fetch",
-            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+          r = await sendWithForcedRefreshOn401({
+            init: init ?? {},
+            send: (i) =>
+              fetchWithTimeout(url, i, {
+                channel: "gdrive.fetch",
+                timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+              }),
+            forceRefresh: () => this.forceRefreshAccessToken(),
           });
         } catch (e) {
+          if (e instanceof ProviderError) {
+            throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
+          }
           bumpOfflineFlushBackoff();
           noteCloudTransportFailure();
           throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
@@ -199,7 +242,7 @@ export class GdriveProvider implements ICloudProvider {
     const url = `${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=10`;
     const r = await this.driveFetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { files?: { id?: string }[] };
     const existing = j.files?.[0]?.id;
@@ -220,7 +263,7 @@ export class GdriveProvider implements ICloudProvider {
       }),
     });
     if (!create.ok) {
-      throw new ProviderError("NETWORK_ERROR", await create.text());
+      throw await this.classifyResponse(create);
     }
     const created = (await create.json()) as { id?: string };
     if (!created.id) {
@@ -291,7 +334,7 @@ export class GdriveProvider implements ICloudProvider {
     const url = `${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,size,md5Checksum,modifiedTime)&pageSize=20`;
     const r = await this.driveFetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { files?: DriveFileSummary[] };
     const files = j.files ?? [];
@@ -319,7 +362,7 @@ export class GdriveProvider implements ICloudProvider {
       }),
     });
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const created = (await r.json()) as { id?: string };
     if (!created.id) {
@@ -373,7 +416,7 @@ export class GdriveProvider implements ICloudProvider {
         throw new ProviderError("PRECONDITION_FAILED", "If-Match failed on Google Drive");
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const etag = normalizeEtag(r.headers.get("etag"));
       return { etag };
@@ -394,7 +437,7 @@ export class GdriveProvider implements ICloudProvider {
       body: new Uint8Array(body.buffer, body.byteOffset, body.byteLength) as unknown as BodyInit,
     });
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const etagHdr = normalizeEtag(r.headers.get("etag"));
     const created = (await r.json()) as { md5Checksum?: string; etag?: string };
@@ -425,7 +468,7 @@ export class GdriveProvider implements ICloudProvider {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const buf = Buffer.from(await r.arrayBuffer());
     const etag =
@@ -449,7 +492,7 @@ export class GdriveProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const meta = (await r.json()) as DriveFileSummary;
     const etag = normalizeEtag(meta.md5Checksum ?? meta.etag ?? null);
@@ -476,7 +519,7 @@ export class GdriveProvider implements ICloudProvider {
       return;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
   }
 
@@ -504,7 +547,7 @@ export class GdriveProvider implements ICloudProvider {
         return out;
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const j = (await r.json()) as { files?: DriveFileSummary[]; nextPageToken?: string };
       for (const it of j.files ?? []) {
@@ -543,7 +586,7 @@ export class GdriveProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { webViewLink?: string };
     return j.webViewLink ?? null;

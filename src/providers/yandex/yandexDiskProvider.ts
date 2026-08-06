@@ -10,6 +10,7 @@ import type {
   UploadResult,
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
+import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -112,7 +113,10 @@ export class YandexDiskProvider implements ICloudProvider {
       body: body.toString(),
     }, API_TIMEOUT_MS);
     if (!r.ok) {
-      throw new ProviderError("UNAUTHORIZED", await r.text());
+      // A token endpoint answers 400/401 for a dead grant but 5xx when it is
+      // merely unwell; calling both UNAUTHORIZED would sign the user out over
+      // a blip, so the status decides.
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as {
       access_token: string;
@@ -138,6 +142,23 @@ export class YandexDiskProvider implements ICloudProvider {
       bundle = await this.refreshAccessToken(bundle.refreshToken);
     }
     return bundle.accessToken;
+  }
+
+  /**
+   * Turn an error response into a typed {@link ProviderError} (E1).
+   *
+   * Every non-ok branch in this provider goes through here, so a revoked token
+   * surfaces as UNAUTHORIZED — and reaches the "sign in again" dialog — instead
+   * of NETWORK_ERROR, which the offline queue would retry forever.
+   */
+  private async classifyResponse(r: Response): Promise<ProviderError> {
+    const body = await r.text().catch(() => "");
+    return this.classifyBody(r.status, body, r.headers.get("Retry-After"));
+  }
+
+  /** Same classification when the caller already consumed the body. */
+  private classifyBody(status: number, bodyText: string, retryAfter?: string | null): ProviderError {
+    return classifyProviderHttpError({ provider: "Yandex Disk", status, bodyText, retryAfter });
   }
 
   private async apiFetch(pathAndQuery: string, init?: RequestInit): Promise<Response> {
@@ -171,8 +192,14 @@ export class YandexDiskProvider implements ICloudProvider {
               cause: e,
             });
           }
-        } catch {
-          /* fall through */
+        } catch (e) {
+          // A dead grant must not be swallowed: rethrowing keeps UNAUTHORIZED
+          // (and the "sign in again" dialog) instead of letting the original
+          // 401 leave this method as a generic NETWORK_ERROR.
+          if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
+            throw e;
+          }
+          /* transient refresh failure — fall through with the original 401 */
         }
       }
     }
@@ -207,7 +234,7 @@ export class YandexDiskProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     return r.json();
   }
@@ -257,7 +284,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(rUp.status, txt);
     }
     const up = (await rUp.json()) as { href?: string };
     if (!up.href) {
@@ -275,7 +302,7 @@ export class YandexDiskProvider implements ICloudProvider {
       throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
     }
     if (!put.ok) {
-      throw new ProviderError("NETWORK_ERROR", await put.text());
+      throw await this.classifyResponse(put);
     }
     noteCloudTransportSuccess();
 
@@ -323,7 +350,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(rDl.status, txt);
     }
     const dl = (await rDl.json()) as { href?: string };
     if (!dl.href) {
@@ -341,7 +368,7 @@ export class YandexDiskProvider implements ICloudProvider {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     noteCloudTransportSuccess();
     const buf = Buffer.from(await r.arrayBuffer());
@@ -356,7 +383,7 @@ export class YandexDiskProvider implements ICloudProvider {
       return;
     }
     const txt = await r.text();
-    throw new ProviderError("NETWORK_ERROR", txt);
+    throw this.classifyBody(r.status, txt);
   }
 
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
@@ -374,7 +401,7 @@ export class YandexDiskProvider implements ICloudProvider {
         return firstHop ? [] : out;
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const j = (await r.json()) as {
         type?: string;
@@ -436,7 +463,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(r.status, txt);
     }
   }
 
