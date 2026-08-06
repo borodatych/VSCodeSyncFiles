@@ -981,6 +981,14 @@
         "title": "%cmd.openDashboard.title%"
       },
       {
+        "command": "vscodesync.onedriveSignInBrowser",
+        "title": "%cmd.onedriveSignInBrowser.title%"
+      },
+      {
+        "command": "vscodesync.googleDriveSignInBrowser",
+        "title": "%cmd.googleDriveSignInBrowser.title%"
+      },
+      {
         "command": "vscodesync.onedriveSignIn",
         "title": "%cmd.onedriveSignIn.title%"
       },
@@ -1649,6 +1657,14 @@
         },
         {
           "command": "vscodesync.openMachinesGraph",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignInBrowser",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignInBrowser",
           "when": "false"
         }
       ],

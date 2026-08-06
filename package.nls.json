@@ -83,6 +83,8 @@
   "cmd.previewSync.title": "VSCodeSync: Preview sync…",
   "cmd.signIn.title": "VSCodeSync: Sign in to cloud",
   "cmd.openDashboard.title": "VSCodeSync: Open panel…",
+  "cmd.onedriveSignInBrowser.title": "VSCodeSync: Sign in to OneDrive via browser",
+  "cmd.googleDriveSignInBrowser.title": "VSCodeSync: Sign in to Google Drive via browser",
   "cmd.onedriveSignIn.title": "VSCodeSync: Sign in to OneDrive",
   "cmd.onedriveSignInHeadless.title": "VSCodeSync: Sign in to OneDrive (Device Code, headless)",
   "cmd.googleDriveSignIn.title": "VSCodeSync: Sign in to Google Drive",

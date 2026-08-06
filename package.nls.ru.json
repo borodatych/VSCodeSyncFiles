@@ -76,6 +76,8 @@
   "cmd.previewSync.title": "VSCodeSync: Предпросмотр синхронизации...",
   "cmd.signIn.title": "VSCodeSync: Войти в облако",
   "cmd.openDashboard.title": "VSCodeSync: Открыть панель…",
+  "cmd.onedriveSignInBrowser.title": "VSCodeSync: Войти в OneDrive через браузер",
+  "cmd.googleDriveSignInBrowser.title": "VSCodeSync: Войти в Google Drive через браузер",
   "cmd.onedriveSignIn.title": "VSCodeSync: Войти в OneDrive",
   "cmd.onedriveSignInHeadless.title": "VSCodeSync: Войти в OneDrive (Device Code, headless)",
   "cmd.googleDriveSignIn.title": "VSCodeSync: Войти в Google Drive",

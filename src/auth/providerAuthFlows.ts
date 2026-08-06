@@ -13,6 +13,14 @@
 import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { runOneDriveDeviceCodeLogin } from "../providers/onedrive/onedriveDeviceCode.js";
+import {
+  ONEDRIVE_PKCE_REDIRECT_URI,
+  runOneDrivePkceOAuth,
+} from "../providers/onedrive/onedrivePkceOAuth.js";
+import {
+  GDRIVE_PKCE_REDIRECT_URI,
+  runGdrivePkceOAuth,
+} from "../providers/gdrive/gdrivePkceOAuth.js";
 import { runGoogleDriveDeviceCodeLogin } from "../providers/gdrive/gdriveDeviceCode.js";
 import { DROPBOX_OAUTH_REDIRECT_URI, runDropboxOAuthLoopback } from "../providers/dropbox/dropboxPkceOAuth.js";
 import { YANDEX_OAUTH_REDIRECT_URI, runYandexOAuthLoopback } from "../providers/yandex/yandexPkceOAuth.js";
@@ -35,6 +43,15 @@ export interface ProviderAuthFlowsDeps {
 export interface ProviderAuthFlows {
   oneDrive: (openBrowser: boolean) => Promise<void>;
   googleDrive: (openBrowser: boolean) => Promise<void>;
+  /**
+   * PKCE + loopback for OneDrive / Google Drive (E13).
+   *
+   * The browser returns the code to `127.0.0.1` on its own — nothing to type.
+   * Device Code stays available for hosts without a usable browser (SSH,
+   * containers, a remote machine): it is a different flow, not a worse one.
+   */
+  oneDrivePkce: () => Promise<void>;
+  googleDrivePkce: () => Promise<void>;
   dropbox: (openBrowser: boolean) => Promise<void>;
   yandexDisk: (openBrowser: boolean) => Promise<void>;
 }
@@ -144,6 +161,87 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     refreshCloudWebhooks();
   };
 
+  /** Everything that happens after any successful sign-in. */
+  const finishSignIn = async (
+    provider: "onedrive" | "gdrive",
+    label: string,
+  ): Promise<void> => {
+    await globalConfig.set("activeProvider", provider);
+    await globalConfig.save();
+    workspacesTree.setActiveCloudProvider(provider);
+    void vscode.window.showInformationMessage(`${label}: токены сохранены.`);
+    await refreshAll();
+    refreshCloudWebhooks();
+  };
+
+  const oneDrivePkce = async (): Promise<void> => {
+    const clientId = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("onedriveClientId", "");
+    if (!clientId) {
+      await vscode.window.showErrorMessage(
+        `Задайте vscodesync.onedriveClientId в настройках. Redirect URI в Azure: ${ONEDRIVE_PKCE_REDIRECT_URI}`,
+      );
+      return;
+    }
+    oneDriveOutputChannel.clear();
+    oneDriveOutputChannel.show(true);
+    oneDriveOutputChannel.appendLine(`OAuth redirect (должен совпадать с приложением Azure): ${ONEDRIVE_PKCE_REDIRECT_URI}`);
+    oneDriveOutputChannel.appendLine("");
+    try {
+      await runOneDrivePkceOAuth(context.secrets, clientId, (authUrl: string) => {
+        oneDriveOutputChannel.appendLine("Authorization URL:");
+        oneDriveOutputChannel.appendLine(authUrl);
+        oneDriveOutputChannel.appendLine("");
+        void vscode.window.showInformationMessage("Откройте браузер для входа в OneDrive (URL также в Output).");
+        void vscode.env.openExternal(vscode.Uri.parse(authUrl));
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      oneDriveOutputChannel.appendLine(`Error: ${msg}`);
+      await vscode.window.showErrorMessage(
+        // `redirect_uri_mismatch` is the one failure a user can fix themselves,
+        // and it is the likely one for an app registered before this flow
+        // existed — so the message names the URI instead of just relaying it.
+        `OneDrive: ${msg}\n\nЕсли ошибка про redirect_uri — добавьте в приложение Azure ${ONEDRIVE_PKCE_REDIRECT_URI} либо войдите через Device Code.`,
+      );
+      return;
+    }
+    await finishSignIn("onedrive", "OneDrive");
+  };
+
+  const googleDrivePkce = async (): Promise<void> => {
+    const clientId = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("googleDriveClientId", "");
+    if (!clientId) {
+      await vscode.window.showErrorMessage(
+        `Задайте vscodesync.googleDriveClientId в настройках. Redirect URI: ${GDRIVE_PKCE_REDIRECT_URI}`,
+      );
+      return;
+    }
+    googleDriveOutputChannel.clear();
+    googleDriveOutputChannel.show(true);
+    googleDriveOutputChannel.appendLine(`OAuth redirect: ${GDRIVE_PKCE_REDIRECT_URI}`);
+    googleDriveOutputChannel.appendLine(
+      "Для клиента типа «Desktop app» Google принимает loopback на любом порту — отдельная регистрация URI обычно не нужна.",
+    );
+    googleDriveOutputChannel.appendLine("");
+    try {
+      await runGdrivePkceOAuth(context.secrets, clientId, (authUrl: string) => {
+        googleDriveOutputChannel.appendLine("Authorization URL:");
+        googleDriveOutputChannel.appendLine(authUrl);
+        googleDriveOutputChannel.appendLine("");
+        void vscode.window.showInformationMessage("Откройте браузер для входа в Google Drive (URL также в Output).");
+        void vscode.env.openExternal(vscode.Uri.parse(authUrl));
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      googleDriveOutputChannel.appendLine(`Error: ${msg}`);
+      await vscode.window.showErrorMessage(
+        `Google Drive: ${msg}\n\nЕсли ошибка про redirect_uri — проверьте, что тип клиента «Desktop app», либо войдите через Device Code.`,
+      );
+      return;
+    }
+    await finishSignIn("gdrive", "Google Drive");
+  };
+
   const dropbox = async (openBrowser: boolean): Promise<void> => {
     const appKey = vscode.workspace.getConfiguration(CFG_SECTION).get<string>("dropboxAppKey", "");
     if (!appKey) {
@@ -229,5 +327,5 @@ export function createProviderAuthFlows(deps: ProviderAuthFlowsDeps): ProviderAu
     refreshCloudWebhooks();
   };
 
-  return { oneDrive, googleDrive, dropbox, yandexDisk };
+  return { oneDrive, googleDrive, oneDrivePkce, googleDrivePkce, dropbox, yandexDisk };
 }

@@ -33,6 +33,8 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.migrateToAnotherProvider",
   "vscodesync.signIn",
   "vscodesync.openDashboard",
+  "vscodesync.onedriveSignInBrowser",
+  "vscodesync.googleDriveSignInBrowser",
   "vscodesync.onedriveSignIn",
   "vscodesync.onedriveSignInHeadless",
   "vscodesync.googleDriveSignIn",
