@@ -1029,10 +1029,6 @@
         "icon": "$(collapse-all)"
       },
       {
-        "command": "vscodesync.resolveKeepMine",
-        "title": "%cmd.resolveKeepMine.title%"
-      },
-      {
         "command": "vscodesync.showSyncDashboard",
         "title": "%cmd.showSyncDashboard.title%"
       },
@@ -1167,10 +1163,6 @@
       {
         "command": "vscodesync.openInCloudStorage",
         "title": "%cmd.openInCloudStorage.title%"
-      },
-      {
-        "command": "vscodesync.resolveTakeTheirs",
-        "title": "%cmd.resolveTakeTheirs.title%"
       },
       {
         "command": "vscodesync.treeFileTakeTheirs",
@@ -1857,12 +1849,12 @@
           "group": "3_manage@2"
         },
         {
-          "command": "vscodesync.resolveKeepMine",
+          "command": "vscodesync.keepMine",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "4_conflict@1"
         },
         {
-          "command": "vscodesync.resolveTakeTheirs",
+          "command": "vscodesync.takeTheirs",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "4_conflict@2"
         }

@@ -7,7 +7,7 @@ import {
   SUBSCRIPTION_VALID_SLACK_MS,
   isNearOrPastExpiration,
   reconcileSubscription,
-} from "../../src/ui/webhookExpirationMath.js";
+} from "../../src/core/webhookExpirationMath.js";
 
 const NOW = Date.UTC(2026, 5, 1, 12, 0, 0);
 

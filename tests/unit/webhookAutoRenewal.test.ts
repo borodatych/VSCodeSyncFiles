@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planWebhookRenewal } from "../../src/core/webhookAutoRenewal.js";
-import { SUBSCRIPTION_RENEW_SLACK_MS } from "../../src/ui/webhookExpirationMath.js";
+import { SUBSCRIPTION_RENEW_SLACK_MS } from "../../src/core/webhookExpirationMath.js";
 
 const NOW = Date.UTC(2026, 5, 1, 12, 0, 0);
 const iso = (offsetMs: number): string => new Date(NOW + offsetMs).toISOString();

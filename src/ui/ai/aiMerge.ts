@@ -10,10 +10,10 @@ import {
   buildOllamaBody,
   buildOpenAiChatBody,
   resolveAiMergeEndpoint,
-} from "./aiMergeEndpoint.js";
+} from "../../core/aiMergeEndpoint.js";
 import {
   fetchWithTimeout,
-} from "../providers/_shared/fetchWithTimeout.js";
+} from "../../providers/_shared/fetchWithTimeout.js";
 
 /** AI endpoints (ollama / lm-studio / custom) may think for a while — bounded all the same. */
 const AI_MERGE_TIMEOUT_MS = 180_000;

@@ -3550,6 +3550,11 @@ export class SyncEngine {
   ): Promise<void> {
     this.assertMayMutate("pushFile");
     this.assertEncryptionReady();
+    // A read-only secondary window must be stopped *before* the blob goes up
+    // (F7). Without this check the upload succeeded and only the following
+    // `pushMetaJson` threw, leaving an orphaned blob in the cloud that no
+    // `_meta` row referenced.
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const ent =
       entry ?? (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);

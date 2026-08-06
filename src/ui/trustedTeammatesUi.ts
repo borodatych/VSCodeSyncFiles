@@ -3,8 +3,9 @@
  * trusted-machines registry.
  *
  * Storage: VS Code `globalState` at `vscodesync.trustedMachines.v1`.
- * Cache: lazy `globalThis.__vscodesyncTrustedMidsCache: Set<string>`
- * read from `_engineFactory` (fast O(1) hot-path lookup).
+ * Cache: `core/trustedMachinesCache` — a module-level set the engine reads on
+ * a hot path. It used to hang off `globalThis` under a `__vscodesync…` key,
+ * where nothing declared who owned it (F7).
  */
 import * as vscode from "vscode";
 import {
@@ -14,16 +15,12 @@ import {
   removeTrusted,
   type TrustedMachinesRegistry,
 } from "../core/trustedMachinesRegistry.js";
+import { clearTrustedMachineIds, setTrustedMachineIds } from "../core/trustedMachinesCache.js";
 
 const GLOBAL_STATE_KEY = "vscodesync.trustedMachines.v1";
 
-interface CachedRegistry {
-  __vscodesyncTrustedMidsCache?: Set<string>;
-}
-
 function refreshCache(reg: TrustedMachinesRegistry): void {
-  const ids = new Set<string>(reg.entries.map((e) => e.machineId));
-  (globalThis as CachedRegistry).__vscodesyncTrustedMidsCache = ids;
+  setTrustedMachineIds(reg.entries.map((e) => e.machineId));
 }
 
 function loadRegistry(context: vscode.ExtensionContext): TrustedMachinesRegistry {
@@ -113,7 +110,7 @@ export function registerTrustedTeammatesCommands(
   // Reset cache when registry is somehow tampered (e.g. user cleared
   // globalState manually).
   out.push(new vscode.Disposable(() => {
-    delete (globalThis as CachedRegistry).__vscodesyncTrustedMidsCache;
+    clearTrustedMachineIds();
   }));
 
   void EMPTY_TRUSTED_REGISTRY; // re-export keeps tree-shake honest

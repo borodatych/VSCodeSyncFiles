@@ -346,16 +346,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    ...registerConflictsCommands({
-      globalConfig,
-      workspacesTree,
-      statusBar,
-      fileDecorations,
-      refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
-      runWithEngine,
-      logSyncActivity,
-      notifiedConflictKeys,
-    }),
+    ...registerConflictsCommands({ globalConfig, runWithEngine, notifiedConflictKeys }),
   );
 
   context.subscriptions.push(

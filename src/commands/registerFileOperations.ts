@@ -413,9 +413,11 @@ export function registerFileOperationsCommands(
           await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
           return;
         }
-        const provider = engine.getProvider();
         try {
-          const dl = await provider.downloadFile(fileEntry.cloudPath);
+          // `downloadTrackedBlob` runs the wire pipeline in reverse
+          // (decrypt → gunzip). Reading the blob straight off the provider
+          // showed ciphertext or gzip bytes in the diff pane (C20).
+          const dl = await engine.downloadTrackedBlob(rel);
           const cloudText = dl.body.toString("utf8");
           const scratch = await vscode.workspace.openTextDocument({
             language: undefined,

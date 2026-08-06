@@ -63,8 +63,6 @@
   "cmd.resolveConflicts.title": "VSCodeSync: Resolve conflicts",
   "cmd.keepMine.title": "VSCodeSync: Keep mine (resolve conflict)",
   "cmd.takeTheirs.title": "VSCodeSync: Take theirs (resolve conflict)",
-  "cmd.resolveKeepMine.title": "VSCodeSync: Resolve conflict — Keep mine",
-  "cmd.resolveTakeTheirs.title": "VSCodeSync: Resolve conflict — Take theirs",
   "cmd.openConflictDiff3way.title": "VSCodeSync: Open 3-way diff (conflict)",
   "cmd.toggleTelemetry.title": "VSCodeSync: Toggle telemetry",
   "cmd.shareWorkspaceLink.title": "VSCodeSync: Copy workspace share-link (vscode:// for another machine)",

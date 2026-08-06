@@ -7,7 +7,7 @@
  * in `extension.ts`.
  */
 import * as vscode from "vscode";
-import type { ActivityEvent } from "./activityLog.js";
+import type { ActivityEvent } from "../../core/activityLog.js";
 
 const MAX_EVENTS = 200;
 

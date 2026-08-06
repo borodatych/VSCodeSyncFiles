@@ -40,6 +40,7 @@ import type { SyncTransferEvent } from "../core/syncStatsStore.js";
 import { createSyncProfileBuffer, type SyncProfileBuffer } from "../core/syncProfileBuffer.js";
 import { decideAdaptiveConcurrency } from "../core/adaptiveConcurrency.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
+import { isTrustedMachineId } from "../core/trustedMachinesCache.js";
 import { resolveSettingWithRc } from "../core/vscodesyncRc.js";
 import { getVscodesyncRcFor } from "../ui/vscodesyncRcWatcher.js";
 
@@ -322,12 +323,9 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       },
       providerHashVerify: () =>
         vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("providerHashVerify", false),
-      isTrustedTeammate: (mid: string) => {
-        // v0.18 D06 — read trusted-machines registry from a global cache
-        // populated by `trustedTeammatesUi.ts`. Pure-helper-shape lookup.
-        const raw = (globalThis as { __vscodesyncTrustedMidsCache?: Set<string> }).__vscodesyncTrustedMidsCache;
-        return raw?.has(mid) ?? false;
-      },
+      // Module-level cache owned by `core/trustedMachinesCache`, filled by
+      // `trustedTeammatesUi`. It used to live on `globalThis` (F7).
+      isTrustedTeammate: (mid: string) => isTrustedMachineId(mid),
       historyVersions: () =>
         vscode.workspace.getConfiguration(CFG_SECTION).get<number>("historyVersions", 10),
       historyMode: () => {

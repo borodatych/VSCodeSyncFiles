@@ -19,7 +19,6 @@ import {
   noteCloudTransportFailure,
   noteCloudTransportSuccess,
 } from "../../core/syncOfflineHints.js";
-import { resetOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "./classifyHttpError.js";
 
@@ -33,10 +32,9 @@ import { classifyProviderHttpError } from "./classifyHttpError.js";
 export async function inspectProviderResponse(r: Response, provider: string): Promise<Response> {
   if (r.ok || r.status === 304) {
     noteProviderRequestSuccess();
+    // Reporting the fact is all the transport does; the offline-flush policy
+    // subscribes to this signal and resets its backoff (E12/F6).
     noteCloudTransportSuccess();
-    // A request got through: the global offline backoff has nothing left to
-    // wait for (E12). Without this the counter only ever grew.
-    resetOfflineFlushBackoff();
     return r;
   }
   // `clone()` keeps the caller's body readable. Error bodies are small; this

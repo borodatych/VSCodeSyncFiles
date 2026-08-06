@@ -56,7 +56,7 @@ export function registerSmartFeaturesEngineCommands(
     vscode.commands.registerCommand("vscodesync.aiSessionSummary", async () => {
       if (!(await ensureAiCommandEnabled("ai.sessionSummary.enabled", "AI session summary"))) return;
       const { loadActivityFile } = await import("../core/activityLog.js");
-      const { summariseActivity } = await import("../core/aiSessionSummary.js");
+      const { summariseActivity } = await import("../ui/ai/aiSessionSummary.js");
       const dir = deps.globalConfig.getStorageDir();
       const data = await loadActivityFile(dir);
       const pick = await vscode.window.showQuickPick(
@@ -122,7 +122,7 @@ export function registerSmartFeaturesEngineCommands(
         await vscode.window.showWarningMessage("VSCodeSync: в workspace нет файлов для анализа.");
         return;
       }
-      const { suggestWorkspaceTags } = await import("../core/aiSessionSummary.js");
+      const { suggestWorkspaceTags } = await import("../ui/ai/aiSessionSummary.js");
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: AI tagger…", cancellable: true },
         async (_p, token) => {

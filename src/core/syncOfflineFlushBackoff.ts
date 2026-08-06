@@ -1,4 +1,5 @@
 import { ExponentialBackoff } from "./exponentialBackoff.js";
+import { onCloudTransportSuccess } from "./syncOfflineHints.js";
 
 const backoff = new ExponentialBackoff(15_000, 2, 300_000);
 let nextAttemptAfterMs = 0;
@@ -24,3 +25,12 @@ export function allowImmediateOfflineFlushRetry(): void {
 export function canAttemptOfflineFlushNow(): boolean {
   return Date.now() >= nextAttemptAfterMs;
 }
+
+/**
+ * A request that got through means there is nothing left to back off from
+ * (E12). The subscription lives here rather than in the provider: transport
+ * reports facts, policy decides consequences (F6).
+ */
+onCloudTransportSuccess(() => {
+  resetOfflineFlushBackoff();
+});

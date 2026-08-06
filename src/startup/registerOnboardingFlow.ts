@@ -27,7 +27,7 @@ import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
-import { ensureWorkspaceGitignoreEntry } from "../core/workspaceGitignore.js";
+import { ensureWorkspaceGitignoreEntry } from "../ui/workspaceGitignore.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
 import { runOnboardingWizard } from "../ui/onboarding.js";
 import { SyncTimelineProvider } from "../ui/syncTimelineProvider.js";

@@ -18,7 +18,7 @@ import {
   deactivateWebhookPushIfProvider,
   recordWebhookPushNotification,
 } from "./webhookChannelCoordinator.js";
-import { reconcileFromFlags } from "./webhookExpirationMath.js";
+import { reconcileFromFlags } from "../core/webhookExpirationMath.js";
 import { decideWebhookRenewTick } from "../core/webhookLifecycleRenewTickDecision.js";
 import { gdriveExpirationToIso } from "../core/gdrivePushChannelResponseDecoder.js";
 import { planWebhookLifecycleReconcile } from "../core/webhookLifecycleReconcileDecision.js";

@@ -11,10 +11,10 @@
  * separately.
  */
 import * as vscode from "vscode";
-import { buildCommitPrompt, type CommitContext } from "./aiCommitPrompt.js";
+import { buildCommitPrompt, type CommitContext } from "../../core/aiCommitPrompt.js";
 
-export type { CommitContext } from "./aiCommitPrompt.js";
-export { buildCommitPrompt } from "./aiCommitPrompt.js";
+export type { CommitContext } from "../../core/aiCommitPrompt.js";
+export { buildCommitPrompt } from "../../core/aiCommitPrompt.js";
 
 interface LmChatModel {
   sendRequest(

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGitignoreAppend,
   gitignoreCoversVscodesync,
-} from "../../src/core/workspaceGitignore.js";
+} from "../../src/ui/workspaceGitignore.js";
 
 describe("workspaceGitignore", () => {
   it("gitignoreCoversVscodesync распознаёт .vscode/", () => {

@@ -169,7 +169,7 @@ export function registerPlannedPaletteCommands(
           const files = wc.files
             .filter((f) => f.workspaceId === workspaceId)
             .map((f) => f.localPath);
-          const { suggestCommitMessage } = await import("../core/aiCommitMessage.js");
+          const { suggestCommitMessage } = await import("./ai/aiCommitMessage.js");
           const suggestion = await suggestCommitMessage({
             workspaceNote: targetWs?.workspaceNote ?? "",
             changedFiles: files,

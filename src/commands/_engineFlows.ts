@@ -12,7 +12,7 @@ import * as os from "node:os";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { absoluteToTrackedPosix } from "../core/pathMapping.js";
-import { runAiMerge } from "../core/aiMerge.js";
+import { runAiMerge } from "../ui/ai/aiMerge.js";
 import { aiMergePreviewPath, summarizeAiMergeDiff } from "../core/aiMergePlan.js";
 import { backupExistingUserFile } from "../core/localFileBackup.js";
 import { writeFileAtomic } from "../core/writeTextFileAtomic.js";
