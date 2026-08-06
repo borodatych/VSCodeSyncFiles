@@ -26,6 +26,20 @@ function planFiles(): string[] {
   return readdirSync(PLAN_DIR).filter((f) => f.endsWith(".ts"));
 }
 
+describe("слой src/core/io не тянет UI и редактор", () => {
+  const IO_DIR = join(ROOT, "src", "core", "io");
+  const IO_FORBIDDEN = [/from\s+"vscode"/, /from\s+"\.\.\/\.\.\/ui\//];
+
+  it("ни один io-модуль не импортирует vscode или ui/", () => {
+    const offenders: string[] = [];
+    for (const f of readdirSync(IO_DIR).filter((n) => n.endsWith(".ts"))) {
+      const text = readFileSync(join(IO_DIR, f), "utf8");
+      if (IO_FORBIDDEN.some((re) => re.test(text))) offenders.push(f);
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("слой src/core/plan остаётся чистым", () => {
   it("каталог не пуст", () => {
     expect(planFiles().length).toBeGreaterThan(0);
@@ -43,10 +57,10 @@ describe("слой src/core/plan остаётся чистым", () => {
 
 /**
  * The ceiling exists because the file already grew from 4157 to 4583 lines
- * between the refactor being planned and being started. It is meant to be
- * lowered as стадии 5.2–5.3 move code out — never raised.
+ * between the refactor being planned and being started. Lowered as each stage
+ * moves code out — never raised.
  */
-const SYNC_ENGINE_LINE_CEILING = 4600;
+const SYNC_ENGINE_LINE_CEILING = 4400;
 
 describe("syncEngine.ts не разрастается", () => {
   it(`не длиннее ${String(SYNC_ENGINE_LINE_CEILING)} строк`, () => {

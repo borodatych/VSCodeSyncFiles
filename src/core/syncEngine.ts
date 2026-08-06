@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { normalizeWorkspaceSyncState } from "./types.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
-import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./workspaceConfigStore.js";
+import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./io/workspaceConfigStore.js";
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
   CLOUD_ROOT_DIR,
@@ -28,6 +28,10 @@ import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
 import { backupLocalWithPrune, LOCAL_BACKUP_DIR_DEFAULT } from "./localFileBackup.js";
 import { mergeMetaEntries } from "./metaMerge.js";
+import { createMetaStore, type MetaStore, type MetaWriteReason } from "./io/metaStore.js";
+import { createHistoryStore, type HistoryStore, type LazyHistoryEntry } from "./io/historyStore.js";
+import { createBlobTransfer, type BlobTransfer } from "./io/blobTransfer.js";
+import { createManifestStore, type ManifestStore } from "./io/manifestStore.js";
 import type { ChangeAction } from "./changeDetection.js";
 import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
@@ -41,7 +45,6 @@ import {
   type HashConfig,
 } from "../utils/hash.js";
 import { verboseLog, warnLog } from "../utils/log.js";
-import { validateManifestShape } from "./manifestValidate.js";
 import { detectMassChange } from "./massChangeGuard.js";
 import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.js";
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
@@ -59,7 +62,6 @@ import {
   blobCloudPath,
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
-import { decodeCloudBlob } from "./cloudBlobCodec.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
 import { planTrackingDiff } from "./plan/planTrackingDiff.js";
 import { bufferLooksBinary } from "../utils/binary.js";
@@ -129,18 +131,12 @@ export class WorkspacePolicyError extends Error {
   }
 }
 
-export class ManifestCorruptError extends Error {
-  constructor(
-    readonly workspaceId: string,
-    readonly reason: string,
-  ) {
-    super(
-      `VSCodeSync: облачный манифест воркспейса ${workspaceId} повреждён (${reason}). ` +
-        "Локальный трекинг сохранён. Используйте «Repair cloud manifest», если повреждение постоянное.",
-    );
-    this.name = "ManifestCorruptError";
-  }
-}
+/**
+ * Re-exported so existing importers keep working; the class itself now lives
+ * with the code that throws it (`io/manifestStore`). Two separate classes with
+ * the same name would make `instanceof` lie.
+ */
+export { ManifestCorruptError } from "./io/manifestStore.js";
 
 /** Файл, потерявший синхронизацию: отслеживался локально, но исчез из облачного манифеста (tombstone очищен). */
 export interface PurgeLostFileItem {
@@ -452,14 +448,8 @@ export interface SyncEngineDeps {
   onSyncProfileSample?: (sample: SyncProfileSample) => void;
 }
 
-/** v0.7 — deferred history snapshot. */
-export interface LazyHistoryEntry {
-  workspaceId: string;
-  posixRel: string;
-  oldCloudPath: string;
-  /** ms — when the snapshot was queued (so drain can age-out stale entries). */
-  queuedAtMs: number;
-}
+/** v0.7 — deferred history snapshot. Owned by `io/historyStore`. */
+export type { LazyHistoryEntry } from "./io/historyStore.js";
 
 /** v0.7 — single-file timing sample from `pushFile` / `pullFile`. */
 export interface SyncProfileSample {
@@ -478,26 +468,40 @@ export interface SyncProfileSample {
 }
 
 export class SyncEngine {
-  private readonly manifestByWs = new Map<string, CloudManifest>();
   /**
-   * Which etag `manifestByWs` corresponds to. The etag we send as
-   * `ifNoneMatch` comes from the *shared* per-root config store, which another
-   * engine instance may have advanced past this instance's cached body. A 304
-   * only proves the cloud matches the etag we sent — not that it matches our
-   * cache — so the cache may satisfy a 304 only when the two agree.
+   * `manifest.json` I/O, its etag-matched cache and the 412-merge (этап 5.2).
+   * Built on first use — a field initialiser would run before `deps` exists.
    */
-  private readonly manifestEtagByWs = new Map<string, string>();
+  private manifestStoreRef: ManifestStore | undefined;
+
+  private get manifestStore(): ManifestStore {
+    this.manifestStoreRef ??= createManifestStore({
+      provider: this.deps.provider,
+      tombstonePurgeDays: () => this.deps.tombstonePurgeDays ?? TOMBSTONE_PURGE_DAYS_DEFAULT,
+      onCorrupt: (workspaceId, reason) => this.deps.onCorruptManifest?.(workspaceId, reason),
+      onEtag: (workspaceId, etag, manifest) =>
+        this.patchEntry(workspaceId, {
+          manifestEtag: etag,
+          ...this.entryPatchFromManifest(manifest),
+        }),
+      currentEtag: async (workspaceId) =>
+        (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId)
+          ?.manifestEtag,
+      beforeWrite: async (workspaceId) => {
+        this.assertMayMutate("putManifest");
+        rejectIfSecondaryWorkspaceInstanceReadOnly();
+        await this.ensureNotFrozenForCloudWrites(workspaceId);
+      },
+      onMassChange: this.deps.onMassChange
+        ? (workspaceId, report) => this.deps.onMassChange!(workspaceId, report)
+        : undefined,
+    });
+    return this.manifestStoreRef;
+  }
 
   /** Cache a manifest body together with the etag that names it (if known). */
   private cacheManifest(workspaceId: string, manifest: CloudManifest, etag: string | undefined): void {
-    this.manifestByWs.set(workspaceId, manifest);
-    if (etag) {
-      this.manifestEtagByWs.set(workspaceId, etag);
-    } else {
-      // Unknown etag: the body may not answer a 304 for whatever etag the
-      // shared store carries, so it must not.
-      this.manifestEtagByWs.delete(workspaceId);
-    }
+    this.manifestStore.cache(workspaceId, manifest, etag);
   }
 
   /**
@@ -517,10 +521,33 @@ export class SyncEngine {
   }
 
   private evictManifestCache(workspaceId: string): void {
-    this.manifestByWs.delete(workspaceId);
-    this.manifestEtagByWs.delete(workspaceId);
+    this.manifestStore.forget(workspaceId);
   }
-  private readonly metaByWs = new Map<string, MetaJson>();
+  /**
+   * `_meta.json` I/O and its in-memory copy (этап 5.2). Policy stays here: the
+   * store calls back into `beforeWrite` for the mutation checks.
+   *
+   * Built on first use — a field initialiser would run before `deps` exists.
+   */
+  private metaStoreRef: MetaStore | undefined;
+
+  private get metaStore(): MetaStore {
+    this.metaStoreRef ??= createMetaStore({
+      provider: this.deps.provider,
+      metaWriteRetries: () => this.resolveMetaWriteRetries(),
+      onEtag: (workspaceId, etag) => this.patchEntry(workspaceId, { metaEtag: etag }),
+      beforeWrite: async (workspaceId, reason) => {
+        this.assertMayMutate("pushMetaJson");
+        // A secondary window may finish its own pull (recording what it just
+        // downloaded); everything else is a cloud write it must not make.
+        if (reason !== "pull-completion") {
+          rejectIfSecondaryWorkspaceInstanceReadOnly();
+        }
+        await this.ensureNotFrozenForCloudWrites(workspaceId);
+      },
+    });
+    return this.metaStoreRef;
+  }
   /**
    * When set, `persistMutatedCfg(cfgRef)` only marks the batch dirty and
    * skips the disk write. Used by `syncWorkspace` / `forcePullWorkspace`
@@ -531,7 +558,32 @@ export class SyncEngine {
   private _batchCfgRef: WorkspaceConfig | null = null;
   private _batchCfgDirty = false;
   /** v0.7 — deferred history snapshots when `historyMode = lazy`. */
-  private readonly lazyHistoryQueue: LazyHistoryEntry[] = [];
+  /** `.history/` I/O and the deferred-snapshot queue (этап 5.2). */
+  private historyStoreRef: HistoryStore | undefined;
+
+  /** Blob-level cloud I/O (этап 5.2). */
+  private blobTransferRef: BlobTransfer | undefined;
+
+  private get blobTransfer(): BlobTransfer {
+    this.blobTransferRef ??= createBlobTransfer({
+      provider: this.deps.provider,
+      decrypt: this.deps.decrypt,
+      hashCfg: (posixRel) => this.hashCfg(posixRel),
+      verifyRetries: () => this.resolveVerifyRetries(),
+    });
+    return this.blobTransferRef;
+  }
+
+  private get historyStore(): HistoryStore {
+    this.historyStoreRef ??= createHistoryStore({
+      provider: this.deps.provider,
+      machineName: this.deps.machineName,
+      mode: () => this.resolveHistoryMode(),
+      versions: () => this.resolveHistoryVersions(),
+      onQueued: (entry) => this.deps.onLazyHistoryQueued?.(entry),
+    });
+    return this.historyStoreRef;
+  }
   /**
    * Files currently under a user-initiated pull/push/conflict-resolve.
    * Read by `iterateTrackedFiles` (check-only and full) to skip the file
@@ -702,9 +754,7 @@ export class SyncEngine {
    * actually uploading them via `runDeferredHistorySnapshots`.
    */
   drainLazyHistoryQueue(): LazyHistoryEntry[] {
-    if (this.lazyHistoryQueue.length === 0) return [];
-    const drained = this.lazyHistoryQueue.splice(0, this.lazyHistoryQueue.length);
-    return drained;
+    return this.historyStore.drain();
   }
 
   /** v0.7 — execute queued history snapshots from a prior drain. */
@@ -712,7 +762,7 @@ export class SyncEngine {
     this.assertMayMutate("runDeferredHistorySnapshots");
     for (const e of entries) {
       try {
-        await this.snapshotHistoryNow(e.workspaceId, e.posixRel, e.oldCloudPath);
+        await this.historyStore.snapshotNow(e.workspaceId, e.posixRel, e.oldCloudPath);
       } catch (err) {
         warnLog("syncEngine", `lazy history snapshot failed (${e.workspaceId}/${e.posixRel}): ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -972,7 +1022,7 @@ export class SyncEngine {
       metaCloudPath(workspaceId),
       Buffer.from(`${JSON.stringify(reconstructedMeta, null, 2)}\n`, "utf8"),
     );
-    this.metaByWs.set(workspaceId, reconstructedMeta);
+    this.metaStore.put(workspaceId, reconstructedMeta);
 
     // Update local config to record that this workspace has been scanned
     const cfg = await this.loadCfg();
@@ -1075,7 +1125,7 @@ export class SyncEngine {
     });
     await this.saveCfg(cfg0);
     this.cacheManifest(workspaceId, manifest, manifestDl.etag);
-    this.metaByWs.set(workspaceId, meta);
+    this.metaStore.put(workspaceId, meta);
 
     const now = new Date().toISOString();
     const withMachine: CloudManifest = {
@@ -1279,7 +1329,7 @@ export class SyncEngine {
     cfg.files = cfg.files.filter((f) => f.workspaceId !== workspaceId);
     await this.saveCfg(cfg);
     this.evictManifestCache(workspaceId);
-    this.metaByWs.delete(workspaceId);
+    this.metaStore.forget(workspaceId);
   }
 
   /**
@@ -1441,8 +1491,8 @@ export class SyncEngine {
 
     this.evictManifestCache(sourceWorkspaceId);
     this.evictManifestCache(targetWorkspaceId);
-    this.metaByWs.delete(sourceWorkspaceId);
-    this.metaByWs.delete(targetWorkspaceId);
+    this.metaStore.forget(sourceWorkspaceId);
+    this.metaStore.forget(targetWorkspaceId);
 
     const srcManifestFull = await this.downloadManifest(sourceWorkspaceId, entSrc.manifestEtag);
     const tgtManifestFull = await this.downloadManifest(targetWorkspaceId, entTgt.manifestEtag);
@@ -1545,7 +1595,7 @@ export class SyncEngine {
     }
 
     this.evictManifestCache(sourceWorkspaceId);
-    this.metaByWs.delete(sourceWorkspaceId);
+    this.metaStore.forget(sourceWorkspaceId);
 
     cfgInit = await this.loadCfg();
     const tgtEntryPost = cfgInit.activeWorkspaces.find((w) => w.workspaceId === targetWorkspaceId);
@@ -2078,7 +2128,7 @@ export class SyncEngine {
           throw e;
         }
       }
-      this.metaByWs.set(id, meta);
+      this.metaStore.put(id, meta);
       const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === id);
       if (ix < 0) {
         continue;
@@ -2164,7 +2214,7 @@ export class SyncEngine {
         row.wireGzip = true;
       }
       meta.files[posixRel] = row;
-      this.metaByWs.set(workspaceId, meta);
+      this.metaStore.put(workspaceId, meta);
       const tracked: TrackedFile = {
         localPath: posixRel,
         workspaceId,
@@ -2604,72 +2654,7 @@ export class SyncEngine {
     workspaceId: string,
     ifNoneMatch: string | undefined,
   ): Promise<CloudManifest | null> {
-    let dl: Awaited<ReturnType<typeof this.deps.provider.downloadFile>>;
-    try {
-      dl = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId), {
-        ifNoneMatch,
-      });
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return null;
-      }
-      throw e;
-    }
-    if (dl.notModified) {
-      const cached = this.manifestByWs.get(workspaceId);
-      // The cache answers a 304 only when its body is the one the etag names.
-      // `ifNoneMatch` came from the shared config store, which another engine
-      // instance may have advanced; serving this instance's older body for the
-      // newer etag made "apply what the detector just reported" a no-op.
-      if (cached && this.manifestEtagByWs.get(workspaceId) === ifNoneMatch) {
-        return cached;
-      }
-      const full = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
-      const m = this.parseManifestSafe(workspaceId, full.body);
-      this.cacheManifest(workspaceId, m, full.etag);
-      if (full.etag) {
-        await this.patchEntry(workspaceId, {
-          manifestEtag: full.etag,
-          ...this.entryPatchFromManifest(m),
-        });
-      }
-      return m;
-    }
-    const m = this.parseManifestSafe(workspaceId, dl.body);
-    this.cacheManifest(workspaceId, m, dl.etag);
-    if (dl.etag) {
-      await this.patchEntry(workspaceId, {
-        manifestEtag: dl.etag,
-        ...this.entryPatchFromManifest(m),
-      });
-    }
-    return m;
-  }
-
-  /**
-   * Parse a cloud manifest body. On JSON / shape errors notifies the host and
-   * returns `null` so callers fall through to the «manifest gone» recovery
-   * path — which will surface to the user (auto-detach or rebuild).
-   */
-  private parseManifestSafe(workspaceId: string, body: Buffer): CloudManifest {
-    try {
-      const parsed = JSON.parse(body.toString("utf8")) as CloudManifest;
-      if (!parsed.workspaceId || !Array.isArray(parsed.files)) {
-        throw new Error("manifest schema mismatch");
-      }
-      return parsed;
-    } catch (e: unknown) {
-      const reason = e instanceof Error ? e.message : String(e);
-      warnLog("syncEngine", `manifest corrupt for ${workspaceId}: ${reason}`);
-      this.deps.onCorruptManifest?.(workspaceId, reason);
-      // Throwing rather than returning null on purpose. `downloadManifest`
-      // returns null only for NOT_FOUND, and callers read that as "another
-      // machine deleted this workspace" — they detach it locally and wipe the
-      // tracking. A truncated response, a half-written manifest or a schema
-      // change would have taken the exact same branch and silently destroyed
-      // local state over what may well be a transient read.
-      throw new ManifestCorruptError(workspaceId, reason);
-    }
+    return this.manifestStore.download(workspaceId, ifNoneMatch);
   }
 
   /** Manifest was deleted from cloud while workspace still exists locally — rebuild from tracked files and re-upload. */
@@ -2710,38 +2695,10 @@ export class SyncEngine {
       ...this.entryPatchFromManifest(manifest),
     });
     this.cacheManifest(workspaceId, manifest, up.etag);
-    this.metaByWs.set(workspaceId, EMPTY_META_JSON);
+    this.metaStore.put(workspaceId, EMPTY_META_JSON);
   }
 
   /** Purge tombstone entries older than `tombstonePurgeDays` and stale `renamedFrom` markers. */
-  private purgeTombstones(manifest: CloudManifest): CloudManifest {
-    const purgeDays = this.deps.tombstonePurgeDays ?? TOMBSTONE_PURGE_DAYS_DEFAULT;
-    if (purgeDays <= 0) {
-      return manifest;
-    }
-    const cutoff = Date.now() - purgeDays * 24 * 60 * 60 * 1000;
-    const files = manifest.files.filter((f) => {
-      if (!f.removedAt) {
-        return true;
-      }
-      const t = Date.parse(f.removedAt);
-      return Number.isNaN(t) || t >= cutoff;
-    }).map((f) => {
-      if (!f.renamedFrom || !f.renamedAt) {
-        return f;
-      }
-      const t = Date.parse(f.renamedAt);
-      if (!Number.isNaN(t) && t < cutoff) {
-        const { renamedFrom: _, renamedAt: __, ...rest } = f;
-        return rest;
-      }
-      return f;
-    });
-    if (files.length === manifest.files.length) {
-      return manifest;
-    }
-    return { ...manifest, files };
-  }
 
 
   /**
@@ -2907,54 +2864,7 @@ export class SyncEngine {
     ifMatch: string | undefined,
     retries = 3,
   ): Promise<string | undefined> {
-    this.assertMayMutate("putManifest");
-    rejectIfSecondaryWorkspaceInstanceReadOnly();
-    await this.ensureNotFrozenForCloudWrites(workspaceId);
-    try {
-      const clean = this.purgeTombstones(manifest);
-      // Pre-flight schema validation: never push a manifest that we ourselves
-      // would reject on download. Catches accidental shape regressions before
-      // they corrupt cloud state for other machines.
-      const validation = validateManifestShape(clean);
-      if (!validation.ok) {
-        throw new Error(`putManifest aborted: ${validation.reason}`);
-      }
-      // Mass-change guard: ask the UI for confirmation when this push would
-      // tombstone a large batch of files (absolute or percent threshold).
-      // Only consult on the first attempt — on a 412 retry the merged manifest
-      // is the result of our prior intent, so we don't re-prompt.
-      if (this.deps.onMassChange && retries === 3) {
-        const prev = this.manifestByWs.get(workspaceId);
-        const report = detectMassChange(prev, clean);
-        if (report.triggered) {
-          const proceed = await this.deps.onMassChange(workspaceId, report);
-          if (!proceed) throw new Error("putManifest aborted: mass-change guard");
-        }
-      }
-      const body = Buffer.from(`${JSON.stringify(clean, null, 2)}\n`, "utf8");
-      const res = await this.deps.provider.uploadFile(manifestCloudPath(workspaceId), body, {
-        ifMatch,
-      });
-      if (res.etag) {
-        await this.patchEntry(workspaceId, {
-          manifestEtag: res.etag,
-          ...this.entryPatchFromManifest(clean),
-        });
-      }
-      this.cacheManifest(workspaceId, clean, res.etag);
-      return res.etag;
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "PRECONDITION_FAILED" && retries > 0) {
-        const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-        const remote = await this.downloadManifest(workspaceId, entry?.manifestEtag);
-        if (!remote) {
-          throw e;
-        }
-        const merged = mergeCloudManifests(manifest, remote);
-        return this.putManifest(workspaceId, merged, entry?.manifestEtag, retries - 1);
-      }
-      throw e;
-    }
+    return this.manifestStore.put(workspaceId, manifest, ifMatch, retries);
   }
 
   /**
@@ -3019,35 +2929,7 @@ export class SyncEngine {
   }
 
   private async pullMeta(workspaceId: string, ifNoneMatch: string | undefined): Promise<MetaJson> {
-    try {
-      const dl = await this.deps.provider.downloadFile(metaCloudPath(workspaceId), { ifNoneMatch });
-      if (dl.notModified) {
-        const cached = this.metaByWs.get(workspaceId);
-        if (cached) {
-          return cached;
-        }
-        const full = await this.deps.provider.downloadFile(metaCloudPath(workspaceId));
-        if (full.etag) {
-          await this.patchEntry(workspaceId, { metaEtag: full.etag });
-        }
-        const parsed = JSON.parse(full.body.toString("utf8")) as MetaJson;
-        this.metaByWs.set(workspaceId, parsed);
-        return parsed;
-      }
-      if (dl.etag) {
-        await this.patchEntry(workspaceId, { metaEtag: dl.etag });
-      }
-      const parsed = JSON.parse(dl.body.toString("utf8")) as MetaJson;
-      this.metaByWs.set(workspaceId, parsed);
-      return parsed;
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        const empty: MetaJson = { files: {} };
-        this.metaByWs.set(workspaceId, empty);
-        return empty;
-      }
-      throw e;
-    }
+    return this.metaStore.pull(workspaceId, ifNoneMatch);
   }
 
   /**
@@ -3061,40 +2943,9 @@ export class SyncEngine {
     workspaceId: string,
     meta: MetaJson,
     ifMatch: string | undefined,
-    reason: "push" | "pull-completion",
+    reason: MetaWriteReason,
   ): Promise<string> {
-    this.assertMayMutate("pushMetaJson");
-    // A secondary window may finish its own pull (recording what it just
-    // downloaded); everything else is a cloud write it must not make.
-    if (reason !== "pull-completion") {
-      rejectIfSecondaryWorkspaceInstanceReadOnly();
-    }
-    await this.ensureNotFrozenForCloudWrites(workspaceId);
-    let etag = ifMatch;
-    let current = meta;
-    const metaWriteRetries = this.resolveMetaWriteRetries();
-    for (let attempt = 0; attempt < metaWriteRetries; attempt += 1) {
-      try {
-        const body = Buffer.from(`${JSON.stringify(current, null, 2)}\n`, "utf8");
-        const res = await this.deps.provider.uploadFile(metaCloudPath(workspaceId), body, {
-          ifMatch: etag,
-        });
-        if (res.etag) {
-          await this.patchEntry(workspaceId, { metaEtag: res.etag });
-        }
-        this.metaByWs.set(workspaceId, current);
-        return res.etag ?? "";
-      } catch (e) {
-        if (!(e instanceof ProviderError) || e.code !== "PRECONDITION_FAILED") {
-          throw e;
-        }
-        const remoteBuf = await this.deps.provider.downloadFile(metaCloudPath(workspaceId));
-        const remote = JSON.parse(remoteBuf.body.toString("utf8")) as MetaJson;
-        current = mergeMetaEntries(current, remote);
-        etag = remoteBuf.etag;
-      }
-    }
-    throw new Error("pushMetaJson: retries exhausted");
+    return this.metaStore.push(workspaceId, meta, ifMatch, reason);
   }
 
   /**
@@ -3280,7 +3131,7 @@ export class SyncEngine {
     // `historyMode = lazy` since the last sync. Cheap when the queue is empty;
     // bounded by `historyVersions` per file otherwise. Uploading them is a cloud
     // write, which is why it lives here and not in the shared prologue.
-    if (this.lazyHistoryQueue.length > 0) {
+    if (this.historyStore.pending() > 0) {
       const drained = this.drainLazyHistoryQueue();
       try {
         await this.runDeferredHistorySnapshots(drained);
@@ -3598,9 +3449,20 @@ export class SyncEngine {
         const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
         let cloudCurrent = "";
         try {
-          const dl = await this.deps.provider.downloadFile(file.cloudPath);
-          const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-          cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
+          // Conditional GET (этап 5.2): the preview used to download the full
+          // body of every tracked file on every run — the one pass that reads
+          // the whole workspace, doing it the most expensive way possible.
+          // A 304 means the blob still hashes to `_meta.hash`, which is exactly
+          // what we were about to compute.
+          const dl = await this.deps.provider.downloadFile(file.cloudPath, {
+            ifNoneMatch: metaRow?.etag !== undefined && metaRow.etag !== "" ? metaRow.etag : undefined,
+          });
+          if (dl.notModified) {
+            cloudCurrent = base ?? "";
+          } else {
+            const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+            cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
+          }
         } catch (e) {
           if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
             throw e;
@@ -3989,12 +3851,12 @@ export class SyncEngine {
       // v0.7 — re-use the meta we already fetched outside the lock when our
       // own etag is current. `pullMeta` will short-circuit via 304 anyway,
       // but reusing the in-memory copy saves the round-trip entirely.
-      const cachedMeta = this.metaByWs.get(workspaceId);
+      const cachedMeta = this.metaStore.peek(workspaceId);
       const metaLocked = cachedMeta ?? (await this.pullMeta(workspaceId, ent.metaEtag));
       const prevLocked = metaLocked.files[posixRel];
       const prevEtagLocked = prevLocked === undefined ? undefined : prevLocked.etag;
       const prevWireGzipLocked = prevLocked?.wireGzip === true;
-      await this.snapshotHistory(workspaceId, posixRel, oldBlobPathForHistory);
+      await this.historyStore.snapshot(workspaceId, posixRel, oldBlobPathForHistory);
       const plaintextBufLocked = await fs.readFile(abs);
       // Hash the exact bytes we are about to upload.
       //
@@ -4228,10 +4090,7 @@ export class SyncEngine {
    * forever, and the same raw bytes were handed to the line-ending comparison.
    */
   private decodeCloudBlob(body: Buffer, wireGzip: boolean): Buffer {
-    return decodeCloudBlob(body, wireGzip, {
-      encrypt: this.deps.encrypt,
-      decrypt: this.deps.decrypt,
-    });
+    return this.blobTransfer.decode(body, wireGzip);
   }
 
   /**
@@ -4274,81 +4133,11 @@ export class SyncEngine {
     posixRel: string,
     wireGzip: boolean,
   ): Promise<void> {
-    const verifyRetries = this.resolveVerifyRetries();
-    for (let i = 0; i < verifyRetries; i += 1) {
-      const got = await this.deps.provider.downloadFile(cloudPath);
-      const body = this.decodeCloudBlob(got.body, wireGzip);
-      const h = hashCanonicalBuffer(body, posixRel, this.hashCfg(posixRel));
-      if (h === expectedPlaintextHash) {
-        return;
-      }
-    }
-    throw new Error("verifyUploadPlaintextHash: hash mismatch after retries");
+    return this.blobTransfer.verifyUpload(cloudPath, expectedPlaintextHash, posixRel, wireGzip);
   }
 
   private async deleteRemoteBlobBestEffort(cloudPath: string): Promise<void> {
-    try {
-      await this.deps.provider.deleteFile(cloudPath);
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return;
-      }
-      warnLog(
-        "syncEngine",
-        `deleteRemoteBlobBestEffort(${cloudPath}) suppressed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-
-  private async snapshotHistory(workspaceId: string, posixRel: string, cloudPath: string): Promise<void> {
-    const mode = this.resolveHistoryMode();
-    if (mode === "off") return;
-    if (mode === "lazy") {
-      const entry: LazyHistoryEntry = {
-        workspaceId,
-        posixRel,
-        oldCloudPath: cloudPath,
-        queuedAtMs: Date.now(),
-      };
-      this.lazyHistoryQueue.push(entry);
-      this.deps.onLazyHistoryQueued?.(entry);
-      return;
-    }
-    await this.snapshotHistoryNow(workspaceId, posixRel, cloudPath);
-  }
-
-  private async snapshotHistoryNow(workspaceId: string, posixRel: string, cloudPath: string): Promise<void> {
-    try {
-      const cur = await this.deps.provider.downloadFile(cloudPath);
-      if (cur.notModified || cur.body.length === 0) {
-        return;
-      }
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const ext = posixRel.includes(".") ? posixRel.slice(posixRel.lastIndexOf(".")) : "";
-      const safeMachine = this.deps.machineName.replace(/[/\\:*?"<>|]/g, "_");
-      const histPath = `${historyDirForFile(workspaceId, posixRel)}/${stamp}_${safeMachine}${ext}`;
-      await this.deps.provider.uploadFile(histPath, cur.body);
-      await this.pruneHistory(workspaceId, posixRel);
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return;
-      }
-      throw e;
-    }
-  }
-
-  private async pruneHistory(workspaceId: string, posixRel: string): Promise<void> {
-    const dir = historyDirForFile(workspaceId, posixRel);
-    const items = await this.deps.provider.listFolder(dir);
-    const historyVersions = this.resolveHistoryVersions();
-    if (items.length <= historyVersions) {
-      return;
-    }
-    const sorted = [...items].sort((a, b) => a.cloudPath.localeCompare(b.cloudPath));
-    const drop = sorted.slice(0, Math.max(0, sorted.length - historyVersions));
-    for (const d of drop) {
-      await this.deps.provider.deleteFile(d.cloudPath);
-    }
+    return this.blobTransfer.deleteBestEffort(cloudPath);
   }
 
   async pullFile(

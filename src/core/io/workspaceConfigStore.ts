@@ -20,14 +20,14 @@
  * instances can exist for the same folder (commands, triggers, scheduled
  * helpers), and they must share the owner rather than each holding their own.
  */
-import type { WorkspaceConfig } from "./types.js";
+import type { WorkspaceConfig } from "../types.js";
 import {
   readWorkspaceConfigFromDisk,
   sameStamp,
   statWorkspaceConfig,
   writeWorkspaceConfigToDisk,
   type WorkspaceConfigStamp,
-} from "./workspaceConfigFile.js";
+} from "../workspaceConfigFile.js";
 
 export interface WorkspaceConfigStore {
   /** Current config. Served from memory once loaded. */

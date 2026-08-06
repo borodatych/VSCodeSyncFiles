@@ -16,7 +16,7 @@
  */
 import type { WorkspaceConfig } from "./types.js";
 import { workspaceConfigPath } from "./workspaceConfigFile.js";
-import { getWorkspaceConfigStore } from "./workspaceConfigStore.js";
+import { getWorkspaceConfigStore } from "./io/workspaceConfigStore.js";
 
 export const WorkspaceConfigManager = {
   getConfigPath: workspaceConfigPath,

@@ -15,7 +15,7 @@ import type { WorkspaceConfig } from "../../src/core/types.js";
 import {
   getWorkspaceConfigStore,
   resetWorkspaceConfigStores,
-} from "../../src/core/workspaceConfigStore.js";
+} from "../../src/core/io/workspaceConfigStore.js";
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "vscodesync-cfg-"));
