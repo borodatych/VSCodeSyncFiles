@@ -55,7 +55,6 @@ export function registerViewManagementCommands(
         { label: "$(pulse) Лента активности", cmd: "vscodesync.openActivityFeed" },
         { label: "$(flame) Тепловая карта конфликтов", cmd: "vscodesync.showConflictHeatmap" },
         { label: "$(circuit-board) Граф машин", cmd: "vscodesync.openMachinesGraph" },
-        { label: "$(graph) Аналитика", cmd: "vscodesync.openAnalyticsPanel" },
         { label: "$(gear) Настройки", cmd: "vscodesync.showSettingsPanel" },
       ];
       const picked = await vscode.window.showQuickPick(items, {

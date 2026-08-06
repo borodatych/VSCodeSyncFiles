@@ -53,17 +53,12 @@ const builds = [
       __CLI_VERSION__: JSON.stringify(cliPkg.version ?? "0.0.1"),
     },
   }),
-  // v2.20.2 — DuckDB-WASM analytics panel webview bridge. Inlines
-  // `@duckdb/duckdb-wasm` + `apache-arrow` so the webview loads a single
-  // self-contained ESM file (no bare specifiers to resolve at runtime).
-  esbuild.context({
-    ...base,
-    entryPoints: ["media/duckdb-bridge.src.js"],
-    outfile: "dist/media/duckdb-bridge.js",
-    platform: "browser",
-    format: "esm",
-    target: ["es2020"],
-  }),
+  // The DuckDB-WASM analytics bridge is NOT built for 1.0.0. The panel it
+  // served could not work in a packaged extension anyway: its `.wasm` and
+  // worker URIs point into `node_modules/@duckdb/duckdb-wasm/dist`, which
+  // `.vscodeignore` excludes from the `.vsix`. Shipping it would mean shipping
+  // a 426 KB bridge for a command that always fails. Intent and the cost of
+  // finishing it are recorded in `docs/v2/deferredWiring.md`.
 ];
 
 async function main() {

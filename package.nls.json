@@ -255,6 +255,5 @@
   "cmd.exportConflictsToSarif.title": "VSCodeSync: Export Conflicts to SARIF",
   "cmd.showWorkspaceReadme.title": "VSCodeSync: Show Workspace README",
   "cmd.exportEncryptedBundle.title": "VSCodeSync: Export Encrypted Bundle",
-  "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace",
-  "cmd.openAnalyticsPanel.title": "VSCodeSync: Open Analytics Panel"
+  "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace"
 }

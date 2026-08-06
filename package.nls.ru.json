@@ -166,7 +166,6 @@
   "cmd.mergeWorkspaces.title": "VSCodeSync: Объединить воркспейсы",
   "cmd.checkBlake3Migration.title": "VSCodeSync: Проверить статус миграции на BLAKE3",
   "cmd.completeBlake3Migration.title": "VSCodeSync: Дозаполнить BLAKE3 в манифесте (завершить миграцию)",
-  "cmd.openAnalyticsPanel.title": "VSCodeSync: Открыть панель аналитики",
   "cmd.startP2PSession.title": "VSCodeSync: Начать P2P-сессию",
   "cmd.disconnectP2PSession.title": "VSCodeSync: Завершить P2P-сессию",
   "cmd.signInDeviceCode.title": "VSCodeSync: Войти через OAuth Device Code",

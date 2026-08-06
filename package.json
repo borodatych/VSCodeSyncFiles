@@ -1523,10 +1523,6 @@
       {
         "command": "vscodesync.prefetchActiveWorkspace",
         "title": "%cmd.prefetchActiveWorkspace.title%"
-      },
-      {
-        "command": "vscodesync.openAnalyticsPanel",
-        "title": "%cmd.openAnalyticsPanel.title%"
       }
     ],
     "menus": {
@@ -1653,10 +1649,6 @@
         },
         {
           "command": "vscodesync.openMachinesGraph",
-          "when": "false"
-        },
-        {
-          "command": "vscodesync.openAnalyticsPanel",
           "when": "false"
         }
       ],

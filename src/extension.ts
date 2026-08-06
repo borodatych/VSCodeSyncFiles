@@ -78,7 +78,6 @@ import { registerPasskeyCommands } from "./ui/passkeyCommands.js";
 import { registerSarifExportCommand } from "./commands/registerSarifExport.js";
 import { registerReadmeAutoRender } from "./commands/registerReadmeAutoRender.js";
 import { registerEncryptedBundleExport } from "./commands/registerEncryptedBundleExport.js";
-import { registerAnalyticsPanel } from "./commands/registerAnalyticsPanel.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 import { registerPhase21Bootstrap } from "./startup/registerPhase21Bootstrap.js";
 
@@ -128,7 +127,6 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerSarifExportCommand({ storageDir: globalConfig.getStorageDir() }),
     ...registerReadmeAutoRender({ context }),
     ...registerEncryptedBundleExport(),
-    ...registerAnalyticsPanel({ context }),
   );
 
   registerVsCodeSyncTelemetry(context, globalConfig, CFG_SECTION);

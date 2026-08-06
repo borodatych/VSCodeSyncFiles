@@ -67,6 +67,33 @@ export function pickDriveDuplicate<T extends { id: string; name?: string }>(
   return sorted[0] ?? null;
 }
 
+/**
+ * Version token of a freshly uploaded Drive file (E11).
+ *
+ * Both upload paths used to read the HTTP `ETag` header first and fall back to
+ * fields that were never requested. Whether Drive v3 sets that header on
+ * PATCH / multipart-POST is undocumented — and the answer mattered, because
+ * `syncEngine` does `etag = res.etag ?? etag`: a missing value silently kept
+ * the **previous** etag, so the next conditional request would compare against
+ * a version that no longer exists.
+ *
+ * Rather than depend on an unverifiable header, both requests now ask for
+ * `fields=id,md5Checksum` — a documented content digest that Drive always
+ * returns for a binary file — and use it as the token. The header is still
+ * accepted when present, but nothing relies on it.
+ */
+async function etagFromDriveUploadResponse(r: Response): Promise<string | undefined> {
+  const header = normalizeEtag(r.headers.get("etag"));
+  try {
+    const j = (await r.json()) as { md5Checksum?: string };
+    return normalizeEtag(j.md5Checksum ?? null) ?? header;
+  } catch {
+    // A body we cannot parse leaves only the header; `undefined` from here is
+    // honest — the caller keeps its previous etag knowingly.
+    return header;
+  }
+}
+
 function normalizeEtag(h: string | null | undefined): string | undefined {
   if (!h) {
     return undefined;
@@ -81,7 +108,6 @@ interface DriveFileSummary {
   size?: string;
   md5Checksum?: string;
   modifiedTime?: string;
-  etag?: string;
 }
 
 function buildMultipartRelated(metadata: object, content: Buffer, boundary: string): Buffer {
@@ -462,41 +488,46 @@ export class GdriveProvider implements ICloudProvider {
       if (options?.ifMatch) {
         headers["If-Match"] = options.ifMatch;
       }
-      const r = await this.driveFetch(`${UPLOAD}/files/${existing.id}?uploadType=media`, {
-        method: "PATCH",
-        headers,
-        body: new Uint8Array(content),
-      }, options?.signal);
+      const r = await this.driveFetch(
+        `${UPLOAD}/files/${existing.id}?uploadType=media&fields=id,md5Checksum`,
+        {
+          method: "PATCH",
+          headers,
+          body: new Uint8Array(content),
+        },
+        options?.signal,
+      );
       if (r.status === 412) {
         throw new ProviderError("PRECONDITION_FAILED", "If-Match failed on Google Drive");
       }
       if (!r.ok) {
         throw await this.classifyResponse(r);
       }
-      const etag = normalizeEtag(r.headers.get("etag"));
-      return { etag };
+      return { etag: await etagFromDriveUploadResponse(r) };
     }
 
     const boundary = `batch_${String(Math.random()).slice(2)}`;
     const meta = { name: filename, parents: [parentId] };
     const body = buildMultipartRelated(meta, content, boundary);
 
-    const r = await this.driveFetch(`${UPLOAD}/files?uploadType=multipart`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
+    const r = await this.driveFetch(
+      `${UPLOAD}/files?uploadType=multipart&fields=id,md5Checksum`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": `multipart/related; boundary=${boundary}`,
+        },
+        // Cast through unknown: our Uint8Array view is fine at runtime; lib.dom
+        // declares BodyInit narrower than the current @types/node Buffer.
+        body: new Uint8Array(body.buffer, body.byteOffset, body.byteLength) as unknown as BodyInit,
       },
-      // Cast through unknown: our Uint8Array view is fine at runtime; lib.dom
-      // declares BodyInit narrower than the current @types/node Buffer.
-      body: new Uint8Array(body.buffer, body.byteOffset, body.byteLength) as unknown as BodyInit,
-    }, options?.signal);
+      options?.signal,
+    );
     if (!r.ok) {
       throw await this.classifyResponse(r);
     }
-    const etagHdr = normalizeEtag(r.headers.get("etag"));
-    const created = (await r.json()) as { md5Checksum?: string; etag?: string };
-    return { etag: etagHdr ?? normalizeEtag(created.etag ?? created.md5Checksum ?? null) };
+    return { etag: await etagFromDriveUploadResponse(r) };
   }
 
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
@@ -550,7 +581,10 @@ export class GdriveProvider implements ICloudProvider {
       throw await this.classifyResponse(r);
     }
     const meta = (await r.json()) as DriveFileSummary;
-    const etag = normalizeEtag(meta.md5Checksum ?? meta.etag ?? null);
+    // `md5Checksum` is the only version source Drive actually returns here:
+    // no `fields=` in this provider ever requested `etag`, so the old fallback
+    // to `meta.etag` was dead code (E11).
+    const etag = normalizeEtag(meta.md5Checksum ?? null);
     const sizeNum = meta.size != null ? Number(meta.size) : undefined;
     return {
       cloudPath,
@@ -643,7 +677,7 @@ export class GdriveProvider implements ICloudProvider {
       const j = (await r.json()) as { files?: DriveFileSummary[]; nextPageToken?: string };
       for (const it of j.files ?? []) {
         const subPath = `${prefix}${it.name}`;
-        const etag = normalizeEtag(it.md5Checksum ?? it.etag);
+        const etag = normalizeEtag(it.md5Checksum ?? null);
         const sizeNum = it.size != null ? Number(it.size) : undefined;
         out.push({
           cloudPath: subPath,

@@ -198,3 +198,38 @@ OneDrive, свой порт для Drive) должен быть **зарегис
 **Что нужно для подключения:** решение «PKCE по умолчанию, device code —
 фолбэк», обновление гайда по регистрации приложения, ветка выбора флоу в
 `providerAuthFlows.ts`.
+
+## Аналитика на DuckDB-WASM (`openAnalyticsPanel`)
+
+**Замысел:** SQL-запросы к собственной локальной статистике — `activity.json` и
+`stats.json` монтируются виртуальными таблицами, пользователь пишет `SELECT` по
+истории синхронизаций. Чистый планировщик монтирования
+(`core/duckdbVirtualTables.ts:planVirtualTableMount`), валидатор read-only SQL
+(`core/analyticsQueryShape.ts`), контракт host↔worker
+(`core/duckdbWorkerHost.ts`), бутстрап вебвью (`core/duckdbWebviewBootstrap.ts`),
+мост (`media/duckdb-bridge.src.js`) и команда
+(`commands/registerAnalyticsPanel.ts`) написаны и компилируются.
+
+**Почему снято с 1.0.0 (решение владельца, 2026-08-06):**
+1. **Интерфейса запроса нет.** Панель поднимала DuckDB и показывала тост
+   «Use `host.execSql(...)` via the analytics surface (work in progress)» —
+   ни поля ввода, ни таблицы результатов. `planVirtualTableMount` не
+   вызывается ниоткуда, то есть таблицы не монтируются вообще.
+2. **В собранном `.vsix` не работало.** `resolveBundles` строит URI на
+   `node_modules/@duckdb/duckdb-wasm/dist`, а `.vscodeignore` исключает
+   `node_modules/**`. У пользователя команда падала бы всегда; работала она
+   только при запуске из исходников (F5).
+3. **Цена доделки несоразмерна.** Вендорить нужно `.wasm`: `duckdb-eh.wasm`
+   34 МБ, `duckdb-mvp.wasm` 39 МБ — при остальном бандле в 1.7 МБ это рост
+   пакета в двадцать раз. Плюс сам интерфейс аналитики.
+
+**Что сделано при снятии:** удалены команда из `contributes.commands`, её
+nls-ключи, пункт из `openDashboard`, регистрация в `extension.ts` и сборка
+моста в `esbuild.mjs`. Модули ядра и `registerAnalyticsPanel.ts` оставлены —
+код в git, замысел здесь.
+
+**Что нужно для подключения:** решение по вендорингу (какой вариант `.wasm`
+класть и мириться ли с размером — либо загрузка по требованию из сети с
+согласия пользователя), интерфейс запроса в вебвью, вызов
+`planVirtualTableMount` при инициализации, `.vscodeignore`-правило на
+вендорённые ассеты.
