@@ -12,7 +12,7 @@ import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTre
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
-import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
+import { registerPaletteCommands } from "./commands/palette/index.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
 import { startDigestTimer } from "./ui/notificationService.js";
@@ -396,7 +396,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName, "user"); };
   context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig, mirrorRegistry: p2pMirrorRegistry, logSyncActivity }), ...registerOAuthDeviceCodeCommand({ context, resolveProviders: () => resolveDeviceCodeProviders(context) }), ...registerTemplateMarketplace(), ...registerPrefetchCommand());
 
-  registerPlannedPaletteCommands(context, {
+  registerPaletteCommands(context, {
     globalConfig,
     makeEngine,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),

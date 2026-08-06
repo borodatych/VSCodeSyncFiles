@@ -501,11 +501,19 @@
         не даёт им незаметно попасть в поставку.
   - [x] **`docs/functional.md`** — каталог возможностей, которого в проекте не
         было: одна запись на возможность, без версий и истории.
-  - [ ] **F12 (остаток)** — разрез junk drawer `plannedPaletteCommands.ts`
-        (1115 строк, 27 команд из семи доменов) на модули по домену и
-        eslint-правило «`registerCommand` только в `src/commands/**`».
-        Механическая перекладка без пользовательского эффекта — вынесено за
-        1.0.0 осознанно.
+  - [x] **F12 (остаток)** — junk drawer `plannedPaletteCommands.ts` (1115 строк,
+        27 команд из семи доменов) разрезан на `src/commands/palette/`:
+        `pauseAndWatch`, `snapshotCommands`, `encryptionKeyCommands`,
+        `workspaceStructureCommands`, `insightsPanelCommands`,
+        `syncDiagnosticsCommands`, `workspaceLayoutCommands` плюс `_shared`
+        (тип extras и три общих хелпера) и `index` — `extension.ts` по-прежнему
+        зовёт одну функцию, но восьмая группа не потребует правки `activate()`.
+        Eslint-правило: `vscode.commands.registerCommand` запрещён в
+        `src/ui/**` и `src/startup/**`, кроме семи модулей-панелей, владеющих
+        своей точкой входа (список в конфиге с обоснованием). Гейт
+        `commandRegistrationLayout.test.ts` пиннит: junk drawer удалён, список
+        исключений не протух, все 27 команд зарегистрированы ровно по разу,
+        ни один доменный модуль не длиннее 320 строк.
 
 ---
 
