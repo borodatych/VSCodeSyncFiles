@@ -11,23 +11,17 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import {
+  inspectProviderResponse,
+  providerTransportError,
+} from "../_shared/providerFetchOutcome.js";
 import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
-import {
-  noteProviderRateLimited,
-  noteProviderRequestSuccess,
-} from "../../core/syncRateLimitState.js";
-import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
 import {
   DEFAULT_API_TIMEOUT_MS,
   DEFAULT_DATA_TIMEOUT_MS,
   fetchWithTimeout,
 } from "../_shared/fetchWithTimeout.js";
-import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
-import {
-  noteCloudTransportFailure,
-  noteCloudTransportSuccess,
-} from "../../core/syncOfflineHints.js";
 import {
   clearGdriveTokens,
   readGdriveTokens,
@@ -201,10 +195,10 @@ export class GdriveProvider implements ICloudProvider {
   }
 
   private async driveFetch(url: string, init?: RequestInit): Promise<Response> {
-    // v0.17 D03 — uniform retry envelope. We wrap each fetch attempt so
-    // transient NETWORK_ERROR / SERVER_ERROR (5xx other than 503 which is
-    // classified as RATE_LIMITED) / RATE_LIMITED (respects Retry-After)
-    // all converge through the central `withRetry` policy.
+    // v0.17 D03 — uniform retry envelope; `inspectProviderResponse` decides
+    // what the envelope is allowed to see (E8: Drive reports throttling as a
+    // 403 with a reason in the body, which the old 429/503-only check missed
+    // entirely, so the retry never fired and the rate-limit gate never armed).
     return withRetry(
       { op: "gdrive.driveFetch", maxAttempts: 3, initialDelayMs: 500 },
       async (): Promise<Response> => {
@@ -223,28 +217,9 @@ export class GdriveProvider implements ICloudProvider {
             forceRefresh: () => this.forceRefreshAccessToken(),
           });
         } catch (e) {
-          if (e instanceof ProviderError) {
-            throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
-          }
-          bumpOfflineFlushBackoff();
-          noteCloudTransportFailure();
-          throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+          throw providerTransportError(e, "Google Drive");
         }
-        if (r.status === 429 || r.status === 503) {
-          const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-          noteProviderRateLimited(ra);
-          throw new ProviderError("RATE_LIMITED", `Google Drive throttled (${String(r.status)})`, {
-            retryAfterMs: ra,
-          });
-        }
-        if (r.status >= 500 && r.status < 600) {
-          throw new ProviderError("SERVER_ERROR", `Google Drive 5xx (${String(r.status)})`);
-        }
-        if (r.ok || r.status === 304) {
-          noteProviderRequestSuccess();
-          noteCloudTransportSuccess();
-        }
-        return r;
+        return inspectProviderResponse(r, "Google Drive");
       },
     );
   }

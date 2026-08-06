@@ -10,18 +10,12 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import {
+  inspectProviderResponse,
+  providerTransportError,
+} from "../_shared/providerFetchOutcome.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import { createTokenStore, secretKeyForProvider, type TokenStore } from "../_shared/tokenStore.js";
-import {
-  noteProviderRateLimited,
-  noteProviderRequestSuccess,
-} from "../../core/syncRateLimitState.js";
-import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
-import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
-import {
-  noteCloudTransportFailure,
-  noteCloudTransportSuccess,
-} from "../../core/syncOfflineHints.js";
 import { withRetry } from "../../core/withRetry.js";
 import {
   DEFAULT_API_TIMEOUT_MS,
@@ -284,33 +278,9 @@ export class OneDriveProvider implements ICloudProvider {
             forceRefresh: () => this.forceRefreshAccessToken(),
           });
         } catch (e) {
-          if (e instanceof ProviderError) {
-            throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
-          }
-          bumpOfflineFlushBackoff();
-          noteCloudTransportFailure();
-          throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+          throw providerTransportError(e, "OneDrive");
         }
-        if (r.status === 429 || r.status === 503) {
-          const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-          noteProviderRateLimited(ra);
-          throw new ProviderError("RATE_LIMITED", `OneDrive throttled (${String(r.status)})`, {
-            retryAfterMs: ra,
-          });
-        }
-        if (r.status >= 500 && r.status < 600) {
-          throw new ProviderError("SERVER_ERROR", `OneDrive 5xx (${String(r.status)})`);
-        }
-        if (r.status === 304) {
-          noteProviderRequestSuccess();
-          noteCloudTransportSuccess();
-          return r;
-        }
-        if (r.ok) {
-          noteProviderRequestSuccess();
-          noteCloudTransportSuccess();
-        }
-        return r;
+        return inspectProviderResponse(r, "OneDrive");
       },
     );
   }

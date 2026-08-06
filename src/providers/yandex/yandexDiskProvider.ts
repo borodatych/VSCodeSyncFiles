@@ -11,17 +11,13 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import {
+  inspectProviderResponse,
+  providerTransportError,
+} from "../_shared/providerFetchOutcome.js";
+import { withRetry } from "../../core/withRetry.js";
 import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
-import {
-  noteProviderRateLimited,
-  noteProviderRequestSuccess,
-} from "../../core/syncRateLimitState.js";
-import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
-import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
-import {
-  noteCloudTransportFailure,
-  noteCloudTransportSuccess,
-} from "../../core/syncOfflineHints.js";
+import { noteCloudTransportSuccess } from "../../core/syncOfflineHints.js";
 import {
   clearYandexTokens,
   readYandexTokens,
@@ -172,72 +168,57 @@ export class YandexDiskProvider implements ICloudProvider {
     return classifyProviderHttpError({ provider: "Yandex Disk", status, bodyText, retryAfter });
   }
 
+  /**
+   * Yandex signs requests with `OAuth <token>`, not `Bearer`, so it keeps its
+   * own 401 branch instead of the shared `sendWithForcedRefreshOn401`.
+   *
+   * The retry envelope is safe next to the provider's 423-locked loops (E5):
+   * `inspectProviderResponse` never throws on 423, so those loops still see the
+   * response and handle the lock themselves.
+   */
   private async apiFetch(pathAndQuery: string, init?: RequestInit): Promise<Response> {
-    const token = await this.accessToken();
     const url = `${API_BASE}/${pathAndQuery.replace(/^\//, "")}`;
     const withAuth = (authTok: string): RequestInit => {
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `OAuth ${authTok}`);
       return { ...init, headers };
     };
-    let r: Response;
-    try {
-      r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS);
-    } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
-    }
-    if (r.status === 401) {
-      const bundle = await readYandexTokens(this.secrets);
-      if (bundle?.refreshToken) {
+    return withRetry(
+      { op: "yandex.apiFetch", maxAttempts: 3, initialDelayMs: 500 },
+      async (): Promise<Response> => {
+        const token = await this.accessToken();
+        let r: Response;
         try {
-          await this.refreshAccessToken(bundle.refreshToken);
-          const token2 = await this.accessToken();
-          try {
-            r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS);
-          } catch (e) {
-            bumpOfflineFlushBackoff();
-            noteCloudTransportFailure();
-            throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), {
-              cause: e,
-            });
-          }
+          r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS);
         } catch (e) {
-          // A dead grant must not be swallowed: rethrowing keeps UNAUTHORIZED
-          // (and the "sign in again" dialog) instead of letting the original
-          // 401 leave this method as a generic NETWORK_ERROR.
-          if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
-            throw e;
-          }
-          /* transient refresh failure — fall through with the original 401 */
+          throw providerTransportError(e, "Yandex Disk");
         }
-      }
-    }
-    if (r.status === 429 || r.status === 503) {
-      const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-      noteProviderRateLimited(ra);
-      throw new ProviderError("RATE_LIMITED", `Yandex Disk throttled (${String(r.status)})`, {
-        retryAfterMs: ra,
-      });
-    }
-    // v0.17 D03 — propagate other 5xx as SERVER_ERROR so the outer
-    // `apiFetchWithRetry` wrapper can decide to retry.
-    if (r.status >= 500 && r.status < 600) {
-      throw new ProviderError("SERVER_ERROR", `Yandex Disk 5xx (${String(r.status)})`);
-    }
-    if (r.ok || r.status === 304) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-    }
-    return r;
+        if (r.status === 401) {
+          const bundle = await readYandexTokens(this.secrets);
+          if (bundle?.refreshToken) {
+            try {
+              await this.refreshAccessToken(bundle.refreshToken);
+              const token2 = await this.accessToken();
+              try {
+                r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS);
+              } catch (e) {
+                throw providerTransportError(e, "Yandex Disk");
+              }
+            } catch (e) {
+              // A dead grant must not be swallowed: rethrowing keeps
+              // UNAUTHORIZED (and the "sign in again" dialog) instead of
+              // letting the original 401 leave as a generic NETWORK_ERROR.
+              if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
+                throw e;
+              }
+              /* transient refresh failure — fall through with the original 401 */
+            }
+          }
+        }
+        return inspectProviderResponse(r, "Yandex Disk");
+      },
+    );
   }
-
-  // v0.17 D03 note — yandex's `apiFetch` is not yet wrapped in
-  // `withRetry` because the provider has its own 423-locked retry loop
-  // in upload/download paths that conflicts with the generic policy.
-  // The SERVER_ERROR classification above is the prep work; the actual
-  // outer wrap is deferred until 423-locked is unified.
 
   private async getResourceJson(pathAndQuery: string): Promise<unknown> {
     const r = await this.apiFetch(pathAndQuery);
@@ -308,9 +289,7 @@ export class YandexDiskProvider implements ICloudProvider {
         body: new Uint8Array(content),
       }, DATA_TIMEOUT_MS);
     } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+      throw providerTransportError(e, "Yandex Disk");
     }
     if (!put.ok) {
       throw await this.classifyResponse(put);
@@ -371,9 +350,7 @@ export class YandexDiskProvider implements ICloudProvider {
     try {
       r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS);
     } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+      throw providerTransportError(e, "Yandex Disk");
     }
     if (r.status === 404) {
       throw new ProviderError("NOT_FOUND", cloudPath);

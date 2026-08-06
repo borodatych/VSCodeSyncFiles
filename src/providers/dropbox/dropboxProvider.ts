@@ -10,18 +10,13 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { withRetry } from "../../core/withRetry.js";
+import {
+  inspectProviderResponse,
+  providerTransportError,
+} from "../_shared/providerFetchOutcome.js";
 import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
-import {
-  noteProviderRateLimited,
-  noteProviderRequestSuccess,
-} from "../../core/syncRateLimitState.js";
-import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
-import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
-import {
-  noteCloudTransportFailure,
-  noteCloudTransportSuccess,
-} from "../../core/syncOfflineHints.js";
 import {
   DEFAULT_API_TIMEOUT_MS,
   DEFAULT_DATA_TIMEOUT_MS,
@@ -172,39 +167,33 @@ export class DropboxProvider implements ICloudProvider {
     return refreshed.accessToken;
   }
 
+  /**
+   * Dropbox was the only provider without a retry envelope (E5): a single 500
+   * or 429 killed a push outright, while the same blip on OneDrive/Drive was
+   * absorbed by three attempts. Users read that as "Dropbox is flaky".
+   */
   private async apiFetch(url: string, init?: RequestInit): Promise<Response> {
-    let r: Response;
-    try {
-      const isDataPath = /\/files\/(upload|download)/.test(url);
-      r = await sendWithForcedRefreshOn401({
-        init: init ?? {},
-        send: (i) =>
-          fetchWithTimeout(url, i, {
-            channel: "dropbox.fetch",
-            timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
-          }),
-        forceRefresh: () => this.forceRefreshAccessToken(),
-      });
-    } catch (e) {
-      if (e instanceof ProviderError) {
-        throw e; // Already classified (e.g. the refresh said UNAUTHORIZED).
-      }
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
-    }
-    if (r.status === 429 || r.status === 503) {
-      const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-      noteProviderRateLimited(ra);
-      throw new ProviderError("RATE_LIMITED", `Dropbox throttled (${String(r.status)})`, {
-        retryAfterMs: ra,
-      });
-    }
-    if (r.ok || r.status === 304) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-    }
-    return r;
+    return withRetry(
+      { op: "dropbox.apiFetch", maxAttempts: 3, initialDelayMs: 500 },
+      async (): Promise<Response> => {
+        let r: Response;
+        try {
+          const isDataPath = /\/files\/(upload|download)/.test(url);
+          r = await sendWithForcedRefreshOn401({
+            init: init ?? {},
+            send: (i) =>
+              fetchWithTimeout(url, i, {
+                channel: "dropbox.fetch",
+                timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+              }),
+            forceRefresh: () => this.forceRefreshAccessToken(),
+          });
+        } catch (e) {
+          throw providerTransportError(e, "Dropbox");
+        }
+        return inspectProviderResponse(r, "Dropbox");
+      },
+    );
   }
 
   private async rpc(path: string, body: object): Promise<Response> {

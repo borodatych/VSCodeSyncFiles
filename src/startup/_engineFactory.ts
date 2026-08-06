@@ -19,6 +19,13 @@
  *     shares it with the engine's `onNewConflict` notifier.
  */
 import * as vscode from "vscode";
+import * as fsp from "node:fs/promises";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import {
+  planQuotaExhaustion,
+  type TrackedFileWeight,
+} from "../core/quotaExhaustionPlanner.js";
 import { encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { SyncEngine } from "../core/syncEngine.js";
 import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js";
@@ -110,6 +117,51 @@ export interface EngineFactory {
   readonly notifiedConflictKeys: Set<string>;
   /** v0.7 — shared profile buffer (used by `vscodesync.profileSync` command). */
   readonly profileBuffer: SyncProfileBuffer;
+}
+
+/**
+ * "…Тяжелее всего: a.bin (12 МБ), b.zip (8 МБ) — снятие освободит ~20 МБ."
+ *
+ * Empty string when nothing can be measured; the banner then keeps its short
+ * form rather than showing a half-filled sentence.
+ */
+async function describeHeaviestTrackedFiles(
+  workspaceRoot: string,
+  workspaceId: string,
+): Promise<string> {
+  try {
+    const cfg = await WorkspaceConfigManager.load(workspaceRoot);
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    const weights: TrackedFileWeight[] = [];
+    for (const f of cfg.files) {
+      if (f.workspaceId !== workspaceId) continue;
+      try {
+        const abs = await trackedAbsolutePathFor(workspaceRoot, f.localPath);
+        if (abs === undefined) continue;
+        const st = await fsp.stat(abs);
+        weights.push({
+          workspaceId,
+          workspaceNote: entry?.workspaceNote ?? workspaceId,
+          posixRel: f.localPath,
+          bytes: st.size,
+          lastSyncIso: f.lastSync,
+        });
+      } catch {
+        /* file gone locally — it cannot be part of the answer */
+      }
+    }
+    if (weights.length === 0) return "";
+    const plan = planQuotaExhaustion(weights, { topN: 3 });
+    const list = plan.topHeavy.map((f) => `${f.posixRel} (${formatMb(f.bytes)})`).join(", ");
+    return `\nТяжелее всего: ${list} — снятие с синхронизации освободит ~${formatMb(plan.reclaimIfUntrackTop)}.`;
+  } catch {
+    return "";
+  }
+}
+
+function formatMb(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} МБ` : `${String(Math.max(1, Math.round(bytes / 1024)))} КБ`;
 }
 
 function syncWarnDedupeKey(workspaceRoot: string, segment: string, rel: string): string {
@@ -416,17 +468,23 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
         // a dedicated one and the lifetime is per-engine which matches.
         if (warnedRemoteDeletedKeys.has(`quota:${key}`)) return;
         warnedRemoteDeletedKeys.add(`quota:${key}`);
-        void vscode.window.showWarningMessage(
-          `VSCodeSync: облако «${providerLabel}» переполнено. Push «${posixRel}» отклонён.`,
-          "Открыть SBOM (тяжёлые файлы)",
-          "Сменить провайдер",
-        ).then((choice) => {
+        // E9 — `planQuotaExhaustion` existed since v0.8 but nothing called it:
+        // no provider ever produced STORAGE_QUOTA_EXCEEDED, so the banner that
+        // names the heaviest files had never been shown. Now that the
+        // classifier raises the code, the banner says what to delete.
+        void (async () => {
+          const detail = await describeHeaviestTrackedFiles(workspaceRoot, workspaceId);
+          const choice = await vscode.window.showWarningMessage(
+            `VSCodeSync: облако «${providerLabel}» переполнено. Push «${posixRel}» отклонён.${detail}`,
+            "Открыть SBOM (тяжёлые файлы)",
+            "Сменить провайдер",
+          );
           if (choice === "Открыть SBOM (тяжёлые файлы)") {
             void vscode.commands.executeCommand("vscodesync.exportSbom");
           } else if (choice === "Сменить провайдер") {
             void vscode.commands.executeCommand("vscodesync.setActiveProvider");
           }
-        });
+        })();
       },
       onMassChange: async (workspaceId: string, report) => {
         const enabled = vscode.workspace
