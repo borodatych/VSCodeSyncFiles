@@ -18,9 +18,10 @@ import type { GlobalConfig, ProviderTokens, ProviderType } from "./types.js";
 export interface AccountSlot {
   id: string;
   displayName: string;
-  /** Sensitive token blob is in SecretStorage under
-   * `${SECRET_KEY_PREFIX}${providerType}:${id}`; this field carries only
-   * non-sensitive metadata mirrored from `ProviderTokens`. */
+  /** Sensitive token blob is in SecretStorage under the key built by
+   * `secretKeyForAccountSlot(providerType, id)` (`providers/_shared/tokenStore.ts`);
+   * this field carries only non-sensitive metadata mirrored from
+   * `ProviderTokens`. */
   metadata: ProviderTokens;
 }
 

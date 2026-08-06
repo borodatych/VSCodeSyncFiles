@@ -11,6 +11,7 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -76,12 +77,17 @@ function etagFromResource(r: { md5?: string; etag?: string }): string | undefine
 export class YandexDiskProvider implements ICloudProvider {
   readonly type: ProviderType = "yandex";
 
+  /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
+  private readonly tokens: TokenStore<YandexTokenBundle>;
+
   constructor(
     private readonly secrets: SecretStore,
     private readonly getClientId: () => string,
     /** When true, all paths use `app:/` prefix (app-folder scope). Default: false. */
     private readonly useAppFolder = false,
-  ) {}
+  ) {
+    this.tokens = createTokenStore<YandexTokenBundle>(secrets, "yandex");
+  }
 
   async isAuthenticated(): Promise<boolean> {
     const t = await readYandexTokens(this.secrets);
@@ -97,7 +103,12 @@ export class YandexDiskProvider implements ICloudProvider {
     await clearYandexTokens(this.secrets);
   }
 
+  /** Serialised per provider instance — see E4 note in the Drive provider. */
   private async refreshAccessToken(rt: string): Promise<YandexTokenBundle> {
+    return this.tokens.refreshOnce(() => this.performTokenRefresh(rt));
+  }
+
+  private async performTokenRefresh(rt: string): Promise<YandexTokenBundle> {
     const clientId = this.getClientId();
     if (!clientId) {
       throw new ProviderError("UNAUTHORIZED", "Yandex Disk: задайте vscodesync.yandexOAuthClientId.");

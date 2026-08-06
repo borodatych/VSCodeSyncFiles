@@ -11,6 +11,7 @@ import type {
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
+import { createTokenStore, secretKeyForProvider, type TokenStore } from "../_shared/tokenStore.js";
 import {
   noteProviderRateLimited,
   noteProviderRequestSuccess,
@@ -28,7 +29,7 @@ import {
   fetchWithTimeout,
 } from "../_shared/fetchWithTimeout.js";
 
-const TOKEN_KEY = "vscodesync.onedrive.oauth";
+const TOKEN_KEY = secretKeyForProvider("onedrive");
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
 /** Files larger than this use the Upload Session API (Graph limit for simple PUT is 4 MB). */
@@ -172,6 +173,18 @@ async function readTokens(secrets: SecretStore): Promise<OneDriveTokenBundle | n
   return readOneDriveTokenBundle(secrets);
 }
 
+/**
+ * A refresh is actually due — checked before entering the refresh mutex so a
+ * no-op call cannot be joined by a caller that needs a real refresh.
+ */
+export function needsOneDriveRefresh(bundle: OneDriveTokenBundle): boolean {
+  return (
+    bundle.refreshToken !== undefined &&
+    bundle.clientId !== undefined &&
+    bundle.expiresAtMs <= Date.now() + TOKEN_REFRESH_SKEW_MS
+  );
+}
+
 /** The stored access token has not expired yet, so a failed refresh is survivable. */
 function stillUsable(bundle: OneDriveTokenBundle): boolean {
   return bundle.expiresAtMs > Date.now();
@@ -188,7 +201,12 @@ function safeJsonError(bodyText: string): string | undefined {
 export class OneDriveProvider implements ICloudProvider {
   readonly type: ProviderType = "onedrive";
 
-  constructor(private readonly secrets: SecretStore) {}
+  /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
+  private readonly tokens: TokenStore<OneDriveTokenBundle>;
+
+  constructor(private readonly secrets: SecretStore) {
+    this.tokens = createTokenStore<OneDriveTokenBundle>(secrets, "onedrive");
+  }
 
   async isAuthenticated(): Promise<boolean> {
     const t = await readTokens(this.secrets);
@@ -209,7 +227,10 @@ export class OneDriveProvider implements ICloudProvider {
     if (!bundle?.accessToken) {
       throw new ProviderError("UNAUTHORIZED", "OneDrive: нет токена. Выполните вход.");
     }
-    const fresh = await maybeRefreshToken(this.secrets, bundle);
+    if (!needsOneDriveRefresh(bundle)) {
+      return bundle.accessToken;
+    }
+    const fresh = await this.tokens.refreshOnce(() => maybeRefreshToken(this.secrets, bundle));
     return fresh.accessToken;
   }
 
@@ -239,7 +260,9 @@ export class OneDriveProvider implements ICloudProvider {
     if (!bundle?.accessToken) {
       throw new ProviderError("UNAUTHORIZED", "OneDrive: нет токена. Выполните вход.");
     }
-    const fresh = await maybeRefreshToken(this.secrets, bundle, { force: true });
+    const fresh = await this.tokens.refreshOnce(() =>
+      maybeRefreshToken(this.secrets, bundle, { force: true }),
+    );
     return fresh.accessToken;
   }
 

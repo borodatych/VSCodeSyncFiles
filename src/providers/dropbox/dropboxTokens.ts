@@ -1,29 +1,31 @@
 import type { SecretStore } from "../../core/types.js";
+import {
+  createTokenStore,
+  secretKeyForProvider,
+  type OAuthTokenBundle,
+} from "../_shared/tokenStore.js";
 
-export const DROPBOX_TOKEN_KEY = "vscodesync.dropbox.oauth";
+/**
+ * Dropbox token storage.
+ *
+ * The body used to be a byte-identical copy of the other three providers'
+ * modules (E14); it now delegates to the shared store, which also owns the
+ * refresh mutex. The exported names stay because a dozen call sites use them.
+ */
+export const DROPBOX_TOKEN_KEY = secretKeyForProvider("dropbox");
 
-export interface DropboxTokenBundle {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAtMs: number;
-}
+export type DropboxTokenBundle = OAuthTokenBundle;
+
+const store = (secrets: SecretStore) => createTokenStore<DropboxTokenBundle>(secrets, "dropbox");
 
 export async function readDropboxTokens(secrets: SecretStore): Promise<DropboxTokenBundle | null> {
-  const raw = await secrets.get(DROPBOX_TOKEN_KEY);
-  if (!raw) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw) as DropboxTokenBundle;
-  } catch {
-    return null;
-  }
+  return store(secrets).read();
 }
 
 export async function storeDropboxTokens(secrets: SecretStore, bundle: DropboxTokenBundle): Promise<void> {
-  await secrets.store(DROPBOX_TOKEN_KEY, JSON.stringify(bundle));
+  await store(secrets).write(bundle);
 }
 
 export async function clearDropboxTokens(secrets: SecretStore): Promise<void> {
-  await secrets.delete(DROPBOX_TOKEN_KEY);
+  await store(secrets).clear();
 }

@@ -10,6 +10,7 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import {
   noteProviderRateLimited,
@@ -65,10 +66,15 @@ interface RpcErr {
 export class DropboxProvider implements ICloudProvider {
   readonly type: ProviderType = "dropbox";
 
+  /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
+  private readonly tokens: TokenStore<DropboxTokenBundle>;
+
   constructor(
     private readonly secrets: SecretStore,
     private readonly getDropboxAppKey: () => string,
-  ) {}
+  ) {
+    this.tokens = createTokenStore<DropboxTokenBundle>(secrets, "dropbox");
+  }
 
   async isAuthenticated(): Promise<boolean> {
     const t = await readDropboxTokens(this.secrets);
@@ -84,7 +90,12 @@ export class DropboxProvider implements ICloudProvider {
     await clearDropboxTokens(this.secrets);
   }
 
+  /** Serialised per provider instance — see E4 note in the Drive provider. */
   private async refreshAccessToken(rt: string): Promise<DropboxTokenBundle> {
+    return this.tokens.refreshOnce(() => this.performTokenRefresh(rt));
+  }
+
+  private async performTokenRefresh(rt: string): Promise<DropboxTokenBundle> {
     const key = this.getDropboxAppKey();
     if (!key) {
       throw new ProviderError("UNAUTHORIZED", "Dropbox: задайте vscodesync.dropboxAppKey.");

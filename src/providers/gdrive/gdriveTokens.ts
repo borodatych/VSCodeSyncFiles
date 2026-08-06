@@ -1,29 +1,31 @@
 import type { SecretStore } from "../../core/types.js";
+import {
+  createTokenStore,
+  secretKeyForProvider,
+  type OAuthTokenBundle,
+} from "../_shared/tokenStore.js";
 
-export const GDRIVE_TOKEN_KEY = "vscodesync.gdrive.oauth";
+/**
+ * Google Drive token storage.
+ *
+ * The body used to be a byte-identical copy of the other three providers'
+ * modules (E14); it now delegates to the shared store, which also owns the
+ * refresh mutex. The exported names stay because a dozen call sites use them.
+ */
+export const GDRIVE_TOKEN_KEY = secretKeyForProvider("gdrive");
 
-export interface GdriveTokenBundle {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAtMs: number;
-}
+export type GdriveTokenBundle = OAuthTokenBundle;
+
+const store = (secrets: SecretStore) => createTokenStore<GdriveTokenBundle>(secrets, "gdrive");
 
 export async function readGdriveTokens(secrets: SecretStore): Promise<GdriveTokenBundle | null> {
-  const raw = await secrets.get(GDRIVE_TOKEN_KEY);
-  if (!raw) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw) as GdriveTokenBundle;
-  } catch {
-    return null;
-  }
+  return store(secrets).read();
 }
 
 export async function storeGdriveTokens(secrets: SecretStore, bundle: GdriveTokenBundle): Promise<void> {
-  await secrets.store(GDRIVE_TOKEN_KEY, JSON.stringify(bundle));
+  await store(secrets).write(bundle);
 }
 
 export async function clearGdriveTokens(secrets: SecretStore): Promise<void> {
-  await secrets.delete(GDRIVE_TOKEN_KEY);
+  await store(secrets).clear();
 }

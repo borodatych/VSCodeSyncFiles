@@ -11,6 +11,7 @@ import type {
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
+import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
 import { sendWithForcedRefreshOn401 } from "../_shared/forcedRefreshFetch.js";
 import {
   noteProviderRateLimited,
@@ -82,10 +83,15 @@ export class GdriveProvider implements ICloudProvider {
    */
   private folderCache: IGdriveFolderIdCache = createGdriveFolderIdCache({ ttlMs: 10 * 60 * 1000 });
 
+  /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
+  private readonly tokens: TokenStore<GdriveTokenBundle>;
+
   constructor(
     private readonly secrets: SecretStore,
     private readonly getGoogleClientId: () => string,
-  ) {}
+  ) {
+    this.tokens = createTokenStore<GdriveTokenBundle>(secrets, "gdrive");
+  }
 
   /** v0.7 — rebuild the folder cache with a new TTL (ms). 0 disables. */
   setFolderCacheTtl(ttlMs: number): void {
@@ -106,7 +112,16 @@ export class GdriveProvider implements ICloudProvider {
     await clearGdriveTokens(this.secrets);
   }
 
+  /**
+   * Serialised per provider instance (E4): the registry hands one instance to
+   * every consumer and several background tasks start at once, so unsynchronised
+   * refreshes raced to persist and the loser's bundle could already be revoked.
+   */
   private async refreshAccessToken(refreshToken: string): Promise<GdriveTokenBundle> {
+    return this.tokens.refreshOnce(() => this.performTokenRefresh(refreshToken));
+  }
+
+  private async performTokenRefresh(refreshToken: string): Promise<GdriveTokenBundle> {
     const clientId = this.getGoogleClientId();
     if (!clientId) {
       throw new ProviderError("UNAUTHORIZED", "Google Drive: задайте vscodesync.googleDriveClientId.");

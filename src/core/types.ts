@@ -112,8 +112,3 @@ export interface SecretStore {
   delete(key: string): Thenable<void>;
 }
 
-export const SECRET_KEY_PREFIX = "vscodesync.token.";
-
-export function secretKeyForProvider(type: ProviderType): string {
-  return `${SECRET_KEY_PREFIX}${type}`;
-}

@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { createTokenStore } from "../../src/providers/_shared/tokenStore.js";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -61,10 +62,17 @@ describe("GlobalConfigManager", () => {
     const secrets = new MemorySecrets();
     mgr = new GlobalConfigManager(dir, secrets);
     await mgr.load();
-    await mgr.setProviderSecret("onedrive", "token-xyz");
+    // Tokens live in SecretStorage, never in config.json — the manager has no
+    // token accessors of its own since stage 4.2 (E14).
+    await createTokenStore(secrets, "onedrive").write({
+      accessToken: "token-xyz",
+      expiresAtMs: Date.now() + 1000,
+    });
     const raw = await fs.readFile(mgr.getConfigPath(), "utf8");
     expect(raw.includes("token-xyz")).toBe(false);
-    await expect(mgr.getProviderSecret("onedrive")).resolves.toBe("token-xyz");
+    await expect(createTokenStore(secrets, "onedrive").read()).resolves.toMatchObject({
+      accessToken: "token-xyz",
+    });
   });
 
   it("старый config без onboardingCompleted → миграция true", async () => {

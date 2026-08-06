@@ -4,6 +4,8 @@
  */
 import * as vscode from "vscode";
 import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
+import { secretKeyForProvider } from "../providers/_shared/tokenStore.js";
+import type { ProviderType } from "../core/types.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 
 const CFG = "vscodesync";
@@ -27,6 +29,9 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
         void panel.webview.postMessage({ type: "init", values });
       };
 
+      const isProviderType = (k: string): k is ProviderType =>
+        k === "onedrive" || k === "gdrive" || k === "yandex" || k === "dropbox";
+
       const hasToken = (raw: string | undefined | null): boolean => {
         if (!raw) return false;
         try { return !!(JSON.parse(raw) as { accessToken?: string }).accessToken; } catch { return false; }
@@ -35,10 +40,10 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
       const sendAuthStatus = async (): Promise<void> => {
         try {
           const [onedriveRaw, gdriveRaw, yandexRaw, dropboxRaw] = await Promise.all([
-            context.secrets.get("vscodesync.onedrive.oauth"),
-            context.secrets.get("vscodesync.gdrive.oauth"),
-            context.secrets.get("vscodesync.yandex.oauth"),
-            context.secrets.get("vscodesync.dropbox.oauth"),
+            context.secrets.get(secretKeyForProvider("onedrive")),
+            context.secrets.get(secretKeyForProvider("gdrive")),
+            context.secrets.get(secretKeyForProvider("yandex")),
+            context.secrets.get(secretKeyForProvider("dropbox")),
           ]);
           let activeProvider: string | null = null;
           try {
@@ -92,11 +97,7 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           }
           if (msg.type === "signOut" && msg.key) {
             const providerKey = msg.key;
-            const secretKey =
-              providerKey === "onedrive" ? "vscodesync.onedrive.oauth" :
-              providerKey === "gdrive" ? "vscodesync.gdrive.oauth" :
-              providerKey === "yandex" ? "vscodesync.yandex.oauth" :
-              providerKey === "dropbox" ? "vscodesync.dropbox.oauth" : null;
+            const secretKey = isProviderType(providerKey) ? secretKeyForProvider(providerKey) : null;
             if (secretKey) {
               await context.secrets.delete(secretKey);
               void vscode.window.showInformationMessage(`VSCodeSync: ${providerKey} — токен удалён.`);

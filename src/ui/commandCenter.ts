@@ -57,7 +57,7 @@ const GROUPS: CmdGroup[] = [
     icon: "🔑",
     items: [
       { label: "Сменить провайдер", desc: "Переключить OneDrive / Яндекс Диск / Google Drive / Dropbox", cmd: "vscodesync.setActiveProvider", style: "primary" },
-      { label: "Войти в Яндекс Диск", desc: "OAuth через браузер (implicit flow)", cmd: "vscodesync.yandexDiskSignIn" },
+      { label: "Войти в Яндекс Диск", desc: "OAuth через браузер (authorization code + PKCE)", cmd: "vscodesync.yandexDiskSignIn" },
       { label: "Ввести токен Яндекса вручную", desc: "Вставить токен из oauth.yandex.ru", cmd: "vscodesync.yandexDiskEnterToken" },
       { label: "Войти в OneDrive", desc: "Device Code Flow", cmd: "vscodesync.onedriveSignIn" },
       { label: "Войти в Google Drive", desc: "Device Code Flow", cmd: "vscodesync.googleDriveSignIn" },
