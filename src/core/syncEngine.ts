@@ -37,7 +37,6 @@ import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
-import type { LineEndingMode } from "../utils/normalize.js";
 import {
   computeHash,
   hashCanonicalBuffer,
@@ -50,7 +49,7 @@ import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
-import { assertMutationAllowed, mutationPolicy, type MutationOp, type SyncTrigger } from "./syncPolicy.js";
+import { assertMutationAllowed, mutationPolicy, type MutationOp } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
 import {
   isSecondaryWorkspaceInstanceReadOnly,
@@ -64,6 +63,7 @@ import {
 import { fileLooksBinary } from "../utils/binaryDetect.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
 import { planTrackingDiff } from "./plan/planTrackingDiff.js";
+import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -201,252 +201,17 @@ export interface SyncPreviewWorkspace {
   files: SyncPreviewFileRow[];
 }
 
-export interface SyncEngineDeps {
-  workspaceRoot: string;
-  provider: ICloudProvider;
-  machineId: string;
-  machineName: string;
-  /**
-   * Who this engine acts for — the single mutation checkpoint (F2).
-   *
-   * Required on purpose. `encKey` was optional and 17 of the 24 construction
-   * sites never passed it, which turned encryption off without a word; an
-   * optional trigger would fail the same way, defaulting to the permissive
-   * answer. Required makes the compiler ask every construction site whether it
-   * is a human or a timer.
-   */
-  trigger: SyncTrigger;
-  /** Лимит размера одного файла (байт). Не задан или 0 — без лимита (тесты). */
-  maxFileSizeBytes?: number;
-  /** Нормализация строк при хэше; по умолчанию `lf` (тесты). */
-  lineEnding?: LineEndingMode;
-  /** Локальная копия перед перезаписью при pull. По умолчанию true. */
-  localBackupEnabled?: boolean;
-  /** Удалять каталоги бэкапов старше N дней (mtime). `0` — не чистить. По умолчанию 7. */
-  localBackupRetentionDays?: number;
-  /**
-   * Optional E2E encryption applied after canonical pipeline and before upload.
-   * The hash stored in `_meta` is always the PLAINTEXT canonical hash.
-   */
-  encrypt?: (buf: Buffer) => Buffer;
-  /**
-   * True when the user has turned encryption on.
-   *
-   * `encrypt`/`decrypt` being optional used to mean that an engine built
-   * without them worked happily in plaintext. That is precisely what happened:
-   * the key reached only 7 of 24 construction sites, and every automatic
-   * trigger built its engine without one. With encryption enabled that engine
-   * uploaded plaintext over encrypted blobs (recording a valid `_meta.hash`, so
-   * nothing ever corrected it) and wrote ciphertext straight over the user's
-   * local file on pull. This flag lets the engine tell "encryption is off" from
-   * "encryption is on and the key is missing" and refuse the latter.
-   */
-  encryptionRequired?: boolean;
-  /**
-   * Optional E2E decryption applied after download and before writing locally.
-   * Must be the inverse of `encrypt`.
-   */
-  decrypt?: (buf: Buffer) => Buffer;
-  /** When `fileEncoding` is utf8 (default): BOM / invalid UTF-8 hints during hashing. */
-  encodingLint?: boolean;
-  onEncodingIssue?: (kind: "bom" | "invalid_utf8", trackedPosixRel: string) => void;
-  /** When `lineEnding=preserve` and conflict is likely CRLF vs LF only (LF-canonical hashes match). */
-  onPreserveLineEndingConflictHint?: (trackedPosixRel: string) => void;
-  /** When true: new machines joining an existing workspace manifest get `pending` until approved on another machine. */
-  requireMachineApproval?: () => boolean;
-  /** Local activity log (Activity Feed); optional to keep tests and headless engines quiet. */
-  onSyncActivity?: (ev: ActivityEventInput) => void;
-  /** Bytes on the wire for tracked file upload/download (stats.json). */
-  onTransfer?: (ev: SyncTransferEvent) => void;
-  /** User setting: gzip text uploads when `_meta` records `wireGzip`. Default false. */
-  compressUploads?: boolean;
-  /**
-   * Estimated plaintext bytes spared when gzip wire encoding is smaller than raw UTF-8 plaintext.
-   */
-  onCompressionSaving?: (plaintextBytesSaved: number) => void;
-  /** Days after which tombstone entries (removedAt) are purged from the manifest on next PUT. Default 30. */
-  tombstonePurgeDays?: number;
-  /**
-   * Called when a locally-tracked file disappears from the cloud manifest (tombstone purged after 30+ days offline).
-   * The local file still exists on disk but is no longer tracked. UI should warn the user.
-   */
-  onPurgeLostFiles?: (items: PurgeLostFileItem[]) => void;
-  /**
-   * Called when a new conflict is detected for a file.
-   * `isBinary` = true when the file looks binary (no-null-bytes heuristic failed = has null bytes).
-   * UI layer should surface a notification / quick-pick.
-   */
-  onNewConflict?: (workspaceId: string, workspaceNote: string, relPath: string, isBinary: boolean) => void;
-  /**
-   * Called when an already-connected workspace manifest has a higher schemaVersion
-   * than this extension supports (future-compat: user needs to update extension).
-   * UI layer should warn the user and skip sync for that workspace.
-   */
-  onSchemaVersionTooNew?: (workspaceId: string, detectedVersion: number) => void;
-  /**
-   * Called when the cloud manifest fails JSON / shape validation.
-   * UI layer offers Repair State (rebuild from local).
-   */
-  onCorruptManifest?: (workspaceId: string, reason: string) => void;
-  /**
-   * v0.17 D02 — fired when an upload returns `STORAGE_QUOTA_EXCEEDED`.
-   * The UI layer surfaces the quota banner with `planQuotaExhaustion` +
-   * top-N heaviest files. Default behaviour (callback absent): the
-   * error propagates as-is.
-   */
-  onQuotaExhausted?: (workspaceId: string, posixRel: string, providerLabel: string) => void;
-  /**
-   * Called when a locally-attached workspace is detected as deleted on the cloud by another machine
-   * (manifest NOT_FOUND).
-   * UI layer should notify the user and optionally offer to re-upload via `repushWorkspaceToCloud`.
-   *
-   * `detached` says whether the local workspace and its tracking were actually
-   * removed. A background run only reports the finding — dropping tracking is a
-   * mutation, so it waits for the user. The two cases need different wording:
-   * "detached locally" is a statement of fact in one and a lie in the other.
-   */
-  onRemoteWorkspaceDeleted?: (
-    workspaceId: string,
-    workspaceNote: string,
-    workspaceRoot: string,
-    savedEntry: ActiveWorkspaceEntry,
-    savedFiles: TrackedFile[],
-    detached: boolean,
-  ) => void;
-  /**
-   * The cloud manifest lists files this machine does not track, or the machine
-   * tracks files the manifest no longer has — and the current pass is not
-   * allowed to change that. Fires only from the detector; a user-triggered pass
-   * applies the difference instead of reporting it.
-   */
-  onTrackingDriftDetected?: (drift: {
-    workspaceId: string;
-    workspaceNote: string;
-    /** In the cloud manifest, not tracked here. */
-    toAdopt: readonly string[];
-    /** Tracked here, gone from the cloud manifest. */
-    toPrune: readonly string[];
-  }) => void;
-  /**
-   * Called after a file is successfully written to disk during pull.
-   * Provides old and new UTF-8 content for diff/notification purposes.
-   * `oldContent` is null when the file did not exist locally before pull.
-   */
-  onFilePulled?: (posixRel: string, oldContent: string | null, newContent: string) => void;
-  /**
-   * Called before `putManifest` writes a manifest that would tombstone a large
-   * batch of files (see `detectMassChange`). UI layer surfaces a confirmation
-   * modal. Resolve `true` to proceed, `false` to abort the manifest write.
-   * If undefined, the guard is disabled and putManifest proceeds unconditionally.
-   */
-  onMassChange?: (
-    workspaceId: string,
-    report: import("./massChangeGuard.js").MassChangeReport,
-  ) => Promise<boolean>;
-  /**
-   * Returns the current `vscodesync.canonicalHashAlgo` setting. When the
-   * caller resolves `"blake3"` or `"dual"`, `pushFile` writes both `hash`
-   * (SHA-256, wire-compat) and `hashBlake3` into the meta entry. Default
-   * `"sha256"` keeps legacy behaviour (no BLAKE3 column).
-   */
-  canonicalHashAlgo?: () => "sha256" | "blake3" | "dual";
-  /**
-   * v2.1.4 — opt-in P2P file-transfer hook. Called after a successful
-   * `pushFile` upload completes (cloud authoritative). The P2P UI runtime
-   * can mirror the same plaintext buffer to peers via WebRTC DataChannel
-   * — no canonicalisation needed (cloud upload already used the canonical
-   * form). Errors thrown by the hook are swallowed by the engine; the
-   * push itself has already succeeded.
-   */
-  onPushFile?: (
-    workspaceId: string,
-    posixRel: string,
-    plaintext: Buffer,
-    meta: { hash: string; hashBlake3?: string; version: number },
-  ) => void;
-  /**
-   * v0.18 W3 — fired by `attachCloudWorkspace` when the cloud manifest
-   * has a `schemaVersion` we don't natively support. UI returns
-   * `"migrate"` to attempt a coordinated migration (caller schedules it),
-   * `"abort"` to cancel the attach. When the callback is absent the
-   * engine behaves as before — throws on mismatch.
-   */
-  onSchemaVersionMismatch?: (
-    workspaceId: string,
-    detectedVersion: number,
-    supportedVersion: number,
-  ) => Promise<"migrate" | "abort">;
-  /**
-   * v0.18 D01 — opt-in provider-side hash verification. When `true` and
-   * the provider exposes a digest via `getMetadata` (gdrive md5, yandex
-   * md5, dropbox content_hash, onedrive sha256), we compute the expected
-   * digest locally and abort the push on mismatch.
-   *
-   * Default `false` so existing users see no behaviour change; opt in
-   * via `vscodesync.providerHashVerify` setting.
-   */
-  providerHashVerify?: () => boolean;
-  /**
-   * v0.18 D06 — opt-in trust check. When set, `requireMachineApproval`
-   * flow skips approval gate for machineIds the user has marked as
-   * trusted. Default (no callback): legacy behaviour — every new machine
-   * is `pending` until manually approved on another machine.
-   */
-  isTrustedTeammate?: (machineId: string) => boolean;
-  /**
-   * v0.7 — bounded concurrency for the per-workspace file iteration
-   * (syncWorkspace / forcePullWorkspace / pushAll inner loop). Returns the
-   * desired concurrency cap (1 = legacy serial). Setting via
-   * `vscodesync.sync.concurrency`. Resolver-shaped so the engine picks up
-   * live setting changes without rebuild.
-   */
-  syncFileConcurrency?: () => number;
-  /**
-   * v0.7 — bounded concurrency for the outer iteration across workspaces
-   * inside one workspace folder (pushAll / pullAll). 1 = legacy serial.
-   * Setting via `vscodesync.sync.workspaceConcurrency`.
-   */
-  syncWorkspaceConcurrency?: () => number;
-  /**
-   * v0.7 — verification mode for `pushFile`. After upload, the engine may
-   * download the blob again and re-hash it against the local plaintext hash
-   * to catch wire corruption. Default `"plaintext-only"` preserves the
-   * historical behaviour (verify only when bytes hit the cloud unencrypted).
-   * `"never"` skips the post-upload GET entirely — fastest, leans on
-   * provider ETag / managed integrity instead.
-   */
-  verifyUploadHash?: () => "plaintext-only" | "never";
-  /** v0.7 — overrides `HISTORY_VERSIONS_DEFAULT` (10). Setting via `vscodesync.historyVersions`. */
-  historyVersions?: () => number;
-  /** v0.7 — overrides `META_WRITE_RETRIES_DEFAULT` (3). Setting via `vscodesync.metaWriteRetries`. */
-  metaWriteRetries?: () => number;
-  /** v0.7 — overrides `VERIFY_RETRIES_DEFAULT` (3). Setting via `vscodesync.verifyRetries`. */
-  verifyRetries?: () => number;
-  /** v0.7 — overrides `STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT` (3h). Setting via `vscodesync.softLockStaleHours`. */
-  softLockStaleMs?: () => number;
-  /** v0.7 — local backup dir under workspace root. Default `.vscode/vscodesync-local-backup`. Setting via `vscodesync.localBackupDir`. */
-  localBackupDir?: () => string;
-  /**
-   * v0.7 — when `inline`, snapshot the old blob into `.history/` synchronously
-   * before each push (legacy). When `lazy`, queue snapshots in memory and let
-   * the host flush them periodically via `drainLazyHistoryQueue`. When `off`,
-   * skip history entirely. Setting via `vscodesync.historyMode`.
-   */
-  historyMode?: () => "inline" | "lazy" | "off";
-  /**
-   * v0.7 — drain hook for the lazy history queue. Host calls this on a
-   * timer; engine returns the queued (workspaceId, posixRel, oldCloudPath)
-   * triples and clears its in-memory queue. Pure side-effect-free read.
-   */
-  onLazyHistoryQueued?: (entry: LazyHistoryEntry) => void;
-  /**
-   * v0.7 — opt-in profiler hook. When set, the engine emits per-file timing
-   * samples (hash ms, upload ms, verify ms, full round-trip ms) so the UI
-   * can render a "slow files" diagnostic. Setting via
-   * `vscodesync.diagnostics.profileSync`.
-   */
-  onSyncProfileSample?: (sample: SyncProfileSample) => void;
-}
+/**
+ * The engine's dependency set, split into ports / config / events
+ * (`engineDeps.ts`). Re-exported so existing importers keep working.
+ */
+export type {
+  EnginePorts,
+  EngineConfig,
+  EngineEvents,
+  SyncEngineDeps,
+} from "./engineDeps.js";
+import type { SyncEngineDeps } from "./engineDeps.js";
 
 /** v0.7 — deferred history snapshot. Owned by `io/historyStore`. */
 export type { LazyHistoryEntry } from "./io/historyStore.js";
@@ -1914,27 +1679,13 @@ export class SyncEngine {
     if (!m) {
       return [];
     }
-    const now = Date.now();
-    const out: { path: string; editingBy: string; editingSince: string; ageHours: number }[] = [];
-    for (const f of m.files) {
-      if (f.removedAt) {
-        continue;
-      }
-      if (!f.editingBy || !f.editingSince) {
-        continue;
-      }
-      const t = Date.parse(f.editingSince);
-      if (Number.isNaN(t) || now - t < this.resolveSoftLockStaleMs()) {
-        continue;
-      }
-      out.push({
-        path: f.path,
-        editingBy: f.editingBy,
-        editingSince: f.editingSince,
-        ageHours: (now - t) / 3600_000,
-      });
-    }
-    return out;
+    // One definition of "stale", shared with the clearing path below.
+    return findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => ({
+      path: r.posixRel,
+      editingBy: r.machineId,
+      editingSince: r.editingSince,
+      ageHours: r.ageMs / 3600_000,
+    }));
   }
 
   /**
@@ -1953,25 +1704,24 @@ export class SyncEngine {
       throw new Error("manifest missing");
     }
     const nowIso = new Date().toISOString();
-    const now = Date.now();
-    let cleared = 0;
+    const stale = new Set(
+      findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => r.posixRel),
+    );
+    const cleared = stale.size;
+    if (cleared === 0) {
+      return 0;
+    }
+    // Clearing someone else's abandoned lock *is* an edit to the row, so the
+    // version bumps here — unlike taking or dropping your own lock.
     const files: ManifestFile[] = m.files.map((f) => {
-      if (!f.editingBy || !f.editingSince) {
+      if (!stale.has(f.path)) {
         return f;
       }
-      const t = Date.parse(f.editingSince);
-      if (Number.isNaN(t) || now - t < this.resolveSoftLockStaleMs()) {
-        return f;
-      }
-      cleared += 1;
       const rest = { ...f };
       delete rest.editingBy;
       delete rest.editingSince;
       return { ...rest, version: f.version + 1 };
     });
-    if (cleared === 0) {
-      return 0;
-    }
     const updated: CloudManifest = {
       ...m,
       files,
@@ -2008,23 +1758,18 @@ export class SyncEngine {
     // which was masked while `setSoftLock` inflated `version` on each call.
     const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
     const now = new Date().toISOString();
-    const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
-    if (mfIx < 0) {
+    const files = applyLockChange(m.files, posixRel, {
+      machineId: this.deps.machineId,
+      sinceIso: now,
+    });
+    if (files === null) {
       return;
     }
-    // Already locked by this machine — just update editingSince (heartbeat)
     const updated: CloudManifest = {
       ...m,
       updatedAt: now,
       machines: this.touchMachine(m.machines, now),
-      files: m.files.map((f, i) =>
-        i === mfIx
-          ? // A soft lock is presence metadata, not a content change. Bumping
-            // `version` here inflated the file's version on every tab switch,
-            // making "who has the newer content" drift for no content at all.
-            { ...f, editingBy: this.deps.machineId, editingSince: now }
-          : f,
-      ),
+      files,
     };
     try {
       await this.putManifest(workspaceId, updated, freshEtag);
@@ -2057,22 +1802,20 @@ export class SyncEngine {
       return;
     }
     const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
-    const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
-    if (mfIx < 0) {
-      return;
-    }
-    const existing = m.files[mfIx];
-    if (!existing.editingBy || existing.editingBy !== this.deps.machineId) {
+    const existing = m.files.find((f) => f.path === posixRel && !f.removedAt);
+    if (!existing?.editingBy || existing.editingBy !== this.deps.machineId) {
       return; // Only clear own lock
     }
     const now = new Date().toISOString();
-    const { editingBy: _editingBy, editingSince: _editingSince, ...rest } = existing;
+    const files = applyLockChange(m.files, posixRel, null);
+    if (files === null) {
+      return;
+    }
     const updated: CloudManifest = {
       ...m,
       updatedAt: now,
       machines: this.touchMachine(m.machines, now),
-      // Presence metadata, not content — see `setSoftLock` on `version`.
-      files: m.files.map((f, i) => (i === mfIx ? { ...rest } : f)),
+      files,
     };
     try {
       await this.putManifest(workspaceId, updated, freshEtag);

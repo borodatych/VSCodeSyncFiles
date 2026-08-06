@@ -60,7 +60,7 @@ describe("слой src/core/plan остаётся чистым", () => {
  * between the refactor being planned and being started. Lowered as each stage
  * moves code out — never raised.
  */
-const SYNC_ENGINE_LINE_CEILING = 4400;
+const SYNC_ENGINE_LINE_CEILING = 4150;
 
 describe("syncEngine.ts не разрастается", () => {
   it(`не длиннее ${String(SYNC_ENGINE_LINE_CEILING)} строк`, () => {
