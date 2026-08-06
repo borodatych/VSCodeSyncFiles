@@ -365,8 +365,20 @@ export class YandexDiskProvider implements ICloudProvider {
   }
 
   async deleteFile(cloudPath: string): Promise<void> {
+    await this.removeResource(cloudPath, false);
+  }
+
+  /** Bypasses the Disk trash — user-invoked purge only (D11). */
+  async purgeFilePermanently(cloudPath: string): Promise<void> {
+    await this.removeResource(cloudPath, true);
+  }
+
+  private async removeResource(cloudPath: string, permanently: boolean): Promise<void> {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
-    const r = await this.apiFetch(`resources?path=${pathEnc}&permanently=true`, { method: "DELETE" });
+    const r = await this.apiFetch(
+      `resources?path=${pathEnc}${permanently ? "&permanently=true" : ""}`,
+      { method: "DELETE" },
+    );
     if (r.ok || r.status === 404) {
       return;
     }

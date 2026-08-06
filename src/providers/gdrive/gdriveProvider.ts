@@ -33,6 +33,7 @@ import {
   type IGdriveFolderIdCache,
 } from "../../core/gdriveFolderIdCache.js";
 import { withRetry } from "../../core/withRetry.js";
+import { warnLog } from "../../utils/log.js";
 
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
@@ -40,6 +41,30 @@ const MIME_FOLDER = "application/vnd.google-apps.folder";
 
 function escapeDriveQueryLiteral(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
+ * Drive allows several files with the same name in one folder, and the API
+ * returns them in no particular order (D12). Taking `files[0]` meant two
+ * machines racing to create `_meta.json` could end up writing to one copy and
+ * reading the other — and the folder-id cache made that choice sticky for the
+ * whole session.
+ *
+ * The tie-break is the smallest id: an arbitrary rule, but a *stable* one, so
+ * every machine converges on the same file.
+ */
+export function pickDriveDuplicate<T extends { id: string; name?: string }>(
+  files: readonly T[],
+  label: string,
+): T | null {
+  if (files.length === 0) return null;
+  if (files.length === 1) return files[0] ?? null;
+  const sorted = [...files].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  warnLog(
+    "gdrive",
+    `duplicate name "${label}": ${String(files.length)} entries, using id ${sorted[0]?.id ?? "?"} — remove the extras in Google Drive`,
+  );
+  return sorted[0] ?? null;
 }
 
 function normalizeEtag(h: string | null | undefined): string | undefined {
@@ -224,7 +249,15 @@ export class GdriveProvider implements ICloudProvider {
     );
   }
 
-  private async getRootFolderId(token: string): Promise<string> {
+  /**
+   * Find the root folder without creating it (B16).
+   *
+   * `listFolder` and friends used to go through the creating path, so a plain
+   * read — including the connectivity probe, which runs every 30 s — could
+   * create `VSCodeSyncFiles/` in a user's Drive. Reads resolve; only writes
+   * create.
+   */
+  private async resolveRootFolderId(token: string): Promise<string | null> {
     const cached = this.folderCache.get(CLOUD_ROOT_DIR);
     if (cached !== undefined) return cached;
     const name = escapeDriveQueryLiteral(CLOUD_ROOT_DIR);
@@ -234,12 +267,18 @@ export class GdriveProvider implements ICloudProvider {
     if (!r.ok) {
       throw await this.classifyResponse(r);
     }
-    const j = (await r.json()) as { files?: { id?: string }[] };
-    const existing = j.files?.[0]?.id;
-    if (existing) {
-      this.folderCache.set(CLOUD_ROOT_DIR, existing);
-      return existing;
+    const j = (await r.json()) as { files?: DriveFileSummary[] };
+    const picked = pickDriveDuplicate(j.files ?? [], CLOUD_ROOT_DIR);
+    if (picked?.id !== undefined) {
+      this.folderCache.set(CLOUD_ROOT_DIR, picked.id);
+      return picked.id;
     }
+    return null;
+  }
+
+  private async getRootFolderId(token: string): Promise<string> {
+    const existing = await this.resolveRootFolderId(token);
+    if (existing !== null) return existing;
     const create = await this.driveFetch(`${DRIVE}/files`, {
       method: "POST",
       headers: {
@@ -266,32 +305,58 @@ export class GdriveProvider implements ICloudProvider {
   /**
    * Resolve a file path under VSCodeSyncFiles/ — returns parent folder id, matching item (if any), leaf name.
    */
-  private async resolveLeaf(
+  /**
+   * Read-only leaf lookup: resolves folders without creating any (B16).
+   * `null` means "the path does not exist", which every caller already treats
+   * as absent.
+   */
+  private async resolveLeafForRead(
     token: string,
     cloudPath: string,
-  ): Promise<{ parentId: string; item: DriveFileSummary | null; filename: string }> {
+  ): Promise<{ item: DriveFileSummary | null }> {
     const segments = cloudPath.split("/").filter(Boolean);
     if (segments.length < 2 || segments[0] !== CLOUD_ROOT_DIR) {
       throw new ProviderError("NETWORK_ERROR", `Invalid cloud path: ${cloudPath}`);
     }
-    let parentId = await this.getRootFolderId(token);
-    // v0.7 — walk via cached folder path. `accum` is the absolute path so
-    // each level can be served from the cache without re-hitting Drive.
+    const parentId = await this.resolveFolderPath(
+      token,
+      segments.slice(0, segments.length - 1).join("/"),
+    );
+    if (parentId === null) {
+      return { item: null };
+    }
+    const filename = segments[segments.length - 1] ?? "";
+    return { item: await this.findChild(token, parentId, filename) };
+  }
+
+  /** Folder-path walk that never creates. `null` when a segment is missing. */
+  private async resolveFolderPath(token: string, cloudPath: string): Promise<string | null> {
+    const trimmed = cloudPath.endsWith("/") ? cloudPath.slice(0, -1) : cloudPath;
+    const segments = trimmed.split("/").filter(Boolean);
+    if (segments.length < 1 || segments[0] !== CLOUD_ROOT_DIR) {
+      throw new ProviderError("NETWORK_ERROR", `Invalid folder path: ${cloudPath}`);
+    }
+    const cached = this.folderCache.get(trimmed);
+    if (cached !== undefined) return cached;
+    let parentId = await this.resolveRootFolderId(token);
+    if (parentId === null) return null;
     let accum = CLOUD_ROOT_DIR;
-    for (let i = 1; i < segments.length - 1; i += 1) {
+    for (let i = 1; i < segments.length; i += 1) {
       const seg = segments[i] ?? "";
       accum = `${accum}/${seg}`;
       const hit = this.folderCache.get(accum);
       if (hit !== undefined) {
         parentId = hit;
-      } else {
-        parentId = await this.ensureChildFolder(token, parentId, seg);
-        this.folderCache.set(accum, parentId);
+        continue;
       }
+      const child = await this.findChild(token, parentId, seg);
+      if (child?.mimeType !== MIME_FOLDER) {
+        return null;
+      }
+      parentId = child.id;
+      this.folderCache.set(accum, parentId);
     }
-    const filename = segments[segments.length - 1] ?? "";
-    const item = await this.findChild(token, parentId, filename);
-    return { parentId, item, filename };
+    return parentId;
   }
 
   private async ensureFolderPath(token: string, cloudPath: string): Promise<string> {
@@ -327,8 +392,7 @@ export class GdriveProvider implements ICloudProvider {
       throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as { files?: DriveFileSummary[] };
-    const files = j.files ?? [];
-    return files[0] ?? null;
+    return pickDriveDuplicate(j.files ?? [], name);
   }
 
   private async ensureChildFolder(token: string, parentId: string, name: string): Promise<string> {
@@ -436,7 +500,7 @@ export class GdriveProvider implements ICloudProvider {
 
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
     const token = await this.accessToken();
-    const { item } = await this.resolveLeaf(token, cloudPath);
+    const { item } = await this.resolveLeafForRead(token, cloudPath);
     if (!item?.id || item.mimeType === MIME_FOLDER) {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
@@ -470,7 +534,7 @@ export class GdriveProvider implements ICloudProvider {
 
   async getMetadata(cloudPath: string): Promise<FileMetadata | null> {
     const token = await this.accessToken();
-    const { item } = await this.resolveLeaf(token, cloudPath);
+    const { item } = await this.resolveLeafForRead(token, cloudPath);
     if (!item?.id) {
       return null;
     }
@@ -495,9 +559,33 @@ export class GdriveProvider implements ICloudProvider {
     };
   }
 
+  /** Moves to Drive trash (D11) — `files.delete` destroyed the file outright. */
   async deleteFile(cloudPath: string): Promise<void> {
     const token = await this.accessToken();
-    const { item } = await this.resolveLeaf(token, cloudPath);
+    const { item } = await this.resolveLeafForRead(token, cloudPath);
+    if (!item?.id) {
+      return;
+    }
+    const r = await this.driveFetch(`${DRIVE}/files/${item.id}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ trashed: true }),
+    });
+    if (r.status === 404) {
+      return;
+    }
+    if (!r.ok) {
+      throw await this.classifyResponse(r);
+    }
+  }
+
+  /** Bypasses the trash — user-invoked purge only (D11). */
+  async purgeFilePermanently(cloudPath: string): Promise<void> {
+    const token = await this.accessToken();
+    const { item } = await this.resolveLeafForRead(token, cloudPath);
     if (!item?.id) {
       return;
     }
@@ -516,7 +604,11 @@ export class GdriveProvider implements ICloudProvider {
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     const token = await this.accessToken();
     const folderPath = cloudPath.endsWith("/") ? cloudPath.slice(0, -1) : cloudPath;
-    const folderId = await this.ensureFolderPath(token, folderPath);
+    // Listing a folder that does not exist is "empty", not "create it" (B16).
+    const folderId = await this.resolveFolderPath(token, folderPath);
+    if (folderId === null) {
+      return [];
+    }
     const prefix = cloudPath.endsWith("/") ? cloudPath : `${cloudPath}/`;
     const out: FileMetadata[] = [];
     // v0.8 F-007 — paginate via Drive `nextPageToken` so workspaces with
@@ -565,7 +657,7 @@ export class GdriveProvider implements ICloudProvider {
 
   async getWebViewLink(cloudPath: string): Promise<string | null> {
     const token = await this.accessToken();
-    const { item } = await this.resolveLeaf(token, cloudPath);
+    const { item } = await this.resolveLeafForRead(token, cloudPath);
     if (!item?.id) {
       return null;
     }

@@ -90,6 +90,16 @@ export function wrapWithQueue(provider: ICloudProvider): ICloudProvider {
     },
   };
 
+  // Optional and irreversible (D11): forwarded only when the provider has it,
+  // and still through the queue so a purge cannot jump ahead of pending work.
+  if (provider.purgeFilePermanently !== undefined) {
+    wrapped.purgeFilePermanently = (cloudPath: string): Promise<void> =>
+      q().enqueue(() => {
+        track();
+        return provider.purgeFilePermanently!(cloudPath);
+      });
+  }
+
   if (provider.getWebViewLink !== undefined) {
     wrapped.getWebViewLink = (cloudPath: string): Promise<string | null> =>
       provider.getWebViewLink!(cloudPath);

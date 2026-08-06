@@ -73,7 +73,20 @@ export interface ICloudProvider {
   uploadFile(cloudPath: string, content: Buffer, options?: UploadOptions): Promise<UploadResult>;
   downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult>;
   getMetadata(cloudPath: string): Promise<FileMetadata | null>;
+  /**
+   * Move the file to the provider's trash — recoverable by the user (D11).
+   *
+   * Yandex passed `permanently=true` and Drive used `files.delete`, so half the
+   * providers destroyed data that the other half merely trashed, with nothing
+   * in this contract saying which you would get. Irreversible removal is
+   * `purgeFilePermanently`, and only a direct user command may call it.
+   */
   deleteFile(cloudPath: string): Promise<void>;
+  /**
+   * Irreversible removal. Optional: providers that cannot express it fall back
+   * to {@link deleteFile}. Never call from an automatic path.
+   */
+  purgeFilePermanently?(cloudPath: string): Promise<void>;
   listFolder(cloudPath: string): Promise<FileMetadata[]>;
   createFolder(cloudPath: string): Promise<void>;
   /**

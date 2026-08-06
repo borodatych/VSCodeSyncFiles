@@ -399,8 +399,44 @@
           `core/localFileBackup.ts` — бэкап/прунинг вынесены из `syncEngine.ts` и
           используются четырьмя путями вместо одного; `ui/localBackupSettings.ts` —
           один читатель трёх `localBackup*`.
-- [ ] **Этап 4. Провайдеры** — классификатор HTTP-статуса, мьютекс refresh, Яндекс на
-      code+PKCE, квоты и троттлинг.
+- [x] **Этап 4. Провайдеры** — ✅ (2026-08-06, ветка `next`)
+  - [x] **4.1 — E1, единый классификатор HTTP-статуса.**
+        `providers/_shared/classifyHttpError.ts`: 401 и auth-причины в теле →
+        UNAUTHORIZED, троттлинг-причины 403 и 429/503 → RATE_LIMITED с
+        Retry-After, переполнение раньше остальных веток, 404/410 → NOT_FOUND,
+        409/412/428 → PRECONDITION_FAILED, 5xx → SERVER_ERROR. 32 места в
+        четырёх провайдерах переведены на него (было: 46 из 48 бросали
+        NETWORK_ERROR, из-за чего отозванный токен выглядел как «нет сети»).
+        `forcedRefreshFetch.ts` — один принудительный refresh по 401 и один
+        повтор. OneDrive `maybeRefreshToken` перестал возвращать заведомо
+        протухший bundle. Гейт `providerErrorClassificationUsage.test.ts`.
+  - [x] **4.2 — E14, E4, E2, E3.** `providers/_shared/tokenStore.ts`: одна
+        раскладка SecretStorage (три копии модулей и инлайн OneDrive удалены,
+        панель настроек снята с шести литералов) + мьютекс `refreshOnce`.
+        Мёртвая пятая схема `vscodesync.token.<type>` удалена, замысел
+        мультиаккаунта записан в `docs/v2/deferredWiring.md`. Яндекс переведён
+        с implicit на authorization code + PKCE: вместе с потоком исчез
+        HTML-шим и его обработчик, принимавший токен без проверки
+        state/Origin/Content-Type.
+  - [x] **4.3 — E5, E8, E9, E12.** `providerFetchOutcome.ts` — разбор исхода
+        внутри `withRetry`: троттлинг Google в виде 403 наконец доходит до
+        ретрая, переполнение не ретраится и поднимает баннер с самыми тяжёлыми
+        файлами (`planQuotaExhaustion` подключён спустя две версии простоя),
+        Dropbox получил ретрай-конверт, Яндекс — тоже (423-циклы не ломаются).
+        `bumpOfflineFlushBackoff` убран из транспортного слоя, первый успешный
+        запрос сбрасывает бэкофф.
+  - [x] **4.4 — B16, D12, D11.** У Google Drive разделены `resolveFolderPath`
+        (поиск, `null`) и `ensureFolderPath` (создание); `listFolder`,
+        `getMetadata`, `downloadFile`, `deleteFile`, `getWebViewLink` больше не
+        создают папок — раньше это делал даже probe раз в 30 с. Дубли имён
+        разрешаются детерминированно (минимальный id) с предупреждением.
+        Удаление у Яндекса и Drive стало обратимым (корзина), безвозвратное
+        вынесено в `purgeFilePermanently` контракта.
+  - [ ] Не входило в 4.1–4.4 и осталось на потом: E6 (чанковая заливка OneDrive
+        мимо `graphFetch`), E7 (Dropbox chunked upload), E10 (`providerHashVerify`
+        сравнивает ETag с хэшем), E11 (GDrive etag/md5 — требует прогона против
+        живого API), E13 (parity-разрывы: `createFolder` у OneDrive, эмуляция
+        `ifMatch`/`ifNoneMatch`, неиспользуемые PKCE-обёртки).
 - [ ] **Этап 5. Рефакторинг ядра** — `syncEngine.ts` 4157 строк → оркестратор < 600 строк
       плюс слои `plan/` и `io/`.
 - [ ] **Этап 6. Поверхность и релиз** — сокращение палитры, документация, версия 1.0.0.
