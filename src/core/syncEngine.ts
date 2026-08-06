@@ -28,7 +28,8 @@ import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
 import { backupLocalWithPrune, LOCAL_BACKUP_DIR_DEFAULT } from "./localFileBackup.js";
 import { mergeMetaEntries } from "./metaMerge.js";
-import { detectChange, type ChangeAction } from "./changeDetection.js";
+import type { ChangeAction } from "./changeDetection.js";
+import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
@@ -58,7 +59,9 @@ import {
   blobCloudPath,
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
-import { decodeCloudBlob, encodeCloudBlob } from "./cloudBlobCodec.js";
+import { decodeCloudBlob } from "./cloudBlobCodec.js";
+import { planUploadEncoding } from "./plan/planUploadEncoding.js";
+import { planTrackingDiff } from "./plan/planTrackingDiff.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -1105,43 +1108,48 @@ export class SyncEngine {
     }
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
     const stamp = new Date().toISOString();
+
+    // Which files to take over is decided by `planTrackingDiff` (pure); this
+    // loop only applies the decision. `existsLocally` is resolved up front so
+    // the planner stays free of I/O.
+    const candidatePaths = manifest.files
+      .filter((f) => !f.removedAt)
+      .map((f) => f.path);
+    const existing = new Set<string>();
+    for (const posixRel of candidatePaths) {
+      if (await fileExists(this.localAbs(cfg, posixRel))) existing.add(posixRel);
+    }
+    const diff = planTrackingDiff({
+      workspaceId,
+      manifestFiles: manifest.files,
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      metaHashFor: (rel: string) => meta.files[rel]?.hash,
+      wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
+      existsLocally: (rel: string) => existing.has(rel),
+    });
+
     let changed = false;
-    for (const mf of manifest.files.filter((f) => !f.removedAt)) {
-      const posixRel = mf.path;
-      if (cfg.files.some((f) => f.workspaceId === workspaceId && f.localPath === posixRel)) {
-        continue;
-      }
-      const wireGzip = meta.files[posixRel]?.wireGzip === true;
-      // Detect rename: if manifest says this file was renamed from another path,
-      // update the existing entry instead of registering a duplicate.
-      if (mf.renamedFrom) {
-        const oldIdx = cfg.files.findIndex(
-          (f) => f.workspaceId === workspaceId && f.localPath === mf.renamedFrom,
-        );
-        if (oldIdx >= 0) {
-          cfg.files[oldIdx] = {
-            ...cfg.files[oldIdx],
-            localPath: posixRel,
-            cloudPath: blobCloudPath(workspaceId, posixRel, wireGzip),
-            localHash: meta.files[posixRel]?.hash ?? "",
-          };
-          changed = true;
-          continue;
-        }
-      }
-      // A file adopted from someone else's manifest exists in the cloud, not
-      // necessarily on this disk. It used to be registered as `syncStatus: "ok"`
-      // with the *cloud* hash written into `localHash` — so it looked already
-      // synced and nothing ever pulled it, while its `cloudPath` was built
-      // without the `.gz` suffix and pointed at nothing for compressed blobs.
-      const localExists = await fileExists(this.localAbs(cfg, posixRel));
+    for (const r of diff.rename) {
+      const oldIdx = cfg.files.findIndex(
+        (f) => f.workspaceId === workspaceId && f.localPath === r.from,
+      );
+      if (oldIdx < 0) continue;
+      cfg.files[oldIdx] = {
+        ...cfg.files[oldIdx],
+        localPath: r.to,
+        cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
+        localHash: r.localHash,
+      };
+      changed = true;
+    }
+    for (const a of diff.adopt) {
       cfg.files.push({
-        localPath: posixRel,
+        localPath: a.posixRel,
         workspaceId,
-        cloudPath: blobCloudPath(workspaceId, posixRel, wireGzip),
+        cloudPath: blobCloudPath(workspaceId, a.posixRel, a.wireGzip),
         lastSync: stamp,
-        localHash: localExists ? (meta.files[posixRel]?.hash ?? "") : "",
-        syncStatus: localExists ? "ok" : "cloud_newer",
+        localHash: a.localHash,
+        syncStatus: a.syncStatus,
       });
       changed = true;
     }
@@ -2131,12 +2139,15 @@ export class SyncEngine {
       // its etag, which `uploadFile` already returns.
       this.assertEncryptionReady();
       const plaintext = await fs.readFile(abs);
-      const encoded = encodeCloudBlob(plaintext, posixRel, {
+      const encoded = planUploadEncoding({
+        workspaceId,
+        posixRel,
+        plaintext,
         encrypt: this.deps.encrypt,
         decrypt: this.deps.decrypt,
         compressUploads: this.deps.compressUploads,
       });
-      const cloudPath = blobCloudPath(workspaceId, posixRel, encoded.wireGzip);
+      const cloudPath = encoded.cloudPath;
       const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body);
       this.emitTransfer({ direction: "upload", bytes: encoded.body.length });
       const hash = await computeHash(abs, this.hashCfg(posixRel));
@@ -3227,12 +3238,19 @@ export class SyncEngine {
     manifest: CloudManifest,
   ): void {
     if (!this.deps.onTrackingDriftDetected) return;
-    const activePaths = new Set(manifest.files.filter((f) => !f.removedAt).map((f) => f.path));
-    const trackedPaths = new Set(
-      cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
-    );
-    const toAdopt = [...activePaths].filter((p) => !trackedPaths.has(p));
-    const toPrune = [...trackedPaths].filter((p) => !activePaths.has(p));
+    // Same planner the adoption uses, so the notification cannot promise a
+    // different set of changes than the action would apply. `existsLocally` is
+    // irrelevant to the counts, so the detector answers it cheaply.
+    const diff = planTrackingDiff({
+      workspaceId,
+      manifestFiles: manifest.files,
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      metaHashFor: () => undefined,
+      wireGzipFor: () => false,
+      existsLocally: () => false,
+    });
+    const toAdopt = [...diff.adopt.map((a) => a.posixRel), ...diff.rename.map((r) => r.to)];
+    const toPrune = diff.prune;
     if (toAdopt.length === 0 && toPrune.length === 0) return;
     this.deps.onTrackingDriftDetected({ workspaceId, workspaceNote, toAdopt, toPrune });
   }
@@ -3353,27 +3371,13 @@ export class SyncEngine {
       }
       cloudCurrent = "";
     }
-    // Meta consensus already updated by another machine; our cached
-    // `file.localHash` lags behind. detectChange would call this "push"
-    // because it doesn't know `localHash` is stale — but the right
-    // verdict is "pull": cloud has changed, we're out of date.
-    // (Identical guard exists in syncOneFile:2994-3005 for the full-sync
-    //  path; check-only must mirror it or we mis-report status as
-    //  pending_push when a remote machine pushed a newer version.)
-    const consensusLagsLocally =
-      base !== undefined &&
-      base !== "" &&
-      file.localHash !== base &&
-      cloudCurrent === base &&
-      localCurrent !== cloudCurrent;
-    const action: ChangeAction = consensusLagsLocally
-      ? "pull"
-      : detectChange(base, localCurrent, cloudCurrent);
-    let next: WorkspaceConfig["files"][number]["syncStatus"] = file.syncStatus;
-    if (action === "push") next = "pending_push";
-    else if (action === "pull") next = "cloud_newer";
-    else if (action === "none") next = "ok";
-    else next = "conflict";
+    const { action } = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrent,
+      cloudHash: cloudCurrent,
+    });
+    const next = syncStatusForAction(action);
     if (file.syncStatus !== next) {
       verboseLog(
         "syncEngine",
@@ -3443,20 +3447,23 @@ export class SyncEngine {
       }
       cloudCurrent = "";
     }
-    /** `_meta` already updated by another machine; our cached `localHash` lags behind consensus. */
-    if (
-      base !== undefined &&
-      base !== "" &&
-      file.localHash !== base &&
-      cloudCurrent === base
-    ) {
+    const planned = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrent,
+      cloudHash: cloudCurrent,
+    });
+    if (planned.reason === "consensus_lag") {
+      // `_meta` already updated by another machine; our cached `localHash` lags
+      // behind consensus. Report it and let the user pull — a full sync must
+      // not silently overwrite what they pushed.
       if (file.syncStatus !== "cloud_newer") {
         file.syncStatus = "cloud_newer";
         await this.persistMutatedCfg(cfg);
       }
       return;
     }
-    const action = detectChange(base, localCurrent, cloudCurrent);
+    const action = planned.action;
     if (action === "push") {
       if (file.syncStatus === "cloud_newer") {
         file.syncStatus = "ok";
@@ -3601,12 +3608,12 @@ export class SyncEngine {
           cloudCurrent = "";
         }
 
-        let action: PreviewSyncFileAction;
-        if (base !== undefined && base !== "" && file.localHash !== base && cloudCurrent === base) {
-          action = "pull";
-        } else {
-          action = detectChange(base, localCurrent, cloudCurrent);
-        }
+        const action: PreviewSyncFileAction = planFileAction({
+          baseHash: base,
+          cachedLocalHash: file.localHash,
+          localHash: localCurrent,
+          cloudHash: cloudCurrent,
+        }).action;
         rows.push({ localPath: file.localPath, action });
       }
 
@@ -3654,12 +3661,18 @@ export class SyncEngine {
       cloudCurrent = "";
     }
 
-    if (base !== undefined && base !== "" && file.localHash !== base && cloudCurrent === base) {
+    const planned = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrentHash,
+      cloudHash: cloudCurrent,
+    });
+    if (planned.reason === "consensus_lag") {
       await this.pullFile(cfg, workspaceId, file.localPath, entry, meta);
       return false;
     }
 
-    const action = detectChange(base, localCurrentHash, cloudCurrent);
+    const action = planned.action;
     if (action === "push") {
       if (isSecondaryWorkspaceInstanceReadOnly()) {
         return false;
@@ -4005,14 +4018,17 @@ export class SyncEngine {
       // decides whether to upload at all. Only the value recorded in `_meta`
       // had to become the hash of the bytes actually sent.
 
-      const encoded = encodeCloudBlob(plaintextBufLocked, posixRel, {
+      const encoded = planUploadEncoding({
+        workspaceId,
+        posixRel,
+        plaintext: plaintextBufLocked,
         encrypt: this.deps.encrypt,
         decrypt: this.deps.decrypt,
         compressUploads: this.deps.compressUploads,
       });
       const wireGzip = encoded.wireGzip;
 
-      const uploadCloudPath = blobCloudPath(workspaceId, posixRel, wireGzip);
+      const uploadCloudPath = encoded.cloudPath;
       const pathModeChanged =
         uploadCloudPath !== file.cloudPath ||
         prevWireGzipLocked !== wireGzip ||
