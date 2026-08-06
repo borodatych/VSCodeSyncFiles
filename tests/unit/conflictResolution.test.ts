@@ -123,6 +123,38 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
     expect(cloudDl.body.toString("utf8")).toBe("// version-B\n");
   });
 
+  it("resolveConflictKeepMine: облако ушло вперёд после отметки конфликта → cloud_moved без записи", async () => {
+    const { provider, rootA: rA, engineA, wid, rel, absA } = await setupBase();
+    rootA = rA;
+    rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
+
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
+    await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
+    await engineB.syncWorkspace(wid);
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("conflict");
+
+    // Machine A pushes a third version the user of B has never seen.
+    const cloudPath = trackedFileCloudPath(wid, rel);
+    await fs.writeFile(absA, "// version-C\n", "utf8");
+    // The seeded stale `_meta` makes A see a conflict too; A resolves it in
+    // favour of its own version, which is exactly the "cloud moved" case for B.
+    await engineA.pushAll(wid);
+    await engineA.resolveConflictKeepMine(wid, rel, { force: true });
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-C\n");
+
+    expect(await engineB.resolveConflictKeepMine(wid, rel)).toBe("cloud_moved");
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-C\n");
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("conflict");
+
+    // force: the user was told and chose their own version anyway.
+    expect(await engineB.resolveConflictKeepMine(wid, rel, { force: true })).toBe("pushed");
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-B\n");
+  });
+
   it("resolveConflictTakeTheirs: pulls cloud content, clears conflict", async () => {
     const { provider, rootA: rA, wid, rel } = await setupBase();
     rootA = rA;

@@ -67,10 +67,22 @@ function tmpPathNextTo(filePath: string): string {
  * even if the swap fails. As a last resort we fall back to a direct overwrite.
  */
 export async function writeTextFileAtomic(filePath: string, body: string): Promise<void> {
+  await writeFileAtomic(filePath, body);
+}
+
+/**
+ * Binary-safe variant of {@link writeTextFileAtomic}: same temp+rename dance
+ * and the same EPERM/EACCES/EBUSY retries, but the payload may be a Buffer.
+ *
+ * User files (pulled blobs, Quick Transfer packages, P2P deliveries) go through
+ * this one — they are as likely to be binary as text, and they are exactly the
+ * writes that must not leave a half-written file behind on Windows.
+ */
+export async function writeFileAtomic(filePath: string, body: Buffer | string): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   const tmp = tmpPathNextTo(filePath);
-  await fs.writeFile(tmp, body, "utf8");
+  await writeBody(tmp, body);
   try {
     await renameReplacingFileWithRetries(tmp, filePath);
     return;
@@ -97,8 +109,12 @@ export async function writeTextFileAtomic(filePath: string, body: string): Promi
   // Last resort: direct overwrite. We still hold `tmp` until the write
   // succeeds so that a crash mid-write leaves a recoverable copy nearby.
   try {
-    await fs.writeFile(filePath, body, "utf8");
+    await writeBody(filePath, body);
   } finally {
     await tryUnlink(tmp);
   }
+}
+
+function writeBody(target: string, body: Buffer | string): Promise<void> {
+  return typeof body === "string" ? fs.writeFile(target, body, "utf8") : fs.writeFile(target, body);
 }

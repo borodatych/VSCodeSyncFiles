@@ -4,10 +4,13 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import {
+  applyQuickTransferReceive,
   listIncomingQuickTransfers,
-  receiveQuickTransferPackage,
+  prepareQuickTransferReceive,
   sendQuickTransferFile,
+  type QuickTransferApplyMode,
 } from "../core/quickTransfer.js";
+import { readLocalBackupSettings } from "./localBackupSettings.js";
 import { allowImmediateOfflineFlushRetry, bumpOfflineFlushBackoff } from "../core/syncOfflineFlushBackoff.js";
 import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
@@ -90,7 +93,35 @@ export function registerQuickTransferFeatures(
       }
       if (choice === "Получить") {
         try {
-          const r = await receiveQuickTransferPackage(provider, q.transferId, root, gc.machineName);
+          const prepared = await prepareQuickTransferReceive(provider, q.transferId, root, gc.machineName);
+          // An existing local file is never overwritten without a word (D7):
+          // the package is already downloaded, so the choice costs nothing and
+          // the cloud copy stays put until something lands on disk.
+          let mode: QuickTransferApplyMode | null = "overwrite";
+          if (prepared.destExists) {
+            const what = await vscode.window.showWarningMessage(
+              `VSCodeSync: «${prepared.relSafe}» уже существует локально.`,
+              { modal: true },
+              "Перезаписать (с бэкапом)",
+              "Сохранить рядом",
+            );
+            mode =
+              what === "Перезаписать (с бэкапом)"
+                ? "overwrite"
+                : what === "Сохранить рядом"
+                  ? "side-by-side"
+                  : null;
+          }
+          if (mode === null) {
+            continue;
+          }
+          const backupCfg = readLocalBackupSettings(root);
+          const r = await applyQuickTransferReceive(provider, prepared, mode, {
+            workspaceRoot: root,
+            backup: backupCfg.enabled
+              ? { retentionDays: backupCfg.retentionDays, backupDir: backupCfg.backupDir }
+              : undefined,
+          });
           await showSyncInfo(`VSCodeSync: файл сохранён — ${r.savedTo}`, "normal");
           await deps.refreshUi();
         } catch (e) {

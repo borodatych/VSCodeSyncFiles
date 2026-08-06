@@ -195,6 +195,7 @@
   "cfg.batchAddWarnThreshold.description": "Warn before bulk-adding more than this many files",
   "cfg.pushOnCommit.description": "After a git commit, recount statuses of the workspaces the commit touched. Sending files stays your explicit action.",
   "cfg.localBackupEnabled.description": "Keep a local backup before overwriting on pull",
+  "cfg.p2p.acceptIncomingFiles.description": "Accept files from P2P peers. Incoming files wait in .vscode/vscodesync-incoming until you apply them; off means the session ignores them entirely.",
   "cfg.localBackupRetentionDays.description": "Days to retain files in vscodesync-local-backup",
   "cfg.snapshotRetentionDays.description": "Cloud snapshot TTL (days)",
   "cfg.tombstonePurgeDays.description": "Days a deletion marker (tombstone) stays in the manifest. A machine that was offline longer than this loses the tracking of files deleted elsewhere.",

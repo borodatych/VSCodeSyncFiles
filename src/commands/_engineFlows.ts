@@ -13,6 +13,11 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { absoluteToTrackedPosix } from "../core/pathMapping.js";
 import { runAiMerge } from "../core/aiMerge.js";
+import { aiMergePreviewPath, summarizeAiMergeDiff } from "../core/aiMergePlan.js";
+import { backupExistingUserFile } from "../core/localFileBackup.js";
+import { writeFileAtomic } from "../core/writeTextFileAtomic.js";
+import { readLocalBackupSettings } from "../ui/localBackupSettings.js";
+import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { ensureProvider } from "./_providerFactory.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
@@ -204,8 +209,11 @@ export async function runConflict3WayDiff(
  * 1. Downloads remote (cloud) version.
  * 2. Gets base from .history/ (common ancestor).
  * 3. Reads local version from disk.
- * 4. Calls runAiMerge; on success writes merged content and resolves via keepMine.
- * Returns true when conflict was resolved, false when skipped/failed.
+ * 4. Calls runAiMerge; the answer is staged to a preview file, shown as a diff
+ *    against the local version and applied only on explicit confirmation, with
+ *    the pre-merge local file copied into the backup dir first (D5).
+ * 5. Pushing the result is a separate question — merging is not publishing.
+ * Returns true when the conflict was resolved, false when skipped/failed.
  */
 export async function runAiMergeForConflict(
   runWithEngine: RunWithEngineFn,
@@ -251,36 +259,95 @@ export async function runAiMergeForConflict(
       /* history unavailable — use empty base (effectively 2-way merge) */
     }
 
-    await vscode.window.withProgress(
+    const result = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `VSCodeSync: AI merge «${basename}»…`, cancellable: false },
-      async () => {
-        const result = await runAiMerge(baseText, localText, remoteText, posixRel);
-
-        if (!result.ok) {
-          const reasonMsg: Record<string, string> = {
-            disabled: "AI merge отключён (vscodesync.aiMerge.enabled: false).",
-            no_model: "Нет доступной языковой модели. Активируйте GitHub Copilot.",
-            too_large: result.detail ?? "Файл слишком большой для AI merge.",
-            model_refused: result.detail ?? "Модель не смогла разрешить конфликт. Разрешите вручную.",
-            error: result.detail ?? "Ошибка AI merge.",
-          };
-          await vscode.window.showWarningMessage(
-            `VSCodeSync AI Merge: ${reasonMsg[result.reason]}`,
-          );
-          return;
-        }
-
-        await fs.writeFile(target.fsPath, result.merged, "utf8");
-
-        await engine.resolveConflictKeepMine(workspaceId, posixRel);
-        notifiedConflictKeys.delete(`${workspaceId}:${posixRel}`);
-        resolved = true;
-
-        void vscode.window.showInformationMessage(
-          `✨ VSCodeSync: конфликт «${basename}» разрешён через AI. Версия запушена на облако.`,
-        );
-      },
+      async () => runAiMerge(baseText, localText, remoteText, posixRel),
     );
+
+    if (!result.ok) {
+      const reasonMsg: Record<string, string> = {
+        disabled: "AI merge отключён (vscodesync.aiMerge.enabled: false).",
+        no_model: "Нет доступной языковой модели. Активируйте GitHub Copilot.",
+        too_large: result.detail ?? "Файл слишком большой для AI merge.",
+        model_refused: result.detail ?? "Модель не смогла разрешить конфликт. Разрешите вручную.",
+        error: result.detail ?? "Ошибка AI merge.",
+      };
+      await vscode.window.showWarningMessage(`VSCodeSync AI Merge: ${reasonMsg[result.reason]}`);
+      return;
+    }
+
+    const summary = summarizeAiMergeDiff(localText, result.merged);
+    if (summary.identical) {
+      await vscode.window.showInformationMessage(
+        `VSCodeSync AI Merge: модель вернула локальную версию без изменений — конфликт «${basename}» не тронут.`,
+      );
+      return;
+    }
+
+    // Stage the model's answer and let the user look at it before it becomes
+    // their file. Nothing on disk changes until "Применить".
+    const backupCfg = readLocalBackupSettings(target.root);
+    const previewPath = aiMergePreviewPath(
+      target.root,
+      backupCfg.backupDir,
+      posixRel,
+      Date.now(),
+    );
+    await fs.mkdir(path.dirname(previewPath), { recursive: true });
+    await fs.writeFile(previewPath, result.merged, "utf8");
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      vscode.Uri.file(target.fsPath),
+      vscode.Uri.file(previewPath),
+      `${basename}: локальная ↔ AI merge`,
+    );
+
+    const apply = await vscode.window.showInformationMessage(
+      `VSCodeSync AI Merge «${basename}»: +${String(summary.addedLines)} / −${String(summary.removedLines)} строк. Применить результат к локальному файлу?`,
+      { modal: true },
+      "Применить",
+    );
+    if (apply !== "Применить") {
+      void vscode.window.showInformationMessage(
+        `VSCodeSync AI Merge: отклонено. Результат остался в ${path.relative(target.root, previewPath)}.`,
+      );
+      return;
+    }
+
+    if (backupCfg.enabled) {
+      await backupExistingUserFile({
+        absPath: target.fsPath,
+        workspaceRoot: target.root,
+        posixRel,
+        retentionDays: backupCfg.retentionDays,
+        backupDir: backupCfg.backupDir,
+      });
+    }
+    await writeFileAtomic(target.fsPath, result.merged);
+    await fs.rm(previewPath, { force: true });
+    resolved = true;
+
+    // Merging and publishing are separate decisions: the merged file may still
+    // need a human pass before the other machines see it.
+    const push = await vscode.window.showInformationMessage(
+      `✨ VSCodeSync: «${basename}» смёржен локально. Отправить эту версию в облако и снять конфликт?`,
+      { modal: true },
+      "Отправить",
+      "Позже",
+    );
+    if (push !== "Отправить") {
+      return;
+    }
+    const pushed = await keepMineWithCloudMovedPrompt(
+      (opts) => engine.resolveConflictKeepMine(workspaceId, posixRel, opts),
+      posixRel,
+    );
+    if (pushed) {
+      notifiedConflictKeys.delete(`${workspaceId}:${posixRel}`);
+      void vscode.window.showInformationMessage(
+        `✨ VSCodeSync: конфликт «${basename}» разрешён — версия отправлена в облако.`,
+      );
+    }
   }, target.root);
 
   return resolved;

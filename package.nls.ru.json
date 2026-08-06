@@ -207,6 +207,7 @@
   "cfg.batchAddWarnThreshold.description": "Порог количества файлов для предупреждения при пакетном добавлении",
   "cfg.pushOnCommit.description": "После git-коммита пересчитать статусы затронутых воркспейсов. Отправка файлов — всегда ваше явное действие.",
   "cfg.localBackupEnabled.description": "Локальный бэкап перед перезаписью при pull",
+  "cfg.p2p.acceptIncomingFiles.description": "Принимать файлы от P2P-пиров. Входящие ждут в .vscode/vscodesync-incoming, пока вы их не примените; при выключенной настройке сессия их игнорирует.",
   "cfg.localBackupRetentionDays.description": "Сколько дней хранить файлы в vscodesync-local-backup",
   "cfg.snapshotRetentionDays.description": "TTL снапшотов workspace в облаке (дней)",
   "cfg.tombstonePurgeDays.description": "Сколько дней метка удаления (tombstone) живёт в манифесте. Машина, пробывшая офлайн дольше, теряет отслеживание файлов, удалённых на другой машине.",

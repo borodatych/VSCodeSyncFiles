@@ -133,6 +133,7 @@
 | `vscodesync.quickTransferTtlDays` | `7` | Срок хранения файлов быстрой передачи в облаке |
 | `vscodesync.gitBranchAutoSync` | `true` | Переключать активный воркспейс при смене Git-ветки |
 | `vscodesync.p2p.experimental` | `false` | Включить P2P-сессии (WebRTC прямой канал) |
+| `vscodesync.p2p.acceptIncomingFiles` | `false` | Принимать файлы от пиров: входящие ждут в `.vscode/vscodesync-incoming` до вашего «Применить» |
 | `vscodesync.aiMerge.endpointModel` | `llama3.2` | Endpoint AI-merge: `vscode-lm` · `ollama` · `lm-studio` · custom URL |
 | `vscodesync.ai.sessionSummary.enabled` | `false` | Разрешить отправку метаданных для AI-сводки сессии |
 | `vscodesync.ai.suggestWorkspaceTags.enabled` | `false` | Разрешить AI-подсказку тегов воркспейса |

@@ -83,6 +83,16 @@ export interface TrackedFile {
   editingBy?: string;
   /** Human-readable machine name for the soft lock owner (for tooltip). */
   editingByName?: string;
+  /**
+   * Canonical hash of the cloud version at the moment the conflict was flagged.
+   *
+   * "Keep Mine" overwrites the cloud copy; without this the engine could not
+   * tell apart "the cloud version the user chose to discard" from "a newer
+   * version another machine pushed after the conflict was raised". Undefined
+   * when the conflict came from a 412 during upload — the cloud side was never
+   * read there.
+   */
+  conflictCloudHash?: string;
 }
 
 export interface WorkspaceConfig {

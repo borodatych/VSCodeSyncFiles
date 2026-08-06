@@ -4,10 +4,12 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MockCloudProvider } from "../../src/providers/mockCloudProvider.js";
 import {
+  applyQuickTransferReceive,
   isQueuedQuickTransferSendExpired,
   listIncomingQuickTransfers,
+  prepareQuickTransferReceive,
   quickTransferMetaPath,
-  receiveQuickTransferPackage,
+  quickTransferSideBySidePath,
   sendQuickTransferFile,
 } from "../../src/core/quickTransfer.js";
 
@@ -40,7 +42,9 @@ describe("QuickTransfer", () => {
       expect(only.transferId.length).toBeGreaterThan(0);
       expect(only.meta.fromMachineName).toBe("home");
 
-      await receiveQuickTransferPackage(provider, only.transferId, rootB, "");
+      const prepared = await prepareQuickTransferReceive(provider, only.transferId, rootB, "");
+      expect(prepared.destExists).toBe(false);
+      await applyQuickTransferReceive(provider, prepared, "overwrite", { workspaceRoot: rootB });
       await expect(fs.readFile(path.join(rootB, "note.txt"), "utf8")).resolves.toBe("hello-qt\n");
 
       const after = await listIncomingQuickTransfers(provider, "m-b");
@@ -49,6 +53,76 @@ describe("QuickTransfer", () => {
       await fs.rm(rootA, { recursive: true, force: true });
       await fs.rm(rootB, { recursive: true, force: true });
     }
+  });
+
+  it("существующий файл: destExists=true, режим side-by-side не трогает оригинал", async () => {
+    const provider = new MockCloudProvider("onedrive");
+    const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-qt-sa-"));
+    const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-qt-sb-"));
+    try {
+      await fs.writeFile(path.join(rootA, "note.txt"), "incoming\n", "utf8");
+      await fs.writeFile(path.join(rootB, "note.txt"), "mine\n", "utf8");
+      await sendQuickTransferFile(provider, {
+        machineId: "m-a",
+        machineName: "a",
+        ttlDays: 7,
+        absolutePath: path.join(rootA, "note.txt"),
+        projectRelativePosix: "note.txt",
+      });
+      const [only] = await listIncomingQuickTransfers(provider, "m-b");
+      const prepared = await prepareQuickTransferReceive(provider, only.transferId, rootB, "");
+      expect(prepared.destExists).toBe(true);
+
+      const r = await applyQuickTransferReceive(provider, prepared, "side-by-side", {
+        workspaceRoot: rootB,
+      });
+      await expect(fs.readFile(path.join(rootB, "note.txt"), "utf8")).resolves.toBe("mine\n");
+      await expect(fs.readFile(path.join(rootB, r.savedTo), "utf8")).resolves.toBe("incoming\n");
+      expect(r.savedTo).toMatch(/^note\.incoming-.*\.txt$/);
+    } finally {
+      await fs.rm(rootA, { recursive: true, force: true });
+      await fs.rm(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("перезапись с бэкапом: старое содержимое остаётся в localBackupDir", async () => {
+    const provider = new MockCloudProvider("onedrive");
+    const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-qt-ba-"));
+    const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-qt-bb-"));
+    try {
+      await fs.writeFile(path.join(rootA, "note.txt"), "incoming\n", "utf8");
+      await fs.writeFile(path.join(rootB, "note.txt"), "mine\n", "utf8");
+      await sendQuickTransferFile(provider, {
+        machineId: "m-a",
+        machineName: "a",
+        ttlDays: 7,
+        absolutePath: path.join(rootA, "note.txt"),
+        projectRelativePosix: "note.txt",
+      });
+      const [only] = await listIncomingQuickTransfers(provider, "m-b");
+      const prepared = await prepareQuickTransferReceive(provider, only.transferId, rootB, "");
+      await applyQuickTransferReceive(provider, prepared, "overwrite", {
+        workspaceRoot: rootB,
+        backup: { retentionDays: 7, backupDir: ".backup" },
+      });
+      await expect(fs.readFile(path.join(rootB, "note.txt"), "utf8")).resolves.toBe("incoming\n");
+      const stamps = await fs.readdir(path.join(rootB, ".backup"));
+      expect(stamps).toHaveLength(1);
+      await expect(
+        fs.readFile(path.join(rootB, ".backup", stamps[0], "note.txt"), "utf8"),
+      ).resolves.toBe("mine\n");
+    } finally {
+      await fs.rm(rootA, { recursive: true, force: true });
+      await fs.rm(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("side-by-side имя: метка времени перед расширением", () => {
+    const p = quickTransferSideBySidePath("/w/a/note.txt", Date.parse("2026-08-06T10:20:30.000Z"));
+    expect(p).toBe("/w/a/note.incoming-2026-08-06T10-20-30Z.txt");
+    expect(quickTransferSideBySidePath("/w/a/LICENSE", Date.parse("2026-08-06T10:20:30.000Z"))).toBe(
+      "/w/a/LICENSE.incoming-2026-08-06T10-20-30Z",
+    );
   });
 
   it("не показывать входящие с чужим targetMachineId", async () => {

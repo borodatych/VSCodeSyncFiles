@@ -48,8 +48,22 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
             await engine.removeTrackedFiles(fileEntry.workspaceId, [fsPath]);
           }, root, { trigger: "user" });
         } else {
+          // Restore means "bring back the file the user just deleted" — not
+          // `pullAll`, which force-pulls the whole workspace past detectChange
+          // and silently overwrites unsynced edits in every other file (D6).
           await runWithEngine(async (engine) => {
-            await engine.pullAll(fileEntry.workspaceId);
+            const cfg = await WorkspaceConfigManager.load(root);
+            const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === fileEntry.workspaceId);
+            if (!entry) {
+              await vscode.window.showErrorMessage("VSCodeSync: workspace не найден в конфиге.");
+              return;
+            }
+            const result = await engine.pullFile(cfg, fileEntry.workspaceId, rel, entry);
+            void vscode.window.showInformationMessage(
+              result === "already_current"
+                ? `VSCodeSync: «${rel}» уже актуален.`
+                : `VSCodeSync: «${rel}» восстановлен из облака.`,
+            );
           }, root, { trigger: "user" });
         }
       }

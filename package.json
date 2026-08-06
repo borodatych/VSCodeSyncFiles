@@ -360,6 +360,11 @@
           "default": false,
           "description": "Enable experimental WebRTC P2P session (cloud-bypass mode). When off, the Start P2P Session command shows the planned wizard but does not open a DataChannel. Requires the optional @roamhq/wrtc binding to be loadable."
         },
+        "vscodesync.p2p.acceptIncomingFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.p2p.acceptIncomingFiles.description%"
+        },
         "vscodesync.aiMerge.endpoint": {
           "type": "string",
           "default": "vscode-lm",

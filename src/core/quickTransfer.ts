@@ -7,6 +7,8 @@ import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
 import { trackedLocalAbsolutePath } from "./pathMapping.js";
 import { rejectIfSecondaryWorkspaceInstanceReadOnly } from "./syncWorkspaceInstanceReadOnly.js";
+import { backupExistingUserFile } from "./localFileBackup.js";
+import { writeFileAtomic } from "./writeTextFileAtomic.js";
 
 export const QUICK_TRANSFER_ROOT = `${CLOUD_ROOT_DIR}/_quicktransfer`;
 
@@ -259,12 +261,30 @@ export async function deleteQuickTransferPackage(provider: ICloudProvider, trans
   await tryDel(quickTransferPayloadPath(transferId));
 }
 
-export async function receiveQuickTransferPackage(
+/**
+ * Everything needed to decide *how* to land an incoming package, with nothing
+ * written to disk yet. The receive flow used to be a single call that silently
+ * overwrote an existing local file and deleted the cloud package regardless of
+ * the outcome (D7); the decision now belongs to the caller.
+ */
+export interface PreparedQuickTransfer {
+  transferId: string;
+  meta: QuickTransferMeta;
+  /** Normalised POSIX path relative to the workspace root. */
+  relSafe: string;
+  destAbs: string;
+  destExists: boolean;
+  body: Buffer;
+}
+
+export type QuickTransferApplyMode = "overwrite" | "side-by-side";
+
+export async function prepareQuickTransferReceive(
   provider: ICloudProvider,
   transferId: string,
   workspaceRoot: string,
   machineName: string,
-): Promise<{ savedTo: string }> {
+): Promise<PreparedQuickTransfer> {
   const metaDl = await provider.downloadFile(quickTransferMetaPath(transferId));
   const meta = parseMetaBody(metaDl.body.toString("utf8"));
   if (!meta) {
@@ -280,9 +300,57 @@ export async function receiveQuickTransferPackage(
   }
   const cfg = await WorkspaceConfigManager.load(workspaceRoot);
   const body = await provider.downloadFile(quickTransferPayloadPath(transferId));
-  const dest = trackedLocalAbsolutePath(workspaceRoot, cfg.pathMapping, machineName, safe);
-  await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.writeFile(dest, body.body);
-  await deleteQuickTransferPackage(provider, transferId);
-  return { savedTo: safe };
+  const destAbs = trackedLocalAbsolutePath(workspaceRoot, cfg.pathMapping, machineName, safe);
+  let destExists = true;
+  try {
+    await fs.access(destAbs);
+  } catch {
+    destExists = false;
+  }
+  return { transferId, meta, relSafe: safe, destAbs, destExists, body: body.body };
+}
+
+/**
+ * Build the side-by-side name for an existing destination: the timestamp goes
+ * before the extension so the editor still recognises the file type.
+ */
+export function quickTransferSideBySidePath(destAbs: string, nowMs = Date.now()): string {
+  const stamp = new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+  const ext = path.extname(destAbs);
+  const base = ext === "" ? destAbs : destAbs.slice(0, -ext.length);
+  return `${base}.incoming-${stamp}${ext}`;
+}
+
+/**
+ * Write the prepared package to disk and only then drop the cloud package —
+ * a failed write used to lose the file on both sides.
+ */
+export async function applyQuickTransferReceive(
+  provider: ICloudProvider,
+  prepared: PreparedQuickTransfer,
+  mode: QuickTransferApplyMode,
+  opts: {
+    workspaceRoot: string;
+    /** Omit to skip the pre-overwrite copy (`localBackupEnabled: false`). */
+    backup?: { retentionDays?: number; backupDir?: string };
+  },
+): Promise<{ savedTo: string }> {
+  const target =
+    mode === "side-by-side" ? quickTransferSideBySidePath(prepared.destAbs) : prepared.destAbs;
+  if (mode === "overwrite" && prepared.destExists && opts.backup) {
+    await backupExistingUserFile({
+      absPath: prepared.destAbs,
+      workspaceRoot: opts.workspaceRoot,
+      posixRel: prepared.relSafe,
+      retentionDays: opts.backup.retentionDays,
+      backupDir: opts.backup.backupDir,
+    });
+  }
+  await writeFileAtomic(target, prepared.body);
+  await deleteQuickTransferPackage(provider, prepared.transferId);
+  // Derive the reported path from the tracked posix path, not from the absolute
+  // one: under a `pathMapping` the two differ, and the user thinks in the former.
+  const segments = prepared.relSafe.split("/");
+  segments[segments.length - 1] = path.basename(target);
+  return { savedTo: segments.join("/") };
 }

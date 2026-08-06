@@ -19,6 +19,7 @@ import {
 } from "../core/divergencePlan.js";
 import { openDivergencePanel, updateDivergencePanel } from "../ui/divergencePanel.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 
 export interface DivergencesCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -166,7 +167,11 @@ async function resolveConflict(deps: DivergencesCommandsDeps, row: DivergenceRow
   await deps.runWithEngine(
     async (engine) => {
       if (picked.id === "mine") {
-        await engine.resolveConflictKeepMine(row.workspaceId, row.posixRel);
+        await keepMineWithCloudMovedPrompt(
+          (opts) => engine.resolveConflictKeepMine(row.workspaceId, row.posixRel, opts),
+          row.posixRel,
+          () => openCompare(row),
+        );
       } else if (picked.id === "theirs") {
         await engine.resolveConflictTakeTheirs(row.workspaceId, row.posixRel);
       } else {

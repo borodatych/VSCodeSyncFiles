@@ -28,6 +28,7 @@ import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import { pickRoot } from "./_shared.js";
 import { resolveFileTarget } from "./_fileTargetHelpers.js";
 import { runAiMergeForConflict, runConflict3WayDiff } from "./_engineFlows.js";
+import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 export interface ConflictsCommandsDeps {
@@ -96,7 +97,14 @@ export function registerConflictsCommands(
         return;
       }
       await runWithEngine(async (engine) => {
-        await engine.resolveConflictKeepMine(fileEntry.workspaceId, rel);
+        const pushed = await keepMineWithCloudMovedPrompt(
+          (opts) => engine.resolveConflictKeepMine(fileEntry.workspaceId, rel, opts),
+          rel,
+          () => runConflict3WayDiffAt(target),
+        );
+        if (!pushed) {
+          return;
+        }
         void vscode.window.showInformationMessage(
           `Конфликт разрешён: оставлена локальная версия «${path.basename(target.fsPath)}».`,
         );
@@ -247,20 +255,33 @@ export function registerConflictsCommands(
 
       if (batchMode !== "manual") {
         await runWithEngine(async (engine) => {
+          let done = 0;
+          const skipped: string[] = [];
           for (const f of conflicts) {
             try {
               if (batchMode === "keepMineAll") {
-                await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+                // Batch mode answers for files the user never looked at, so a
+                // cloud copy that moved on is left alone instead of buried.
+                const r = await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+                if (r === "cloud_moved") {
+                  skipped.push(f.localPath);
+                  continue;
+                }
               } else {
                 await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
               }
+              done += 1;
               notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
             } catch {
               /* individual errors are non-fatal in batch */
             }
           }
           void vscode.window.showInformationMessage(
-            `VSCodeSync: разрешено ${String(conflicts.length)} конфликтов (${batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs"}).`,
+            `VSCodeSync: разрешено ${String(done)} из ${String(conflicts.length)} конфликтов (${batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs"}).${
+              skipped.length > 0
+                ? ` Пропущено (облако ушло вперёд): ${skipped.join(", ")} — разрешите вручную.`
+                : ""
+            }`,
           );
         });
         return;
@@ -300,15 +321,24 @@ export function registerConflictsCommands(
             }
             continue;
           }
+          let ok = true;
           await runWithEngine(async (engine) => {
             if (choice === "Keep Mine") {
-              await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+              const fsPath = path.join(root, ...f.localPath.split("/"));
+              ok = await keepMineWithCloudMovedPrompt(
+                (opts) => engine.resolveConflictKeepMine(f.workspaceId, f.localPath, opts),
+                f.localPath,
+                () => runConflict3WayDiffAt({ root, fsPath }),
+              );
             } else {
               await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
             }
-            notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
+            if (ok) {
+              notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
+            }
           });
-          resolved = true;
+          // Not resolved → the same file comes round again in this loop.
+          resolved = ok;
         }
       }
     }),

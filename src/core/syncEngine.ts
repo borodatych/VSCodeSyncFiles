@@ -26,7 +26,7 @@ import {
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot } from "./snapshotsEngine.js";
-import { planLocalBackupRetention } from "./localBackupRetentionPlan.js";
+import { backupLocalWithPrune, LOCAL_BACKUP_DIR_DEFAULT } from "./localFileBackup.js";
 import { mergeMetaEntries } from "./metaMerge.js";
 import { detectChange, type ChangeAction } from "./changeDetection.js";
 import { parallelLimit } from "./parallelLimit.js";
@@ -80,7 +80,6 @@ const LAST_SYNC_REFRESH_THROTTLE_MS = 5 * 60_000;
  * Minimal glob matcher for conflict rules.
  * Supports `*` (within one path segment) and `**` (any depth).
  */
-const LOCAL_BACKUP_DIR_DEFAULT = path.join(".vscode", "vscodesync-local-backup");
 
 /** Soft lock (`ManifestFile.editingSince`) older than this is stale (Health Check / repair). */
 export const STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT = 3 * 3600_000;
@@ -2724,8 +2723,17 @@ export class SyncEngine {
 
   /**
    * Resolve a conflict by keeping the local (mine) version: push local file to cloud, clear conflict status.
+   *
+   * Returns `"cloud_moved"` — without touching the cloud — when the cloud copy
+   * is no longer the one recorded when the conflict was flagged: that content
+   * was never shown to the user, and "Keep Mine" would bury it (D5). Pass
+   * `force` after the user has been told and still wants the local version.
    */
-  async resolveConflictKeepMine(workspaceId: string, posixRel: string): Promise<void> {
+  async resolveConflictKeepMine(
+    workspaceId: string,
+    posixRel: string,
+    opts?: { force?: boolean },
+  ): Promise<"pushed" | "cloud_moved" | "not_conflicting"> {
     this.assertMayMutate("resolveConflictKeepMine");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
@@ -2735,15 +2743,45 @@ export class SyncEngine {
       throw new Error(`not tracked: ${posixRel}`);
     }
     if (file.syncStatus !== "conflict") {
-      return;
+      return "not_conflicting";
     }
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
       throw new Error("workspace not active");
     }
+    if (opts?.force !== true && (await this.cloudMovedSinceConflict(file))) {
+      return "cloud_moved";
+    }
     file.syncStatus = "ok";
+    file.conflictCloudHash = undefined;
     await this.pushFile(cfg, workspaceId, posixRel, entry, { asAutoResolvedKeepMine: true });
     await this.saveCfg(cfg);
+    // A 412 inside `pushFile` re-flags the conflict: the cloud moved between
+    // the check above and the upload. Report that instead of claiming success.
+    // Re-read through the config so we see what `pushFile` actually left.
+    const after = this.findTracked(cfg, workspaceId, posixRel);
+    return after?.syncStatus === "conflict" ? "cloud_moved" : "pushed";
+  }
+
+  /**
+   * True when the cloud blob differs from what it was when the conflict was
+   * raised. An unknown baseline (412 path) or an unreadable cloud copy answers
+   * `false` — this check may warn, never block on its own uncertainty.
+   */
+  private async cloudMovedSinceConflict(file: TrackedFile): Promise<boolean> {
+    const baseline = file.conflictCloudHash;
+    if (baseline === undefined || baseline === "") {
+      return false;
+    }
+    try {
+      const meta = await this.pullMeta(file.workspaceId, undefined);
+      const dl = await this.deps.provider.downloadFile(file.cloudPath);
+      const buf = this.decodeCloudBlob(dl.body, meta.files[file.localPath]?.wireGzip === true);
+      const current = hashCanonicalBuffer(buf, file.localPath, this.hashCfg(file.localPath));
+      return current !== baseline;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -3450,6 +3488,7 @@ export class SyncEngine {
         return;
       }
       file.syncStatus = "conflict";
+      file.conflictCloudHash = cloudCurrent;
       await this.persistMutatedCfg(cfg);
       if (this.deps.onNewConflict) {
         const isBin = await fileLooksBinary(this.localAbs(cfg, file.localPath)).catch(() => false);
@@ -3655,6 +3694,7 @@ export class SyncEngine {
       return false;
     }
     file.syncStatus = "conflict";
+    file.conflictCloudHash = cloudCurrent;
     await this.persistMutatedCfg(cfg);
     if (this.deps.onNewConflict) {
       const isBin = await fileLooksBinary(this.localAbs(cfg, file.localPath)).catch(() => false);
@@ -4103,6 +4143,9 @@ export class SyncEngine {
       } catch (e) {
         if (e instanceof ProviderError && e.code === "PRECONDITION_FAILED") {
           file.syncStatus = "conflict";
+          // 412 during upload: the cloud side was never downloaded here, so we
+          // have no hash to compare a later "Keep Mine" against.
+          file.conflictCloudHash = undefined;
           if (this.deps.onNewConflict) {
             const isBin = await fileLooksBinary(this.localAbs(cfg, posixRel)).catch(() => false);
             this.deps.onNewConflict(workspaceId, ent.workspaceNote, posixRel, isBin);
@@ -4510,84 +4553,3 @@ async function fileExists(p: string): Promise<boolean> {
  * folders and the retention set grew while the very pass that reads it was
  * still running.
  */
-function localBackupStamp(nowMs: number): string {
-  return new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
-}
-
-/** Recover the creation time from a folder name written by {@link localBackupStamp}. */
-function parseLocalBackupStamp(name: string): number | undefined {
-  const iso = name.replace(
-    /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})Z$/,
-    (_m, d: string, h: string, mi: string, s: string) => `${d}${h}:${mi}:${s}Z`,
-  );
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : undefined;
-}
-
-/**
- * Last prune per backup root. Pruning used to run once **per pulled file**:
- * `readdir` plus a `stat` for every existing folder, sequentially, on the
- * extension host thread, inside `.vscode/` where VS Code's own watcher is
- * listening. With 1500 folders accumulated a 500-file pull meant on the order
- * of 10^5–10^6 stat calls for work that only needs doing occasionally.
- */
-const lastLocalBackupPruneMs = new Map<string, number>();
-const LOCAL_BACKUP_PRUNE_INTERVAL_MS = 5 * 60_000;
-
-async function backupLocalWithPrune(
-  localFileAbs: string,
-  workspaceRoot: string,
-  posixRelMirror: string,
-  retentionDays: number,
-  backupDir: string,
-): Promise<void> {
-  const src = localFileAbs;
-  const now = Date.now();
-  const dest = path.join(
-    workspaceRoot,
-    backupDir,
-    localBackupStamp(now),
-    ...posixRelMirror.split("/"),
-  );
-  await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.copyFile(src, dest);
-  if (retentionDays <= 0) return;
-
-  const root = path.join(workspaceRoot, backupDir);
-  const last = lastLocalBackupPruneMs.get(root) ?? 0;
-  if (now - last < LOCAL_BACKUP_PRUNE_INTERVAL_MS) return;
-  lastLocalBackupPruneMs.set(root, now);
-  await pruneLocalBackups(workspaceRoot, retentionDays, backupDir);
-}
-
-async function pruneLocalBackups(workspaceRoot: string, retentionDays: number, backupDir: string): Promise<void> {
-  const root = path.join(workspaceRoot, backupDir);
-  let dirents: Awaited<ReturnType<typeof fs.readdir>> | { name: string; isDirectory: () => boolean }[];
-  try {
-    dirents = await fs.readdir(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  const entries: { name: string; mtimeMs: number; isDirectory: boolean }[] = [];
-  for (const d of dirents as { name: string; isDirectory: () => boolean }[]) {
-    const name = d.name;
-    const isDirectory = d.isDirectory();
-    // The folder name carries its own timestamp, so the usual case needs no
-    // `stat` at all; only names we cannot parse fall back to one.
-    const fromName = parseLocalBackupStamp(name);
-    if (fromName !== undefined) {
-      entries.push({ name, mtimeMs: fromName, isDirectory });
-      continue;
-    }
-    try {
-      const st = await fs.stat(path.join(root, name));
-      entries.push({ name, mtimeMs: st.mtimeMs, isDirectory: st.isDirectory() });
-    } catch {
-      /* skip — disappeared between readdir and stat */
-    }
-  }
-  const plan = planLocalBackupRetention({ entries, retentionDays });
-  await Promise.all(
-    plan.delete.map((name) => fs.rm(path.join(root, name), { recursive: true, force: true })),
-  );
-}
