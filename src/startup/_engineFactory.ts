@@ -102,6 +102,11 @@ export interface EngineFactory {
     machineId: string,
     machineName: string,
     trigger: SyncTrigger,
+    /**
+     * Cancellation for this operation (A5). Optional because most callers are
+     * not cancellable and never were; omitting it keeps their behaviour.
+     */
+    opts?: { abortSignal?: AbortSignal },
   ) => SyncEngine;
   /**
    * Re-read the encryption key into the factory cache. Must be awaited during
@@ -233,6 +238,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
     machineId: string,
     machineName: string,
     trigger: SyncTrigger,
+    opts?: { abortSignal?: AbortSignal },
   ): SyncEngine {
     const cfg = vscode.workspace.getConfiguration(CFG_SECTION);
     const mb = cfg.get<number>("maxFileSizeMB", 5);
@@ -252,6 +258,7 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       machineId,
       machineName,
       trigger,
+      abortSignal: opts?.abortSignal,
       maxFileSizeBytes: maxB > 0 ? maxB : undefined,
       // VSCodeSync v1 supports UTF-8 only; surface BOM / invalid UTF-8.
       encodingLint: true,

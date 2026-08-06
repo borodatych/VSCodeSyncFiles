@@ -176,9 +176,9 @@ export class DropboxProvider implements ICloudProvider {
    * or 429 killed a push outright, while the same blip on OneDrive/Drive was
    * absorbed by three attempts. Users read that as "Dropbox is flaky".
    */
-  private async apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  private async apiFetch(url: string, init?: RequestInit, signal?: AbortSignal): Promise<Response> {
     return withRetry(
-      { op: "dropbox.apiFetch", maxAttempts: 3, initialDelayMs: 500 },
+      { op: "dropbox.apiFetch", maxAttempts: 3, initialDelayMs: 500, signal },
       async (): Promise<Response> => {
         let r: Response;
         try {
@@ -189,6 +189,7 @@ export class DropboxProvider implements ICloudProvider {
               fetchWithTimeout(url, i, {
                 channel: "dropbox.fetch",
                 timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+                signal,
               }),
             forceRefresh: () => this.forceRefreshAccessToken(),
           });
@@ -280,7 +281,7 @@ export class DropboxProvider implements ICloudProvider {
         "Dropbox-API-Arg": JSON.stringify(apiArg),
       },
       body: new Uint8Array(content),
-    });
+    }, options?.signal);
 
     if (!r.ok) {
       const t = await r.text();
@@ -396,7 +397,7 @@ export class DropboxProvider implements ICloudProvider {
         Authorization: `Bearer ${token}`,
         "Dropbox-API-Arg": JSON.stringify(apiArg),
       },
-    });
+    }, options?.signal);
     if (r.status === 409 || r.status === 404) {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }

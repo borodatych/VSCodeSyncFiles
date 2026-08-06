@@ -64,10 +64,17 @@ export interface FileMetadata {
 
 export interface UploadOptions {
   ifMatch?: string;
+  /**
+   * Cancellation for this transfer (A5). Data-plane calls are the ones worth
+   * interrupting: they carry the bytes and hold the longest timeout.
+   */
+  signal?: AbortSignal;
 }
 
 export interface DownloadOptions {
   ifNoneMatch?: string;
+  /** Cancellation for this transfer (A5). */
+  signal?: AbortSignal;
 }
 
 export interface UploadResult {

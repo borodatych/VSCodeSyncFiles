@@ -77,6 +77,16 @@ export interface EnginePorts {
    * is `pending` until manually approved on another machine.
    */
   isTrustedTeammate?: (machineId: string) => boolean;
+  /**
+   * Cancellation for this operation (A5).
+   *
+   * The engine is built per operation (`makeEngine` runs inside every
+   * `runWithEngine`), so a signal here scopes to exactly one user action. It is
+   * checked between files and passed to every upload and download, which are
+   * the calls long enough to be worth interrupting. Absent means "not
+   * cancellable" — the behaviour every caller had before.
+   */
+  abortSignal?: AbortSignal;
 }
 
 

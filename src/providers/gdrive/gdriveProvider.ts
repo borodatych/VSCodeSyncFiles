@@ -219,13 +219,13 @@ export class GdriveProvider implements ICloudProvider {
     return classifyProviderHttpError({ provider: "Google Drive", status, bodyText, retryAfter });
   }
 
-  private async driveFetch(url: string, init?: RequestInit): Promise<Response> {
+  private async driveFetch(url: string, init?: RequestInit, signal?: AbortSignal): Promise<Response> {
     // v0.17 D03 — uniform retry envelope; `inspectProviderResponse` decides
     // what the envelope is allowed to see (E8: Drive reports throttling as a
     // 403 with a reason in the body, which the old 429/503-only check missed
     // entirely, so the retry never fired and the rate-limit gate never armed).
     return withRetry(
-      { op: "gdrive.driveFetch", maxAttempts: 3, initialDelayMs: 500 },
+      { op: "gdrive.driveFetch", maxAttempts: 3, initialDelayMs: 500, signal },
       async (): Promise<Response> => {
         let r: Response;
         try {
@@ -238,6 +238,7 @@ export class GdriveProvider implements ICloudProvider {
               fetchWithTimeout(url, i, {
                 channel: "gdrive.fetch",
                 timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+                signal,
               }),
             forceRefresh: () => this.forceRefreshAccessToken(),
           });
@@ -465,7 +466,7 @@ export class GdriveProvider implements ICloudProvider {
         method: "PATCH",
         headers,
         body: new Uint8Array(content),
-      });
+      }, options?.signal);
       if (r.status === 412) {
         throw new ProviderError("PRECONDITION_FAILED", "If-Match failed on Google Drive");
       }
@@ -489,7 +490,7 @@ export class GdriveProvider implements ICloudProvider {
       // Cast through unknown: our Uint8Array view is fine at runtime; lib.dom
       // declares BodyInit narrower than the current @types/node Buffer.
       body: new Uint8Array(body.buffer, body.byteOffset, body.byteLength) as unknown as BodyInit,
-    });
+    }, options?.signal);
     if (!r.ok) {
       throw await this.classifyResponse(r);
     }
@@ -510,7 +511,7 @@ export class GdriveProvider implements ICloudProvider {
     if (options?.ifNoneMatch) {
       headers["If-None-Match"] = options.ifNoneMatch;
     }
-    const r = await this.driveFetch(`${DRIVE}/files/${item.id}?alt=media`, { headers });
+    const r = await this.driveFetch(`${DRIVE}/files/${item.id}?alt=media`, { headers }, options?.signal);
     if (r.status === 304) {
       return {
         body: Buffer.alloc(0),

@@ -63,6 +63,7 @@ import {
 import { fileLooksBinary } from "../utils/binaryDetect.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
 import { planTrackingDiff } from "./plan/planTrackingDiff.js";
+import { throwIfAborted } from "./operationCancelled.js";
 import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
@@ -367,6 +368,16 @@ export class SyncEngine {
    * to move data. The policy is imported, not injected — see `syncPolicy.ts`.
    */
   /** Non-throwing form, for the few places that skip work instead of failing. */
+  /** Cancellation for this operation, when the caller supplied one (A5). */
+  private get abortSignal(): AbortSignal | undefined {
+    return this.deps.abortSignal;
+  }
+
+  /** Stop between units of work rather than after everything in flight. */
+  private assertNotCancelled(op: string): void {
+    throwIfAborted(this.abortSignal, op);
+  }
+
   private mayMutate(op: MutationOp): boolean {
     return mutationPolicy(op, this.deps.trigger) === "allow";
   }
@@ -1941,7 +1952,7 @@ export class SyncEngine {
         compressUploads: this.deps.compressUploads,
       });
       const cloudPath = encoded.cloudPath;
-      const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body);
+      const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body, { signal: this.abortSignal });
       this.emitTransfer({ direction: "upload", bytes: encoded.body.length });
       const hash = await computeHash(abs, this.hashCfg(posixRel));
       const prev = meta.files[posixRel];
@@ -2246,7 +2257,7 @@ export class SyncEngine {
     // Copy blob: download old, upload to new path. Bytes are moved in their
     // wire form on purpose — no decode/re-encode, so no key is needed here.
     try {
-      const dl = await this.deps.provider.downloadFile(oldCloudPath);
+      const dl = await this.deps.provider.downloadFile(oldCloudPath, { signal: this.abortSignal });
       await this.deps.provider.uploadFile(newCloudPath, dl.body, undefined);
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -2498,7 +2509,7 @@ export class SyncEngine {
     }
     try {
       const meta = await this.pullMeta(file.workspaceId, undefined);
-      const dl = await this.deps.provider.downloadFile(file.cloudPath);
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
       const buf = this.decodeCloudBlob(dl.body, meta.files[file.localPath]?.wireGzip === true);
       const current = hashCanonicalBuffer(buf, file.localPath, this.hashCfg(file.localPath));
       return current !== baseline;
@@ -2906,6 +2917,9 @@ export class SyncEngine {
       await parallelLimit(
         trackedFiles,
         async (file) => {
+          // Cancellation lands between files (A5): the request in flight
+          // finishes, nothing new starts.
+          this.assertNotCancelled(checkOnly ? "проверка расхождений" : "синхронизация");
           const m = manifest.files.find((x) => x.path === file.localPath && !x.removedAt);
           if (!m) return;
           if (file.syncStatus === "conflict") return;
@@ -2952,7 +2966,7 @@ export class SyncEngine {
     const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
     let cloudCurrent = "";
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag });
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
@@ -3028,7 +3042,7 @@ export class SyncEngine {
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag });
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
@@ -3256,7 +3270,7 @@ export class SyncEngine {
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath);
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
       cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
       cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
     } catch (e) {
@@ -3362,6 +3376,7 @@ export class SyncEngine {
     await parallelLimit(
       ids,
       async (id, idx) => {
+        this.assertNotCancelled("отправка в облако");
         const note =
           cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote ?? id;
         onProgress?.({
@@ -3406,6 +3421,7 @@ export class SyncEngine {
           await parallelLimit(
             dirtyFiles,
             async (f) => {
+              this.assertNotCancelled("отправка в облако");
               // Per-file isolation: one unreadable or vanished file must not
               // abort the other files of the same workspace.
               try {
@@ -3458,6 +3474,7 @@ export class SyncEngine {
     await parallelLimit(
       ids,
       async (id) => {
+        this.assertNotCancelled("скачивание из облака");
         await this.forcePullWorkspace(id);
       },
       { concurrency: workspaceConcurrency },
@@ -3532,6 +3549,7 @@ export class SyncEngine {
       await parallelLimit(
         trackedFiles,
         async (file) => {
+          this.assertNotCancelled("скачивание из облака");
           if (file.syncStatus === "conflict") return;
           // Intentionally no soft-lock skip: manual pull overrides editingBy
           await this.pullFile(cfgSync, workspaceId, file.localPath, freshEntry);
@@ -3650,7 +3668,7 @@ export class SyncEngine {
       let etag = prevEtagLocked;
       const networkStartMs = this.deps.onSyncProfileSample ? Date.now() : 0;
       try {
-        const res = await this.deps.provider.uploadFile(uploadCloudPath, uploadBuf, { ifMatch: ifMatchBlob });
+        const res = await this.deps.provider.uploadFile(uploadCloudPath, uploadBuf, { ifMatch: ifMatchBlob, signal: this.abortSignal });
         etag = res.etag ?? etag;
         const networkMs = this.deps.onSyncProfileSample ? Date.now() - networkStartMs : 0;
         // v0.7 — verifyUploadHash setting gate. Default `plaintext-only`
@@ -4079,9 +4097,9 @@ export class SyncEngine {
     if (!norm.startsWith(prefix)) {
       throw new Error("not a history path for this file");
     }
-    let dl = await this.deps.provider.downloadFile(norm);
+    let dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
     if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(norm);
+      dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
     }
     return this.decodeCloudBlob(dl.body, wireGzip);
   }
@@ -4101,9 +4119,9 @@ export class SyncEngine {
     const row = meta.files[posixRel];
     const wireGzip = row?.wireGzip === true;
     const path = blobCloudPath(hit.workspaceId, posixRel, wireGzip);
-    let dl = await this.deps.provider.downloadFile(path);
+    let dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
     if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(path);
+      dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
     }
     return { body: this.decodeCloudBlob(dl.body, wireGzip) };
   }

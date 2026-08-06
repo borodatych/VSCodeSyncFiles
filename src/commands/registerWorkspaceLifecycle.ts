@@ -42,6 +42,12 @@ export type RunWithEngineFn = (
   options?: {
     showErrorDialog?: boolean;
     /**
+     * Run inside a cancellable progress notification with this title (A5).
+     * The Cancel button aborts the engine's loops and the in-flight request;
+     * omitted means the operation is not cancellable, as before.
+     */
+    cancellable?: string;
+    /**
      * Mutation trigger for the engine this wrapper builds (F2). Omitted means
      * `"user"`, which is the wrapper's contract: it exists to serve palette
      * commands and menu items, all of which are a human acting.

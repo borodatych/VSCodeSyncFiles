@@ -66,7 +66,7 @@
   - [x] `vscodesync.tombstonePurgeDays` объявлена и проведена в deps движка.
   - [x] Support bundle пишет все 7 заявленных файлов вместо 2 и все 98 настроек
         вместо 9; добавлен `runtime-state.json` со снимком очередей и файловых локов.
-- [~] **Этап 1. Зависания** — ✅ кроме сквозного `AbortSignal` (план разрешает его после этапа 2)
+- [x] **Этап 1. Зависания** — ✅ полностью (сквозной `AbortSignal` закрыт 2026-08-06)
   - [x] `fetchWithTimeout` снимал таймер на заголовках — тело качалось без дедлайна вовсе;
         собственная копия дефекта у Яндекса удалена.
   - [x] `RequestQueue`: было `concurrency = 1`, `timeoutMs = 0` — сторож не создавался,
@@ -91,7 +91,22 @@
         оба device-code входа и обмен кода на токен во всех трёх провайдерах.
   - [x] `deleteCloudFolderRecursive`: `FileMetadata.isFolder` заполняется всеми четырьмя
         провайдерами вместо пробного `listFolder` на каждый объект.
-  - [ ] Сквозной `AbortSignal` до `ICloudProvider` и `cancellable: true`.
+  - [x] **Сквозной `AbortSignal` (A5)** — ✅ (2026-08-06, ветка `next`).
+        `core/operationCancelled.ts`: `OperationCancelledError`, `throwIfAborted`,
+        `isAborted`, `isCancellation`, `sleepUnlessAborted`. Путь сигнала:
+        команда → `runWithEngine({ cancellable })` → `withProgress` с рабочей
+        кнопкой «Отмена» → `EnginePorts.abortSignal` → циклы движка (между
+        файлами и между воркспейсами в `pushAll`/`pullAll`/`syncWorkspace`/
+        детекторе) → `UploadOptions.signal` / `DownloadOptions.signal` →
+        обёртки четырёх провайдеров → `withRetry` → `fetchWithTimeout`, который
+        умел принимать сигнал с самого начала, но никто его не передавал.
+        Бэкофф между попытками прерывается отменой, а не досыпает до конца.
+        `Retry-After` ограничен сверху 60 с (`MAX_HONOURED_RETRY_AFTER_MS`):
+        просьба провайдера подождать минуты больше не превращает одну команду
+        в многоминутную заморозку — операция завершается, а паузу держит
+        rate-limit-гейт. Отмена не считается ошибкой: `runWithEngine` показывает
+        «операция отменена», а не диалог сбоя. Команды с отменой: Push All,
+        Pull All, Push/Pull/Sync workspace. 8 тестов.
 - [x] **Этап 2. Корректность push/pull** — ✅ (2026-07-30, ветка `next`)
   - [x] **Ключ шифрования.** Параметр `encKey` удалён из `makeEngine` целиком — фабрика
         владеет ключом сама (`registerEncryptionKeyRefresh`: прогрев при активации,

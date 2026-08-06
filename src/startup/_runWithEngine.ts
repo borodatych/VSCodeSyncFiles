@@ -22,6 +22,7 @@ import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { verboseLog } from "../utils/log.js";
+import { isCancellation } from "../core/operationCancelled.js";
 
 export interface RunWithEngineDeps {
   registry: ProviderRegistry;
@@ -35,6 +36,7 @@ export interface RunWithEngineDeps {
     machineId: string,
     machineName: string,
     trigger: SyncTrigger,
+    opts?: { abortSignal?: AbortSignal },
   ) => SyncEngine;
 }
 
@@ -44,7 +46,7 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
   return async (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
     workspaceRoot?: string,
-    options?: { showErrorDialog?: boolean; trigger?: SyncTrigger },
+    options?: { showErrorDialog?: boolean; trigger?: SyncTrigger; cancellable?: string },
   ): Promise<void> => {
     const n = ++seq;
     verboseLog("rwe", `#${String(n)} START fn=${fn.name || "(anon)"}`);
@@ -61,11 +63,39 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
     // This wrapper is the command path, so "user" is its contract, not a
     // convenience default — see the option's doc comment. Non-command callers
     // (the task provider) pass their own trigger.
-    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, options?.trigger ?? "user");
+    // `cancellable` turns this into a progress notification with a working
+    // Cancel button (A5): the token becomes an AbortSignal that reaches the
+    // engine's loops and the provider's fetches. Without it nothing changes —
+    // the operation runs exactly as before.
+    const ac = options?.cancellable === undefined ? undefined : new AbortController();
+    const engine = makeEngine(
+      root,
+      provider,
+      cfg.machineId,
+      cfg.machineName,
+      options?.trigger ?? "user",
+      { abortSignal: ac?.signal },
+    );
     statusBar.setSyncing(true);
     let failure: unknown;
     try {
-      await fn(engine, root, globalConfig);
+      if (options?.cancellable !== undefined && ac) {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: options.cancellable,
+            cancellable: true,
+          },
+          async (_progress, token) => {
+            token.onCancellationRequested(() => {
+              ac.abort();
+            });
+            await fn(engine, root, globalConfig);
+          },
+        );
+      } else {
+        await fn(engine, root, globalConfig);
+      }
     } catch (e: unknown) {
       failure = e;
     } finally {
@@ -85,6 +115,11 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
     }
 
     if (failure === undefined) return;
+    // The user pressing Cancel is an outcome, not an error to apologise for.
+    if (isCancellation(failure)) {
+      void vscode.window.showInformationMessage("VSCodeSync: операция отменена.");
+      return;
+    }
     if (options?.showErrorDialog === false) throw toError(failure);
     // Fire-and-forget: the dialog only offers a follow-up action, so the
     // command promise must not hang on the user reading it.

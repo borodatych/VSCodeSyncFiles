@@ -22,6 +22,7 @@
 
 import { ExponentialBackoff } from "./exponentialBackoff.js";
 import { ProviderError, type ProviderErrorCode } from "../providers/cloudProviderTypes.js";
+import { isAborted, sleepUnlessAborted } from "./operationCancelled.js";
 
 export interface WithRetryOptions {
   /** Logical label for diagnostics — e.g. `"gdrive.uploadFile"`. */
@@ -45,7 +46,23 @@ export interface WithRetryOptions {
   onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
   /** Override sleep (for tests). Default: `setTimeout`-backed. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Cancellation for the whole envelope (A5). An aborted signal stops the
+   * back-off immediately and prevents another attempt — without it a cancelled
+   * operation still sat through up to five minutes of `Retry-After`.
+   */
+  signal?: AbortSignal;
 }
+
+/**
+ * Ceiling on a server-supplied `Retry-After` (A5).
+ *
+ * Providers may ask for minutes. Honouring that inside a single request turns
+ * one user command into a multi-minute freeze with no way out; the rate-limit
+ * gate above already defers *subsequent* work, so the right move is to give up
+ * on this attempt and let the operation surface the throttling.
+ */
+export const MAX_HONOURED_RETRY_AFTER_MS = 60_000;
 
 const RETRYABLE_CODES: ReadonlySet<ProviderErrorCode> = new Set<ProviderErrorCode>([
   "NETWORK_ERROR",
@@ -61,12 +78,6 @@ export function isRetryable(e: unknown): boolean {
   return false;
 }
 
-const defaultSleep = (ms: number): Promise<void> => {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-};
-
 export async function withRetry<T>(opts: WithRetryOptions, fn: () => Promise<T>): Promise<T> {
   const maxAttempts = Math.max(1, Math.min(10, opts.maxAttempts ?? 3));
   const backoff = new ExponentialBackoff(
@@ -75,7 +86,7 @@ export async function withRetry<T>(opts: WithRetryOptions, fn: () => Promise<T>)
     Math.max(1, opts.maxDelayMs ?? 30_000),
   );
   const classify = opts.classify ?? isRetryable;
-  const sleep = opts.sleep ?? defaultSleep;
+  const sleep = opts.sleep ?? ((ms: number) => sleepUnlessAborted(ms, opts.signal));
   const jitter = opts.jitter !== false;
 
   let lastErr: unknown;
@@ -86,8 +97,12 @@ export async function withRetry<T>(opts: WithRetryOptions, fn: () => Promise<T>)
       lastErr = e;
       if (attempt === maxAttempts) break;
       if (!classify(e)) break;
+      if (isAborted(opts.signal)) break;
       let delayMs = backoff.nextDelayMs();
       if (e instanceof ProviderError && e.code === "RATE_LIMITED" && typeof e.retryAfterMs === "number") {
+        // Capped: a `Retry-After` of several minutes must not be spent inside
+        // one request. Past the ceiling we stop retrying and let the error out.
+        if (e.retryAfterMs > MAX_HONOURED_RETRY_AFTER_MS) break;
         delayMs = Math.max(delayMs, e.retryAfterMs);
       }
       if (jitter) {
@@ -96,6 +111,9 @@ export async function withRetry<T>(opts: WithRetryOptions, fn: () => Promise<T>)
       }
       opts.onRetry?.(attempt, delayMs, e);
       if (delayMs > 0) await sleep(delayMs);
+      // `sleepUnlessAborted` returns early on cancel; re-check before the next
+      // attempt so a cancelled operation does not fire one more request.
+      if (isAborted(opts.signal)) break;
     }
   }
   throw lastErr;

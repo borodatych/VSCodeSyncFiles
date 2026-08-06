@@ -40,8 +40,13 @@ const DATA_TIMEOUT_MS = 120_000; // upload PUT / download GET
  * including the defect where the deadline was disarmed as soon as headers
  * arrived. Delegating to the shared helper means the fix lands here too.
  */
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  return sharedFetchWithTimeout(url, init, { channel: "yandex.fetch", timeoutMs });
+function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return sharedFetchWithTimeout(url, init, { channel: "yandex.fetch", timeoutMs, signal });
 }
 
 /** API path in `disk:/relative` or `app:/relative` form (Yandex Disk REST). */
@@ -176,7 +181,7 @@ export class YandexDiskProvider implements ICloudProvider {
    * `inspectProviderResponse` never throws on 423, so those loops still see the
    * response and handle the lock themselves.
    */
-  private async apiFetch(pathAndQuery: string, init?: RequestInit): Promise<Response> {
+  private async apiFetch(pathAndQuery: string, init?: RequestInit, signal?: AbortSignal): Promise<Response> {
     const url = `${API_BASE}/${pathAndQuery.replace(/^\//, "")}`;
     const withAuth = (authTok: string): RequestInit => {
       const headers = new Headers(init?.headers);
@@ -184,12 +189,12 @@ export class YandexDiskProvider implements ICloudProvider {
       return { ...init, headers };
     };
     return withRetry(
-      { op: "yandex.apiFetch", maxAttempts: 3, initialDelayMs: 500 },
+      { op: "yandex.apiFetch", maxAttempts: 3, initialDelayMs: 500, signal },
       async (): Promise<Response> => {
         const token = await this.accessToken();
         let r: Response;
         try {
-          r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS);
+          r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS, signal);
         } catch (e) {
           throw providerTransportError(e, "Yandex Disk");
         }
@@ -200,7 +205,7 @@ export class YandexDiskProvider implements ICloudProvider {
               await this.refreshAccessToken(bundle.refreshToken);
               const token2 = await this.accessToken();
               try {
-                r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS);
+                r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS, signal);
               } catch (e) {
                 throw providerTransportError(e, "Yandex Disk");
               }
@@ -280,7 +285,7 @@ export class YandexDiskProvider implements ICloudProvider {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
     let rUp!: Response;
     for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
-      rUp = await this.apiFetch(`resources/upload?path=${pathEnc}&overwrite=true`);
+      rUp = await this.apiFetch(`resources/upload?path=${pathEnc}&overwrite=true`, undefined, options?.signal);
       if (rUp.ok) {
         break;
       }
@@ -304,7 +309,7 @@ export class YandexDiskProvider implements ICloudProvider {
       put = await fetchWithTimeout(up.href, {
         method: "PUT",
         body: new Uint8Array(content),
-      }, DATA_TIMEOUT_MS);
+      }, DATA_TIMEOUT_MS, options?.signal);
     } catch (e) {
       throw providerTransportError(e, "Yandex Disk");
     }
@@ -343,7 +348,7 @@ export class YandexDiskProvider implements ICloudProvider {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
     let rDl!: Response;
     for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
-      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`);
+      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`, undefined, options?.signal);
       if (rDl.status === 404) {
         throw new ProviderError("NOT_FOUND", cloudPath);
       }
@@ -367,7 +372,7 @@ export class YandexDiskProvider implements ICloudProvider {
     }
     let r: Response;
     try {
-      r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS);
+      r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS, options?.signal);
     } catch (e) {
       throw providerTransportError(e, "Yandex Disk");
     }

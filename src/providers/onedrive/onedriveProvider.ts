@@ -301,10 +301,10 @@ export class OneDriveProvider implements ICloudProvider {
     return fresh.accessToken;
   }
 
-  private async graphFetch(url: string, init?: RequestInit): Promise<Response> {
+  private async graphFetch(url: string, init?: RequestInit, signal?: AbortSignal): Promise<Response> {
     // v0.17 D03 — uniform retry envelope.
     return withRetry(
-      { op: "onedrive.graphFetch", maxAttempts: 3, initialDelayMs: 500 },
+      { op: "onedrive.graphFetch", maxAttempts: 3, initialDelayMs: 500, signal },
       async (): Promise<Response> => {
         let r: Response;
         try {
@@ -315,6 +315,7 @@ export class OneDriveProvider implements ICloudProvider {
               fetchWithTimeout(url, i, {
                 channel: "onedrive.fetch",
                 timeoutMs: isDataPath ? DEFAULT_DATA_TIMEOUT_MS : DEFAULT_API_TIMEOUT_MS,
+                signal,
               }),
             forceRefresh: () => this.forceRefreshAccessToken(),
           });
@@ -342,7 +343,7 @@ export class OneDriveProvider implements ICloudProvider {
       method: "PUT",
       headers,
       body: new Uint8Array(content),
-    });
+    }, options?.signal);
     if (r.status === 412) {
       throw new ProviderError("PRECONDITION_FAILED", "If-Match failed on OneDrive");
     }
@@ -511,7 +512,7 @@ export class OneDriveProvider implements ICloudProvider {
     if (options?.ifNoneMatch) {
       headers["If-None-Match"] = options.ifNoneMatch;
     }
-    const r = await this.graphFetch(contentUrl(cloudPath), { headers });
+    const r = await this.graphFetch(contentUrl(cloudPath), { headers }, options?.signal);
     if (r.status === 304) {
       return {
         body: Buffer.alloc(0),

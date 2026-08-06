@@ -24,10 +24,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
 
   return [
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
-      await runWithEngine(async (engine) => {
-        const results = await engine.pushAll();
-        void vscode.window.showInformationMessage(summarisePushForToast("Push all", results));
-      });
+      await runWithEngine(
+        async (engine) => {
+          const results = await engine.pushAll();
+          void vscode.window.showInformationMessage(summarisePushForToast("Push all", results));
+        },
+        undefined,
+        { cancellable: "VSCodeSync: отправка всех воркспейсов…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.bulkPush", async () => {
@@ -277,10 +281,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     }),
 
     vscode.commands.registerCommand("vscodesync.pullAll", async () => {
-      await runWithEngine(async (engine) => {
-        await engine.pullAll();
-        void vscode.window.showInformationMessage("Pull all: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.pullAll();
+          void vscode.window.showInformationMessage("Pull all: готово.");
+        },
+        undefined,
+        { cancellable: "VSCodeSync: скачивание всех воркспейсов…" },
+      );
     }),
 
     // F4 — Bulk Pull (selectively). Quick-pick of files with syncStatus =
@@ -298,10 +306,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        await engine.syncWorkspace(ws);
-        void vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.syncWorkspace(ws);
+          void vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
+        },
+        undefined,
+        { cancellable: "VSCodeSync: синхронизация воркспейса…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.pushWorkspace", async () => {
@@ -313,10 +325,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        const results = await engine.pushAll(ws);
-        void vscode.window.showInformationMessage(summarisePushForToast("Push workspace", results));
-      });
+      await runWithEngine(
+        async (engine) => {
+          const results = await engine.pushAll(ws);
+          void vscode.window.showInformationMessage(summarisePushForToast("Push workspace", results));
+        },
+        undefined,
+        { cancellable: "VSCodeSync: отправка воркспейса…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.pullWorkspace", async () => {
@@ -328,10 +344,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        await engine.pullAll(ws);
-        void vscode.window.showInformationMessage("Pull workspace: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.pullAll(ws);
+          void vscode.window.showInformationMessage("Pull workspace: готово.");
+        },
+        undefined,
+        { cancellable: "VSCodeSync: скачивание воркспейса…" },
+      );
     }),
   ];
 }
