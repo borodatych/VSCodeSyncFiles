@@ -46,3 +46,8 @@ builds/**
 .DS_Store
 nul
 cli/**
+
+# DuckDB analytics bridge source — the feature is not part of 1.0.0 and the
+# bundle is no longer built (see docs/v2/deferredWiring.md). Shipping the
+# source of a disabled feature only inflates the package.
+media/duckdb-bridge.src.js
