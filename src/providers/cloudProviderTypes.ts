@@ -43,6 +43,23 @@ export interface FileMetadata {
    * say", and callers must fall back to probing.
    */
   isFolder?: boolean;
+  /**
+   * Digest of the stored bytes as the provider itself computed it (E10).
+   *
+   * `etag` must not be used for this: on OneDrive it is a Graph token of the
+   * form `{GUID},N` and on Dropbox it is `rev` — neither is a hash of anything.
+   * The integrity check compared them against a content hash, so with
+   * `vscodesync.providerHashVerify` on, every OneDrive push failed with
+   * INTEGRITY_FAILED after a *successful* upload.
+   *
+   * Absent when the provider's metadata carries no digest — the check then
+   * skips rather than guessing.
+   */
+  contentDigest?: {
+    kind: "md5" | "sha1" | "sha256" | "dropbox-content-hash";
+    /** Lowercase hex. */
+    value: string;
+  };
 }
 
 export interface UploadOptions {

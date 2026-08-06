@@ -56,7 +56,48 @@ function itemUrl(cloudPath: string): string {
 }
 
 function childrenUrl(cloudPath: string): string {
-  return `${GRAPH}/me/drive/root:/${encodeGraphPath(cloudPath)}:/children`;
+  // The drive root has no path segment: `root:/:/children` is not a valid
+  // Graph URL, `root/children` is.
+  const encoded = encodeGraphPath(cloudPath);
+  return encoded === ""
+    ? `${GRAPH}/me/drive/root/children`
+    : `${GRAPH}/me/drive/root:/${encoded}:/children`;
+}
+
+/** Graph `file.hashes` → the strongest digest we can verify locally (E10). */
+function digestFromGraphHashes(
+  hashes: { sha256Hash?: string; sha1Hash?: string } | undefined,
+): FileMetadata["contentDigest"] {
+  if (hashes?.sha256Hash) {
+    return { kind: "sha256", value: hashes.sha256Hash.toLowerCase() };
+  }
+  if (hashes?.sha1Hash) {
+    return { kind: "sha1", value: hashes.sha1Hash.toLowerCase() };
+  }
+  return undefined;
+}
+
+/**
+ * First byte OneDrive still expects, from a session's `nextExpectedRanges`
+ * (E6). Graph answers with entries like `"12345-"` or `"12345-67890"`; an
+ * empty list means the session accepted everything, so there is nothing left
+ * to send and the caller's loop ends immediately.
+ *
+ * Anything unparsable answers 0: re-uploading is always safe, resuming from a
+ * guess is not.
+ */
+export function parseNextExpectedOffset(ranges: readonly string[] | undefined): number {
+  if (!ranges || ranges.length === 0) {
+    return 0;
+  }
+  let lowest = Number.POSITIVE_INFINITY;
+  for (const r of ranges) {
+    const start = Number.parseInt(r.split("-")[0] ?? "", 10);
+    if (Number.isFinite(start) && start >= 0 && start < lowest) {
+      lowest = start;
+    }
+  }
+  return Number.isFinite(lowest) ? lowest : 0;
 }
 
 function normalizeEtag(h: string | null): string | undefined {
@@ -354,35 +395,112 @@ export class OneDriveProvider implements ICloudProvider {
     const session = (await sessionRes.json()) as { uploadUrl: string };
     const uploadUrl = session.uploadUrl;
     const total = content.length;
-    let offset = 0;
     let etag: string | undefined;
 
-    while (offset < total) {
-      const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
-      const chunk = content.subarray(offset, end);
-      const chunkRes = await fetchWithTimeout(uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Range": `bytes ${String(offset)}-${String(end - 1)}/${String(total)}`,
-          "Content-Length": String(chunk.length),
-        },
-        // Cast through unknown: lib.dom BodyInit is stricter than the runtime
-        // accepts. A bare Uint8Array view ships fine over fetch.
-        body: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) as unknown as BodyInit,
-      }, { channel: "onedrive.fetch", timeoutMs: DEFAULT_DATA_TIMEOUT_MS });
-      if (!chunkRes.ok && chunkRes.status !== 202) {
-        throw new ProviderError(
-          "NETWORK_ERROR",
-          `Upload session chunk failed: ${String(chunkRes.status)} ${await chunkRes.text()}`,
-        );
+    try {
+      // Resume support (E6). A session that was interrupted still holds the
+      // bytes it already accepted; asking it where it stands turns a retry into
+      // "continue" instead of "upload the whole file again". A brand-new
+      // session answers with an empty range list, which starts us at 0.
+      let offset = await this.resumeOffsetForSession(uploadUrl);
+      while (offset < total) {
+        const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
+        const chunk = content.subarray(offset, end);
+        const chunkRes = await this.putUploadChunk(uploadUrl, chunk, offset, end, total);
+        if (chunkRes.status === 200 || chunkRes.status === 201) {
+          const j = (await chunkRes.json()) as { eTag?: string };
+          etag = normalizeEtag(j.eTag ?? null);
+        }
+        offset = end;
       }
-      if (chunkRes.status === 200 || chunkRes.status === 201) {
-        const j = (await chunkRes.json()) as { eTag?: string };
-        etag = normalizeEtag(j.eTag ?? null);
-      }
-      offset = end;
+    } catch (e) {
+      // An abandoned session keeps the partial upload alive on the service for
+      // days and blocks the next attempt with a conflicting range. Closing it
+      // is best-effort: the original failure is what the caller must see.
+      await this.cancelUploadSession(uploadUrl);
+      throw e;
     }
     return { etag };
+  }
+
+  /**
+   * Single chunk of an upload session, with the same retry envelope and status
+   * classification as every other request (E6).
+   *
+   * It used to go straight through `fetchWithTimeout`: a 429 or 503 on one
+   * chunk surfaced as NETWORK_ERROR with no `Retry-After`, a 5xx was not
+   * classified at all, and the whole multi-megabyte upload restarted from zero.
+   */
+  private async putUploadChunk(
+    uploadUrl: string,
+    chunk: Buffer,
+    offset: number,
+    end: number,
+    total: number,
+  ): Promise<Response> {
+    return withRetry(
+      { op: "onedrive.uploadChunk", maxAttempts: 3, initialDelayMs: 500 },
+      async (): Promise<Response> => {
+        let r: Response;
+        try {
+          r = await fetchWithTimeout(
+            uploadUrl,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Range": `bytes ${String(offset)}-${String(end - 1)}/${String(total)}`,
+                "Content-Length": String(chunk.length),
+              },
+              // Cast through unknown: lib.dom BodyInit is stricter than the
+              // runtime accepts. A bare Uint8Array view ships fine over fetch.
+              body: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) as unknown as BodyInit,
+            },
+            { channel: "onedrive.fetch", timeoutMs: DEFAULT_DATA_TIMEOUT_MS },
+          );
+        } catch (e) {
+          throw providerTransportError(e, "OneDrive");
+        }
+        // 202 means "chunk accepted, more expected" — a success the shared
+        // inspector would not recognise.
+        if (r.status === 202) {
+          return r;
+        }
+        return inspectProviderResponse(r, "OneDrive");
+      },
+    );
+  }
+
+  /**
+   * Where an upload session stands, from `nextExpectedRanges` (E6).
+   * Falls back to 0 whenever the answer is missing or unparsable — restarting
+   * is always safe, continuing from a guess is not.
+   */
+  private async resumeOffsetForSession(uploadUrl: string): Promise<number> {
+    try {
+      const r = await fetchWithTimeout(uploadUrl, { method: "GET" }, {
+        channel: "onedrive.fetch",
+        timeoutMs: DEFAULT_API_TIMEOUT_MS,
+      });
+      if (!r.ok) {
+        return 0;
+      }
+      const j = (await r.json()) as { nextExpectedRanges?: string[] };
+      return parseNextExpectedOffset(j.nextExpectedRanges);
+    } catch {
+      return 0;
+    }
+  }
+
+  /** `DELETE` the session so a failed upload does not linger server-side. */
+  private async cancelUploadSession(uploadUrl: string): Promise<void> {
+    try {
+      await fetchWithTimeout(uploadUrl, { method: "DELETE" }, {
+        channel: "onedrive.fetch",
+        timeoutMs: DEFAULT_API_TIMEOUT_MS,
+      });
+    } catch {
+      /* best-effort: the caller is already throwing the real error */
+    }
   }
 
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
@@ -422,12 +540,22 @@ export class OneDriveProvider implements ICloudProvider {
     if (!r.ok) {
       throw await this.classifyResponse(r);
     }
-    const j = (await r.json()) as { size?: number; eTag?: string; lastModifiedDateTime?: string };
+    const j = (await r.json()) as {
+      size?: number;
+      eTag?: string;
+      lastModifiedDateTime?: string;
+      file?: { hashes?: { quickXorHash?: string; sha1Hash?: string; sha256Hash?: string } };
+    };
     return {
       cloudPath,
       size: j.size,
       etag: normalizeEtag(j.eTag ?? null),
       modifiedIso: j.lastModifiedDateTime,
+      // Graph exposes real content hashes under `file.hashes` (E10). `eTag`
+      // is `{GUID},N` and hashes nothing — comparing it to a digest is what
+      // made every push fail with `providerHashVerify` on. quickXorHash is a
+      // OneDrive-specific algorithm we do not implement, so it is ignored.
+      contentDigest: digestFromGraphHashes(j.file?.hashes),
     };
   }
 
@@ -491,9 +619,39 @@ export class OneDriveProvider implements ICloudProvider {
     return out;
   }
 
+  /**
+   * Create the folder, and its parents, if they are missing (E13).
+   *
+   * This was an empty no-op while the other three providers created folders —
+   * OneDrive got away with it because `PUT .../content` creates the path
+   * implicitly, but anything that only needs the folder (an empty workspace, a
+   * `.history/` prefix) silently did nothing.
+   */
   async createFolder(cloudPath: string): Promise<void> {
-    await Promise.resolve();
-    void cloudPath;
+    const token = await this.accessToken();
+    const segments = cloudPath.split("/").filter(Boolean);
+    let parent = "";
+    for (const seg of segments) {
+      const r = await this.graphFetch(childrenUrl(parent), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: seg,
+          folder: {},
+          // Graph answers 409 for an existing folder unless told otherwise;
+          // "fail" plus the 409 branch below keeps this idempotent without
+          // renaming anything.
+          "@microsoft.graph.conflictBehavior": "fail",
+        }),
+      });
+      if (!r.ok && r.status !== 409) {
+        throw await this.classifyResponse(r);
+      }
+      parent = parent === "" ? seg : `${parent}/${seg}`;
+    }
   }
 
   /** URL страницы файла в OneDrive (веб-клиент Microsoft). */

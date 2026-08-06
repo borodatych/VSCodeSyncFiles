@@ -248,9 +248,26 @@ export class YandexDiskProvider implements ICloudProvider {
       size: j.size,
       etag: etagFromResource(j),
       modifiedIso: j.modified,
+      // Yandex returns the file's md5 alongside its own etag (E10); only the
+      // former is defined as a digest.
+      contentDigest:
+        typeof j.md5 === "string" && j.md5 !== ""
+          ? { kind: "md5", value: j.md5.toLowerCase() }
+          : undefined,
     };
   }
 
+  /**
+   * Yandex Disk has no conditional upload, so `ifMatch` is emulated by reading
+   * the current etag first (E13).
+   *
+   * This is a check, not a guarantee: another machine can write between the
+   * read and the PUT, and no ordering here can close that window. What it does
+   * buy is that the common case — "someone already changed this file" — is
+   * caught before the bytes go up, and the caller gets PRECONDITION_FAILED
+   * instead of a silent overwrite. The real protection against a lost update is
+   * the `_meta` 412-merge one layer above.
+   */
   async uploadFile(cloudPath: string, content: Buffer, options?: UploadOptions): Promise<UploadResult> {
     if (options?.ifMatch) {
       const cur = await this.getMetadata(cloudPath);
@@ -296,15 +313,17 @@ export class YandexDiskProvider implements ICloudProvider {
     }
     noteCloudTransportSuccess();
 
-    // md5 integrity check: compare local md5 with the one returned by Yandex Disk metadata
+    // Integrity check against the digest the service reports (E10/E13). This
+    // used to sniff `etag` with a `/^[0-9a-f]{32}$/` regex and skip the check
+    // whenever the value did not look like md5 — a guess where `contentDigest`
+    // now states the fact.
     const after = await this.getMetadata(cloudPath);
-    if (after?.etag) {
+    if (after?.contentDigest?.kind === "md5") {
       const localMd5 = createHash("md5").update(content).digest("hex");
-      // Yandex Disk may return md5 as etag (see etagFromResource) — verify if it looks like md5 (32 hex chars)
-      if (/^[0-9a-f]{32}$/i.test(after.etag) && after.etag.toLowerCase() !== localMd5) {
+      if (after.contentDigest.value !== localMd5) {
         throw new ProviderError(
-          "NETWORK_ERROR",
-          `Yandex Disk: md5 mismatch after upload (local: ${localMd5}, cloud: ${after.etag}). Upload may be corrupted.`,
+          "INTEGRITY_FAILED",
+          `Yandex Disk: md5 mismatch after upload (local: ${localMd5}, cloud: ${after.contentDigest.value}).`,
         );
       }
     }

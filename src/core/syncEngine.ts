@@ -3674,20 +3674,22 @@ export class SyncEngine {
         ) {
           try {
             const meta = await this.deps.provider.getMetadata(uploadCloudPath);
-            if (meta?.etag) {
+            // `contentDigest` is the field defined as a hash of the bytes (E10).
+            // This used to read `meta.etag`, which on OneDrive is a Graph token
+            // `{GUID},N` and on Dropbox is `rev` — so with the setting on, every
+            // OneDrive push failed with INTEGRITY_FAILED right after a
+            // successful upload. A provider that exposes no digest is skipped.
+            if (meta?.contentDigest) {
               const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
               const expected = expectedProviderDigests(this.deps.provider.type, plaintextBufLocked);
-              // Provider's etag string sometimes IS the md5 hex (gdrive,
-              // yandex). Match against any expected digest; mismatch with
-              // ALL of them → INTEGRITY_FAILED.
-              const cleaned = (meta.etag ?? "").replace(/^"+|"+$/g, "").toLowerCase();
-              const matched = expected.some((d) => digestEquals(d.value, cleaned));
-              if (!matched && cleaned.length >= 32) {
-                // Provider returned a digest-looking ETag but it doesn't
-                // match any of our computed hashes — likely corruption.
+              const actual = meta.contentDigest.value.toLowerCase();
+              const matched = expected.some(
+                (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
+              );
+              if (!matched) {
                 throw new ProviderError(
                   "INTEGRITY_FAILED",
-                  `Provider digest mismatch on ${posixRel}: provider=${cleaned} expected one of [${expected.map((d) => d.value).join(", ")}]`,
+                  `Provider digest mismatch on ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
                 );
               }
             }
@@ -3947,15 +3949,20 @@ export class SyncEngine {
       this.resolveProviderHashVerify()
     ) {
       try {
-        if (dl.etag) {
+        // Same field as the push-side check (E10): a download's `etag` is not a
+        // digest, so the comparison has to come from provider metadata.
+        const meta = await this.deps.provider.getMetadata(downloadPath);
+        if (meta?.contentDigest) {
           const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
           const expected = expectedProviderDigests(this.deps.provider.type, dl.body);
-          const cleaned = dl.etag.replace(/^"+|"+$/g, "").toLowerCase();
-          const matched = expected.some((d) => digestEquals(d.value, cleaned));
-          if (!matched && cleaned.length >= 32) {
+          const actual = meta.contentDigest.value.toLowerCase();
+          const matched = expected.some(
+            (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
+          );
+          if (!matched) {
             throw new ProviderError(
               "INTEGRITY_FAILED",
-              `Provider digest mismatch on pull ${posixRel}: provider=${cleaned} expected one of [${expected.map((d) => d.value).join(", ")}]`,
+              `Provider digest mismatch on pull ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
             );
           }
         }

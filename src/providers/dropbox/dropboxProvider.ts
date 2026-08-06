@@ -12,6 +12,10 @@ import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
 import { withRetry } from "../../core/withRetry.js";
 import {
+  planDropboxUpload,
+  type DropboxUploadPlan,
+} from "../../core/dropboxUploadSessionPlanner.js";
+import {
   inspectProviderResponse,
   providerTransportError,
 } from "../_shared/providerFetchOutcome.js";
@@ -258,6 +262,15 @@ export class DropboxProvider implements ICloudProvider {
       mute: false,
     };
 
+    // Files over the single-shot limit go through an upload session (E7).
+    // `/2/files/upload` refuses ~150 MB+, so without this such a file simply
+    // never reached the cloud; `planDropboxUpload` had been written for exactly
+    // this and called from nothing but its own test.
+    const plan = planDropboxUpload(content.length);
+    if (!plan.singleShot) {
+      return this.uploadViaSession(dbPath, content, plan, modeArg);
+    }
+
     const token = await this.accessToken();
     const r = await this.apiFetch(`${CONTENT}/2/files/upload`, {
       method: "POST",
@@ -289,11 +302,85 @@ export class DropboxProvider implements ICloudProvider {
     return { etag: normalizeEtag(rev ?? null) };
   }
 
+  /**
+   * `upload_session/{start,append_v2,finish}` for files past the single-shot
+   * limit (E7). Chunk boundaries come from the pure planner; this method only
+   * performs the calls and keeps the session id.
+   */
+  private async uploadViaSession(
+    dbPath: string,
+    content: Buffer,
+    plan: DropboxUploadPlan,
+    modeArg: unknown,
+  ): Promise<UploadResult> {
+    const token = await this.accessToken();
+    const send = async (
+      url: string,
+      arg: unknown,
+      chunk: Buffer,
+    ): Promise<Response> =>
+      this.apiFetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/octet-stream",
+          "Dropbox-API-Arg": JSON.stringify(arg),
+        },
+        body: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) as unknown as BodyInit,
+      });
+
+    let sessionId = "";
+    for (const c of plan.chunks) {
+      const chunk = content.subarray(c.offset, c.offset + c.length);
+      if (c.endpoint === "start") {
+        const r = await send(`${CONTENT}/2/files/upload_session/start`, { close: false }, chunk);
+        if (!r.ok) {
+          throw this.classifyBody(r.status, await r.text());
+        }
+        sessionId = ((await r.json()) as { session_id: string }).session_id;
+        continue;
+      }
+      const cursor = { session_id: sessionId, offset: c.offset };
+      if (c.endpoint === "append_v2") {
+        const r = await send(
+          `${CONTENT}/2/files/upload_session/append_v2`,
+          { cursor, close: false },
+          chunk,
+        );
+        if (!r.ok) {
+          throw this.classifyBody(r.status, await r.text());
+        }
+        continue;
+      }
+      const r = await send(
+        `${CONTENT}/2/files/upload_session/finish`,
+        {
+          cursor,
+          commit: { path: dbPath, mode: modeArg, autorename: false, mute: false },
+        },
+        chunk,
+      );
+      if (!r.ok) {
+        const t = await r.text();
+        // Same shape as the single-shot path: a rejected `update` mode is a
+        // precondition failure, not a transport problem.
+        if (r.status === 409 && typeof modeArg === "object") {
+          throw new ProviderError("PRECONDITION_FAILED", t);
+        }
+        throw this.classifyBody(r.status, t);
+      }
+      const meta = (await r.json()) as { rev?: string };
+      return { etag: normalizeEtag(meta.rev ?? null) };
+    }
+    throw new Error("dropbox upload session: plan produced no finish chunk");
+  }
+
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
-    // Dropbox has no native ifNoneMatch; emulate via cheap `get_metadata`
-    // and compare server `rev` against the caller's last-known etag. If
-    // they match, return `notModified: true` and skip the full download —
-    // closes audit B4 (Dropbox burning bandwidth on unchanged files).
+    // Dropbox has no conditional download, so `ifNoneMatch` costs one extra
+    // `get_metadata` (E13). It is worth it: the alternative is downloading the
+    // whole file to discover it is unchanged, and `get_metadata` is orders of
+    // magnitude smaller. The extra call shares the retry envelope and the
+    // rate-limit gate with everything else, so it cannot silently drive 429s.
     if (options?.ifNoneMatch) {
       const meta = await this.getMetadata(cloudPath);
       if (meta?.etag && meta.etag === options.ifNoneMatch) {
@@ -345,12 +432,19 @@ export class DropboxProvider implements ICloudProvider {
       rev?: string;
       size?: number;
       server_modified?: string;
+      content_hash?: string;
     };
     return {
       cloudPath,
       size: j[".tag"] === "file" ? j.size : undefined,
       etag: normalizeEtag(j.rev ?? null),
       modifiedIso: j.server_modified,
+      // `rev` is a revision token, not a hash (E10) — the real digest is
+      // `content_hash`, Dropbox's own block-based scheme.
+      contentDigest:
+        typeof j.content_hash === "string" && j.content_hash !== ""
+          ? { kind: "dropbox-content-hash", value: j.content_hash.toLowerCase() }
+          : undefined,
     };
   }
 
@@ -443,6 +537,37 @@ export class DropboxProvider implements ICloudProvider {
         isFolder: it[".tag"] === "folder",
       };
     });
+  }
+
+  /**
+   * Web page of the file in Dropbox (E13). The other three providers had this;
+   * only Dropbox left "Open in cloud storage" doing nothing.
+   *
+   * `create_shared_link_with_settings` returns the existing link when one is
+   * already there (409 `shared_link_already_exists`), so calling it twice does
+   * not create a second link.
+   */
+  async getWebViewLink(cloudPath: string): Promise<string | null> {
+    const r = await this.rpc("/2/sharing/create_shared_link_with_settings", {
+      path: toDropboxPath(cloudPath),
+    });
+    if (r.ok) {
+      const j = (await r.json()) as { url?: string };
+      return j.url ?? null;
+    }
+    if (r.status !== 409) {
+      return null;
+    }
+    // Already shared — ask for the link that exists.
+    const existing = await this.rpc("/2/sharing/list_shared_links", {
+      path: toDropboxPath(cloudPath),
+      direct_only: true,
+    });
+    if (!existing.ok) {
+      return null;
+    }
+    const j = (await existing.json()) as { links?: { url?: string }[] };
+    return j.links?.[0]?.url ?? null;
   }
 
   async createFolder(cloudPath: string): Promise<void> {

@@ -556,6 +556,14 @@ export class GdriveProvider implements ICloudProvider {
       size: Number.isFinite(sizeNum) ? sizeNum : undefined,
       etag,
       modifiedIso: meta.modifiedTime,
+      // Drive's `md5Checksum` is a real content digest (E10). It also happens
+      // to be what `etag` falls back to here, but the integrity check must read
+      // the field that is defined as a hash, not the one that may be an opaque
+      // token on another provider.
+      contentDigest:
+        typeof meta.md5Checksum === "string" && meta.md5Checksum !== ""
+          ? { kind: "md5", value: meta.md5Checksum.toLowerCase() }
+          : undefined,
     };
   }
 
