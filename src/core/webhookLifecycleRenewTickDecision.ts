@@ -18,7 +18,7 @@
  * makes the lifecycle mock-testable for the first time.
  */
 
-import { isNearOrPastExpiration, SUBSCRIPTION_RENEW_SLACK_MS } from "../ui/webhookExpirationMath.js";
+import { isNearOrPastExpiration, SUBSCRIPTION_RENEW_SLACK_MS } from "./webhookExpirationMath.js";
 
 export type RenewTickDecision =
   | { kind: "do_nothing"; reason: RenewSkipReason }

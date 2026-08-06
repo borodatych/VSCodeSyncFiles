@@ -136,11 +136,15 @@ describe("YandexDiskProvider — refresh against mocked OAuth endpoint", () => {
       accessToken: "valid",
       expiresAtMs: Date.now() + 3600_000,
     });
+    // Since stage 4.3 Yandex has the same retry envelope as the other three
+    // providers, so a 429 is retried honouring `Retry-After` before it
+    // propagates. The header is 0 here to keep the test fast; the assertion
+    // (429 → RATE_LIMITED reaches the caller) is unchanged.
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         new Response("rate limit", {
           status: 429,
-          headers: { "Retry-After": "30" },
+          headers: { "Retry-After": "0" },
         }),
       ),
     );

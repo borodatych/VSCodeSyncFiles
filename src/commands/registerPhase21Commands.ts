@@ -12,9 +12,11 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { EXTENSION_ID } from "../core/extensionIdentity.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
@@ -27,7 +29,6 @@ import { parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { isAutoSyncBlockedBySchedule } from "../ui/syncScheduleGate.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { planRepairManifest, describeRepairPlan } from "../core/repairManifestPlanner.js";
@@ -39,6 +40,14 @@ import {
   machinesRegistryCloudPath,
 } from "../core/cloudLayout.js";
 import { parseMachinesRegistry } from "../core/machineRegistry.js";
+import type { SupportBundleFileName } from "../core/supportBundleContents.js";
+import { loadActivityFile } from "../core/activityLog.js";
+import { getLastHealthReport } from "../core/lastHealthReportStore.js";
+import { readRecentLogLines } from "../utils/logVscode.js";
+import { snapshotGlobalQueues } from "../core/requestQueue.js";
+import { snapshotSyncFileLocks, syncFileLockTailCount } from "../core/syncFileLock.js";
+import { describeWorkspaceInstanceLockForHealth } from "../core/workspaceInstanceLock.js";
+import { buildSyncProfileReport, type SyncProfileBuffer } from "../core/syncProfileBuffer.js";
 import {
   buildExplainConflictPrompt,
   normaliseConflictExplanation,
@@ -46,6 +55,7 @@ import {
 import {
   buildSupportBundleManifest,
   redactSettings,
+  redactString,
 } from "../core/supportBundleSanitizer.js";
 import { buildVscodeSyncUri } from "../core/vscodesyncUriParser.js";
 import { buildSbomReport, formatSbomMarkdown } from "../core/sbomReport.js";
@@ -66,7 +76,10 @@ export interface Phase21CommandsDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
+  /** Sync profiler samples — written into the support bundle. */
+  profileBuffer: SyncProfileBuffer;
 }
 
 export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Disposable[] {
@@ -112,7 +125,7 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       );
       if (!picked) return;
       const gc = await deps.globalConfig.load();
-      const engine = deps.makeEngine(folder.uri.fsPath, provider, gc.machineId, gc.machineName);
+      const engine = deps.makeEngine(folder.uri.fsPath, provider, gc.machineId, gc.machineName, "user");
       // Scan cloud, gather files + machines.
       const cloudFilePaths = await engine.listCloudWorkspaceFiles(picked.ws.workspaceId).catch(() => [] as string[]);
       let machines: Awaited<ReturnType<typeof parseMachinesRegistry>> = [];
@@ -176,7 +189,6 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
         autoSyncMode: autoMode,
         sessionPaused: syncSessionPause.isPaused(),
         autoPauseActive: syncAutoPause.isActive(),
-        scheduleBlocked: isAutoSyncBlockedBySchedule(),
         rateLimited: isAutoSyncBlockedByRateLimit(),
         workspaceState: wsEntry
           ? (normalizeWorkspaceSyncState(wsEntry) === "active"
@@ -285,34 +297,144 @@ export function registerPhase21Commands(deps: Phase21CommandsDeps): vscode.Dispo
       const bundleDir = path.join(dir, `support-${ts}`);
       await fs.mkdir(bundleDir, { recursive: true });
 
-      // Settings (redacted).
-      const cfg = vscode.workspace.getConfiguration(CFG);
-      const raw: Record<string, unknown> = {};
-      // We don't have a clean way to enumerate all keys; sample known ones.
-      const KNOWN_KEYS = [
-        "autoSyncMode", "sync.concurrency", "sync.workspaceConcurrency",
-        "verifyUploadHash", "historyVersions", "historyMode",
-        "diagnostics.profileSync", "watchMode", "encryption",
-      ];
-      for (const k of KNOWN_KEYS) raw[k] = cfg.get(k);
-      const redacted = redactSettings(raw);
-      await fs.writeFile(path.join(bundleDir, "settings.redacted.json"),
-        `${JSON.stringify(redacted, null, 2)}\n`, "utf8");
+      const writeBundleFile = async (
+        name: SupportBundleFileName,
+        body: string,
+      ): Promise<void> => {
+        await fs.writeFile(path.join(bundleDir, name), body, "utf8");
+      };
+      const writeBundleJson = async (
+        name: SupportBundleFileName,
+        value: unknown,
+      ): Promise<void> => {
+        await writeBundleFile(name, `${JSON.stringify(value, null, 2)}\n`);
+      };
 
-      // Manifest.
-      const extPkg = vscode.extensions.getExtension("borodatych.vscodesyncfiles")?.packageJSON as
-        | { version?: string }
+      const extPkg = vscode.extensions.getExtension(EXTENSION_ID)?.packageJSON as
+        | {
+            version?: string;
+            contributes?: { configuration?: { properties?: Record<string, unknown> } };
+          }
         | undefined;
-      const manifest = buildSupportBundleManifest({
-        vscodeVersion: vscode.version,
-        extensionVersion: extPkg?.version ?? "unknown",
-        platform: process.platform,
-        activityEntriesCount: 0,
-        healthReportLineCount: 0,
-        profileSampleCount: 0,
+
+      // ── settings.redacted.json ────────────────────────────────────────────
+      // Every declared key, read from the extension manifest at runtime. The
+      // previous version sampled nine hardcoded names with the note "we don't
+      // have a clean way to enumerate all keys" — this is that clean way, and
+      // it means a bundle no longer hides the 89 settings nobody listed.
+      const cfg = vscode.workspace.getConfiguration(CFG);
+      const declaredKeys = Object.keys(extPkg?.contributes?.configuration?.properties ?? {});
+      const raw: Record<string, unknown> = {};
+      for (const fullKey of declaredKeys) {
+        const short = fullKey.startsWith(`${CFG}.`) ? fullKey.slice(CFG.length + 1) : fullKey;
+        raw[short] = cfg.get(short);
+      }
+      await writeBundleJson("settings.redacted.json", redactSettings(raw));
+
+      // ── runtime-state.json ────────────────────────────────────────────────
+      // The state that explains a hang. Deliberately free of network calls:
+      // a support bundle must be collectable while the extension is wedged.
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      const gcData = await deps.globalConfig.load();
+      const heldLocks = snapshotSyncFileLocks();
+      await writeBundleJson("runtime-state.json", {
+        capturedAtIso: new Date().toISOString(),
+        requestQueues: snapshotGlobalQueues(),
+        heldFileLocks: heldLocks.map((l) => ({
+          op: l.op,
+          heldForMs: l.heldForMs,
+          // Key holds an absolute path; redact it like any other value.
+          key: redactString(l.key),
+        })),
+        fileLockTailsRetained: syncFileLockTailCount(),
+        workspaceInstanceLock: await describeWorkspaceInstanceLockForHealth(
+          deps.globalConfig.getStorageDir(),
+          folders.map((f) => f.uri.fsPath),
+        ),
+        openFolderCount: folders.length,
+        activeProvider: gcData.activeProvider ?? null,
       });
-      await fs.writeFile(path.join(bundleDir, "metadata.json"),
-        `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+      // ── activity.last7d.json ──────────────────────────────────────────────
+      const activityFile = await loadActivityFile(deps.globalConfig.getStorageDir());
+      const cutoffMs = Date.now() - 7 * 24 * 3600_000;
+      const recentEvents = activityFile.events.filter((e) => {
+        const t = Date.parse(e.at);
+        return Number.isFinite(t) && t >= cutoffMs;
+      });
+      await writeBundleJson(
+        "activity.last7d.json",
+        redactSettings({ schema: 1, events: recentEvents }),
+      );
+
+      // ── health-check.txt ──────────────────────────────────────────────────
+      const lastHealth = getLastHealthReport();
+      await writeBundleFile(
+        "health-check.txt",
+        lastHealth
+          ? `# снято ${lastHealth.capturedAtIso}\n${lastHealth.lines.join("\n")}\n`
+          : "Health Check в этой сессии не запускался — выполните команду «VSCodeSync: Health Check» и соберите bundle заново.\n",
+      );
+
+      // ── profile-sync.txt ──────────────────────────────────────────────────
+      const profileSamples = deps.profileBuffer.snapshot();
+      await writeBundleFile(
+        "profile-sync.txt",
+        `${buildSyncProfileReport(profileSamples).join("\n")}\n`,
+      );
+
+      // ── manifest-digest.json ──────────────────────────────────────────────
+      // Counts and statuses only: no file paths, no hashes.
+      const digests: unknown[] = [];
+      for (const folder of folders) {
+        const wc = await WorkspaceConfigManager.load(folder.uri.fsPath).catch(() => null);
+        if (!wc) {
+          digests.push({ folder: redactString(folder.uri.fsPath), error: "config unreadable" });
+          continue;
+        }
+        const byStatus: Record<string, number> = {};
+        for (const f of wc.files) {
+          const key = f.syncStatus ?? "unset";
+          byStatus[key] = (byStatus[key] ?? 0) + 1;
+        }
+        digests.push({
+          workspaces: wc.activeWorkspaces.map((w) => ({
+            workspaceId: w.workspaceId,
+            syncState: w.syncState ?? "active",
+            providerType: w.providerType ?? null,
+            gitBranch: w.gitBranch ?? null,
+            machineCount: w.manifestMachines?.length ?? 0,
+          })),
+          trackedFileCount: wc.files.length,
+          filesByStatus: byStatus,
+          hasPathMapping: Boolean(wc.pathMapping && Object.keys(wc.pathMapping).length > 0),
+        });
+      }
+      await writeBundleJson("manifest-digest.json", digests);
+
+      // ── log.txt ───────────────────────────────────────────────────────────
+      const logLines = readRecentLogLines();
+      await writeBundleFile(
+        "log.txt",
+        logLines.length > 0
+          ? `${logLines.map((l) => redactString(l)).join("\n")}\n`
+          : "Журнал пуст — расширение ничего не писало в канал Diagnostics с момента запуска.\n",
+      );
+
+      // ── metadata.json ─────────────────────────────────────────────────────
+      // Written last so its counts describe files that already exist.
+      await writeBundleJson(
+        "metadata.json",
+        buildSupportBundleManifest({
+          vscodeVersion: vscode.version,
+          extensionVersion: extPkg?.version ?? "unknown",
+          platform: process.platform,
+          activeProvider: gcData.activeProvider ?? undefined,
+          activityEntriesCount: recentEvents.length,
+          healthReportLineCount: lastHealth?.lines.length ?? 0,
+          profileSampleCount: profileSamples.length,
+        }),
+      );
 
       const uri = vscode.Uri.file(bundleDir);
       await vscode.window.showInformationMessage(

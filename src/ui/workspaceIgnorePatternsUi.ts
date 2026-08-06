@@ -5,12 +5,10 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { normalizeIgnorePatternStrings, normalizeIgnorePatternLinesFromText } from "../utils/ignorePatternNormalize.js";
 import { resolveWorkspaceRootForPaletteCommand } from "../utils/workspaceRootResolver.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
-import { readEditorConfigSuggestedLineEnding } from "../utils/editorConfigEndOfLine.js";
-
-const CFG = "vscodesync";
 
 async function openGlobalVscodesyncIgnoreFile(workspaceRoot: string): Promise<void> {
   const fp = path.join(workspaceRoot, ".vscodesync-ignore");
@@ -38,21 +36,6 @@ async function openGlobalVscodesyncIgnoreFile(workspaceRoot: string): Promise<vo
       // No .gitignore
     }
     await fs.writeFile(fp, `${importContent}${defaultContent}`, "utf8");
-    const suggested = await readEditorConfigSuggestedLineEnding(workspaceRoot);
-    const curRaw = vscode.workspace.getConfiguration(CFG).get<string>("lineEnding", "lf");
-    const normalizedCur = curRaw === "crlf" || curRaw === "preserve" ? curRaw : "lf";
-    if (suggested !== null && normalizedCur !== "preserve" && suggested !== normalizedCur) {
-      void vscode.window
-        .showInformationMessage(
-          `.editorconfig задаёт end_of_line (${suggested}). Чтобы канонический хэш совпадал между машинами, установите vscodesync.lineEnding «${suggested}» (сейчас «${normalizedCur}»).`,
-          "Открыть настройки",
-        )
-        .then((sel) => {
-          if (sel === "Открыть настройки") {
-            void vscode.commands.executeCommand("workbench.action.openSettings", "vscodesync.lineEnding");
-          }
-        });
-    }
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fp));
   await vscode.window.showTextDocument(doc);
@@ -95,6 +78,7 @@ export interface EditWorkspaceIgnoreDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
 }
 
@@ -174,7 +158,7 @@ export async function runEditWorkspaceIgnorePatterns(deps: EditWorkspaceIgnoreDe
     return;
   }
   const gc = await deps.globalConfig.load();
-  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
+  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "user");
   const initialArr = await engine.readSharedIgnorePatterns(workspaceId);
   const edited = await vscode.window.showInputBox({
     title: "Общие sharedIgnorePatterns (облачный манифест)",

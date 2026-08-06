@@ -10,6 +10,11 @@
  * it redacts values regardless of key.
  */
 
+import {
+  SUPPORT_BUNDLE_FILES,
+  type SupportBundleFileName,
+} from "./supportBundleContents.js";
+
 const SECRET_LIKE_KEY_RE = /(token|secret|password|api[_-]?key|client[_-]?secret|bearer|cookie|auth)/i;
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 /** Tokens inside URL query strings: `?token=xxx&key=yyy`. */
@@ -106,6 +111,13 @@ export interface SupportBundleManifest {
   contents: { name: string; description: string; itemCount?: number }[];
 }
 
+/** Record counts the exporter measured, keyed by the file they describe. */
+const COUNT_BY_FILE: Partial<Record<SupportBundleFileName, keyof SupportBundleManifestInput>> = {
+  "activity.last7d.json": "activityEntriesCount",
+  "health-check.txt": "healthReportLineCount",
+  "profile-sync.txt": "profileSampleCount",
+};
+
 export function buildSupportBundleManifest(
   input: SupportBundleManifestInput,
   nowIso?: string,
@@ -116,14 +128,16 @@ export function buildSupportBundleManifest(
     extensionVersion: input.extensionVersion,
     platform: input.platform,
     activeProvider: input.activeProvider ?? null,
-    contents: [
-      { name: "metadata.json", description: "Version + provider summary" },
-      { name: "settings.redacted.json", description: "vscodesync.* settings with secrets redacted" },
-      { name: "activity.last7d.json", description: "Activity Feed", itemCount: input.activityEntriesCount },
-      { name: "health-check.txt", description: "Latest Health Check output", itemCount: input.healthReportLineCount },
-      { name: "profile-sync.txt", description: "Sync profile samples", itemCount: input.profileSampleCount },
-      { name: "manifest-digest.json", description: "Per-workspace digests (no paths/hashes)" },
-      { name: "log.txt", description: "Last 5000 lines of OutputChannel" },
-    ],
+    contents: SUPPORT_BUNDLE_FILES.map((spec) => {
+      const countKey = COUNT_BY_FILE[spec.name];
+      const entry: { name: string; description: string; itemCount?: number } = {
+        name: spec.name,
+        description: spec.description,
+      };
+      if (spec.counted && countKey !== undefined) {
+        entry.itemCount = input[countKey] as number;
+      }
+      return entry;
+    }),
   };
 }

@@ -10,23 +10,21 @@ import type {
   UploadResult,
 } from "../cloudProviderTypes.js";
 import { ProviderError } from "../cloudProviderTypes.js";
+import { classifyProviderHttpError } from "../_shared/classifyHttpError.js";
 import {
-  noteProviderRateLimited,
-  noteProviderRequestSuccess,
-} from "../../core/syncRateLimitState.js";
-import { parseRetryAfterToDelayMs } from "../../utils/retryAfter.js";
-import { bumpOfflineFlushBackoff } from "../../core/syncOfflineFlushBackoff.js";
-import {
-  noteCloudTransportFailure,
-  noteCloudTransportSuccess,
-} from "../../core/syncOfflineHints.js";
+  inspectProviderResponse,
+  providerTransportError,
+} from "../_shared/providerFetchOutcome.js";
+import { withRetry } from "../../core/withRetry.js";
+import { createTokenStore, type TokenStore } from "../_shared/tokenStore.js";
+import { noteCloudTransportSuccess } from "../../core/syncOfflineHints.js";
 import {
   clearYandexTokens,
   readYandexTokens,
   storeYandexTokens,
   type YandexTokenBundle,
 } from "./yandexTokens.js";
-import { verboseLog, warnLog } from "../../utils/log.js";
+import { fetchWithTimeout as sharedFetchWithTimeout } from "../_shared/fetchWithTimeout.js";
 
 const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
@@ -37,31 +35,18 @@ const LOCKED_RETRY_DELAY_MS = 1500;
 const API_TIMEOUT_MS = 30_000;   // metadata / auth requests
 const DATA_TIMEOUT_MS = 120_000; // upload PUT / download GET
 
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const ac = new AbortController();
-  const short = url.replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
-  const t0 = Date.now();
-  verboseLog("yandex.fetch", `START ${init.method ?? "GET"} ${short}`);
-  const timer = setTimeout(() => {
-    warnLog("yandex.fetch", `ABORT after ${String(timeoutMs)}ms — ${init.method ?? "GET"} ${short}`);
-    ac.abort();
-  }, timeoutMs);
-  return fetch(url, { ...init, signal: ac.signal })
-    .then((r) => {
-      verboseLog(
-        "yandex.fetch",
-        `DONE ${String(r.status)} in ${String(Date.now() - t0)}ms — ${short}`,
-      );
-      return r;
-    })
-    .catch((e: unknown) => {
-      warnLog(
-        "yandex.fetch",
-        `ERROR ${e instanceof Error ? e.message : String(e)} in ${String(Date.now() - t0)}ms — ${short}`,
-      );
-      throw e;
-    })
-    .finally(() => { clearTimeout(timer); });
+/**
+ * Yandex used to carry its own byte-for-byte copy of `fetchWithTimeout`,
+ * including the defect where the deadline was disarmed as soon as headers
+ * arrived. Delegating to the shared helper means the fix lands here too.
+ */
+function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return sharedFetchWithTimeout(url, init, { channel: "yandex.fetch", timeoutMs, signal });
 }
 
 /** API path in `disk:/relative` or `app:/relative` form (Yandex Disk REST). */
@@ -93,12 +78,17 @@ function etagFromResource(r: { md5?: string; etag?: string }): string | undefine
 export class YandexDiskProvider implements ICloudProvider {
   readonly type: ProviderType = "yandex";
 
+  /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
+  private readonly tokens: TokenStore<YandexTokenBundle>;
+
   constructor(
     private readonly secrets: SecretStore,
     private readonly getClientId: () => string,
     /** When true, all paths use `app:/` prefix (app-folder scope). Default: false. */
     private readonly useAppFolder = false,
-  ) {}
+  ) {
+    this.tokens = createTokenStore<YandexTokenBundle>(secrets, "yandex");
+  }
 
   async isAuthenticated(): Promise<boolean> {
     const t = await readYandexTokens(this.secrets);
@@ -114,7 +104,12 @@ export class YandexDiskProvider implements ICloudProvider {
     await clearYandexTokens(this.secrets);
   }
 
+  /** Serialised per provider instance — see E4 note in the Drive provider. */
   private async refreshAccessToken(rt: string): Promise<YandexTokenBundle> {
+    return this.tokens.refreshOnce(() => this.performTokenRefresh(rt));
+  }
+
+  private async performTokenRefresh(rt: string): Promise<YandexTokenBundle> {
     const clientId = this.getClientId();
     if (!clientId) {
       throw new ProviderError("UNAUTHORIZED", "Yandex Disk: задайте vscodesync.yandexOAuthClientId.");
@@ -130,7 +125,10 @@ export class YandexDiskProvider implements ICloudProvider {
       body: body.toString(),
     }, API_TIMEOUT_MS);
     if (!r.ok) {
-      throw new ProviderError("UNAUTHORIZED", await r.text());
+      // A token endpoint answers 400/401 for a dead grant but 5xx when it is
+      // merely unwell; calling both UNAUTHORIZED would sign the user out over
+      // a blip, so the status decides.
+      throw await this.classifyResponse(r);
     }
     const j = (await r.json()) as {
       access_token: string;
@@ -158,66 +156,74 @@ export class YandexDiskProvider implements ICloudProvider {
     return bundle.accessToken;
   }
 
-  private async apiFetch(pathAndQuery: string, init?: RequestInit): Promise<Response> {
-    const token = await this.accessToken();
+  /**
+   * Turn an error response into a typed {@link ProviderError} (E1).
+   *
+   * Every non-ok branch in this provider goes through here, so a revoked token
+   * surfaces as UNAUTHORIZED — and reaches the "sign in again" dialog — instead
+   * of NETWORK_ERROR, which the offline queue would retry forever.
+   */
+  private async classifyResponse(r: Response): Promise<ProviderError> {
+    const body = await r.text().catch(() => "");
+    return this.classifyBody(r.status, body, r.headers.get("Retry-After"));
+  }
+
+  /** Same classification when the caller already consumed the body. */
+  private classifyBody(status: number, bodyText: string, retryAfter?: string | null): ProviderError {
+    return classifyProviderHttpError({ provider: "Yandex Disk", status, bodyText, retryAfter });
+  }
+
+  /**
+   * Yandex signs requests with `OAuth <token>`, not `Bearer`, so it keeps its
+   * own 401 branch instead of the shared `sendWithForcedRefreshOn401`.
+   *
+   * The retry envelope is safe next to the provider's 423-locked loops (E5):
+   * `inspectProviderResponse` never throws on 423, so those loops still see the
+   * response and handle the lock themselves.
+   */
+  private async apiFetch(pathAndQuery: string, init?: RequestInit, signal?: AbortSignal): Promise<Response> {
     const url = `${API_BASE}/${pathAndQuery.replace(/^\//, "")}`;
     const withAuth = (authTok: string): RequestInit => {
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `OAuth ${authTok}`);
       return { ...init, headers };
     };
-    let r: Response;
-    try {
-      r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS);
-    } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
-    }
-    if (r.status === 401) {
-      const bundle = await readYandexTokens(this.secrets);
-      if (bundle?.refreshToken) {
+    return withRetry(
+      { op: "yandex.apiFetch", maxAttempts: 3, initialDelayMs: 500, signal },
+      async (): Promise<Response> => {
+        const token = await this.accessToken();
+        let r: Response;
         try {
-          await this.refreshAccessToken(bundle.refreshToken);
-          const token2 = await this.accessToken();
-          try {
-            r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS);
-          } catch (e) {
-            bumpOfflineFlushBackoff();
-            noteCloudTransportFailure();
-            throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), {
-              cause: e,
-            });
-          }
-        } catch {
-          /* fall through */
+          r = await fetchWithTimeout(url, withAuth(token), API_TIMEOUT_MS, signal);
+        } catch (e) {
+          throw providerTransportError(e, "Yandex Disk");
         }
-      }
-    }
-    if (r.status === 429 || r.status === 503) {
-      const ra = parseRetryAfterToDelayMs(r.headers.get("Retry-After"));
-      noteProviderRateLimited(ra);
-      throw new ProviderError("RATE_LIMITED", `Yandex Disk throttled (${String(r.status)})`, {
-        retryAfterMs: ra,
-      });
-    }
-    // v0.17 D03 — propagate other 5xx as SERVER_ERROR so the outer
-    // `apiFetchWithRetry` wrapper can decide to retry.
-    if (r.status >= 500 && r.status < 600) {
-      throw new ProviderError("SERVER_ERROR", `Yandex Disk 5xx (${String(r.status)})`);
-    }
-    if (r.ok || r.status === 304) {
-      noteProviderRequestSuccess();
-      noteCloudTransportSuccess();
-    }
-    return r;
+        if (r.status === 401) {
+          const bundle = await readYandexTokens(this.secrets);
+          if (bundle?.refreshToken) {
+            try {
+              await this.refreshAccessToken(bundle.refreshToken);
+              const token2 = await this.accessToken();
+              try {
+                r = await fetchWithTimeout(url, withAuth(token2), API_TIMEOUT_MS, signal);
+              } catch (e) {
+                throw providerTransportError(e, "Yandex Disk");
+              }
+            } catch (e) {
+              // A dead grant must not be swallowed: rethrowing keeps
+              // UNAUTHORIZED (and the "sign in again" dialog) instead of
+              // letting the original 401 leave as a generic NETWORK_ERROR.
+              if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
+                throw e;
+              }
+              /* transient refresh failure — fall through with the original 401 */
+            }
+          }
+        }
+        return inspectProviderResponse(r, "Yandex Disk");
+      },
+    );
   }
-
-  // v0.17 D03 note — yandex's `apiFetch` is not yet wrapped in
-  // `withRetry` because the provider has its own 423-locked retry loop
-  // in upload/download paths that conflicts with the generic policy.
-  // The SERVER_ERROR classification above is the prep work; the actual
-  // outer wrap is deferred until 423-locked is unified.
 
   private async getResourceJson(pathAndQuery: string): Promise<unknown> {
     const r = await this.apiFetch(pathAndQuery);
@@ -225,7 +231,7 @@ export class YandexDiskProvider implements ICloudProvider {
       return null;
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     return r.json();
   }
@@ -247,9 +253,26 @@ export class YandexDiskProvider implements ICloudProvider {
       size: j.size,
       etag: etagFromResource(j),
       modifiedIso: j.modified,
+      // Yandex returns the file's md5 alongside its own etag (E10); only the
+      // former is defined as a digest.
+      contentDigest:
+        typeof j.md5 === "string" && j.md5 !== ""
+          ? { kind: "md5", value: j.md5.toLowerCase() }
+          : undefined,
     };
   }
 
+  /**
+   * Yandex Disk has no conditional upload, so `ifMatch` is emulated by reading
+   * the current etag first (E13).
+   *
+   * This is a check, not a guarantee: another machine can write between the
+   * read and the PUT, and no ordering here can close that window. What it does
+   * buy is that the common case — "someone already changed this file" — is
+   * caught before the bytes go up, and the caller gets PRECONDITION_FAILED
+   * instead of a silent overwrite. The real protection against a lost update is
+   * the `_meta` 412-merge one layer above.
+   */
   async uploadFile(cloudPath: string, content: Buffer, options?: UploadOptions): Promise<UploadResult> {
     if (options?.ifMatch) {
       const cur = await this.getMetadata(cloudPath);
@@ -262,7 +285,7 @@ export class YandexDiskProvider implements ICloudProvider {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
     let rUp!: Response;
     for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
-      rUp = await this.apiFetch(`resources/upload?path=${pathEnc}&overwrite=true`);
+      rUp = await this.apiFetch(`resources/upload?path=${pathEnc}&overwrite=true`, undefined, options?.signal);
       if (rUp.ok) {
         break;
       }
@@ -275,7 +298,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(rUp.status, txt);
     }
     const up = (await rUp.json()) as { href?: string };
     if (!up.href) {
@@ -286,26 +309,26 @@ export class YandexDiskProvider implements ICloudProvider {
       put = await fetchWithTimeout(up.href, {
         method: "PUT",
         body: new Uint8Array(content),
-      }, DATA_TIMEOUT_MS);
+      }, DATA_TIMEOUT_MS, options?.signal);
     } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+      throw providerTransportError(e, "Yandex Disk");
     }
     if (!put.ok) {
-      throw new ProviderError("NETWORK_ERROR", await put.text());
+      throw await this.classifyResponse(put);
     }
     noteCloudTransportSuccess();
 
-    // md5 integrity check: compare local md5 with the one returned by Yandex Disk metadata
+    // Integrity check against the digest the service reports (E10/E13). This
+    // used to sniff `etag` with a `/^[0-9a-f]{32}$/` regex and skip the check
+    // whenever the value did not look like md5 — a guess where `contentDigest`
+    // now states the fact.
     const after = await this.getMetadata(cloudPath);
-    if (after?.etag) {
+    if (after?.contentDigest?.kind === "md5") {
       const localMd5 = createHash("md5").update(content).digest("hex");
-      // Yandex Disk may return md5 as etag (see etagFromResource) — verify if it looks like md5 (32 hex chars)
-      if (/^[0-9a-f]{32}$/i.test(after.etag) && after.etag.toLowerCase() !== localMd5) {
+      if (after.contentDigest.value !== localMd5) {
         throw new ProviderError(
-          "NETWORK_ERROR",
-          `Yandex Disk: md5 mismatch after upload (local: ${localMd5}, cloud: ${after.etag}). Upload may be corrupted.`,
+          "INTEGRITY_FAILED",
+          `Yandex Disk: md5 mismatch after upload (local: ${localMd5}, cloud: ${after.contentDigest.value}).`,
         );
       }
     }
@@ -325,7 +348,7 @@ export class YandexDiskProvider implements ICloudProvider {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
     let rDl!: Response;
     for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
-      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`);
+      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`, undefined, options?.signal);
       if (rDl.status === 404) {
         throw new ProviderError("NOT_FOUND", cloudPath);
       }
@@ -341,7 +364,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(rDl.status, txt);
     }
     const dl = (await rDl.json()) as { href?: string };
     if (!dl.href) {
@@ -349,17 +372,15 @@ export class YandexDiskProvider implements ICloudProvider {
     }
     let r: Response;
     try {
-      r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS);
+      r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS, options?.signal);
     } catch (e) {
-      bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
-      throw new ProviderError("NETWORK_ERROR", e instanceof Error ? e.message : String(e), { cause: e });
+      throw providerTransportError(e, "Yandex Disk");
     }
     if (r.status === 404) {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw new ProviderError("NETWORK_ERROR", await r.text());
+      throw await this.classifyResponse(r);
     }
     noteCloudTransportSuccess();
     const buf = Buffer.from(await r.arrayBuffer());
@@ -368,13 +389,25 @@ export class YandexDiskProvider implements ICloudProvider {
   }
 
   async deleteFile(cloudPath: string): Promise<void> {
+    await this.removeResource(cloudPath, false);
+  }
+
+  /** Bypasses the Disk trash — user-invoked purge only (D11). */
+  async purgeFilePermanently(cloudPath: string): Promise<void> {
+    await this.removeResource(cloudPath, true);
+  }
+
+  private async removeResource(cloudPath: string, permanently: boolean): Promise<void> {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
-    const r = await this.apiFetch(`resources?path=${pathEnc}&permanently=true`, { method: "DELETE" });
+    const r = await this.apiFetch(
+      `resources?path=${pathEnc}${permanently ? "&permanently=true" : ""}`,
+      { method: "DELETE" },
+    );
     if (r.ok || r.status === 404) {
       return;
     }
     const txt = await r.text();
-    throw new ProviderError("NETWORK_ERROR", txt);
+    throw this.classifyBody(r.status, txt);
   }
 
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
@@ -392,7 +425,7 @@ export class YandexDiskProvider implements ICloudProvider {
         return firstHop ? [] : out;
       }
       if (!r.ok) {
-        throw new ProviderError("NETWORK_ERROR", await r.text());
+        throw await this.classifyResponse(r);
       }
       const j = (await r.json()) as {
         type?: string;
@@ -417,6 +450,7 @@ export class YandexDiskProvider implements ICloudProvider {
           size: it.type === "file" ? it.size : undefined,
           etag: etagFromResource(it),
           modifiedIso: it.modified,
+          isFolder: it.type === "dir",
         });
         if (out.length >= HARD_CAP) break;
       }
@@ -453,7 +487,7 @@ export class YandexDiskProvider implements ICloudProvider {
         await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
         continue;
       }
-      throw new ProviderError("NETWORK_ERROR", txt);
+      throw this.classifyBody(r.status, txt);
     }
   }
 

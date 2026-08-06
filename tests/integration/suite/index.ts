@@ -1,6 +1,7 @@
 import * as assert from "node:assert";
 import * as vscode from "vscode";
 import type { ProviderType } from "../../../src/core/types.js";
+import { EXTENSION_ID } from "../../../src/core/extensionIdentity.js";
 import { MockCloudProvider } from "../../../src/providers/mockCloudProvider.js";
 
 const PROVIDER_TYPES: ProviderType[] = ["onedrive", "gdrive", "yandex", "dropbox"];
@@ -26,8 +27,8 @@ async function assertMockProviderRoundtrip(providerType: ProviderType): Promise<
 
 export async function run(): Promise<void> {
   assert.ok(vscode.workspace);
-  const ext = vscode.extensions.getExtension("vscodesync.vscodesync");
-  assert.ok(ext, "расширение vscodesync.vscodesync должно быть в списке");
+  const ext = vscode.extensions.getExtension(EXTENSION_ID);
+  assert.ok(ext, `расширение ${EXTENSION_ID} должно быть в списке`);
   await ext.activate();
   assert.strictEqual(ext.isActive, true, "расширение должно активироваться без ошибок");
 

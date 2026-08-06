@@ -4,13 +4,14 @@
  * `package.json` and `settingsPanel.ts` but no enforcement existed in the
  * engine — this planner closes that gap.
  *
- * Two limits, applied independently:
- *   - **age**: anything with `createdAt` older than `retentionDays` is dropped.
- *   - **count**: when more than `maxPerWorkspace` user snapshots remain after
- *     the age sweep, the oldest user-tier snapshots are dropped until the
- *     count equals the cap. System-tier snapshots (`auto-` / `pre-migration-`
- *     prefixes) are never dropped by the count rule — they're caretaker
- *     records and must persist independently of user activity.
+ * Two limits, each scoped to one tier (B13):
+ *   - **age**: system-tier snapshots (`auto-` / `pre-migration-` prefixes)
+ *     older than `retentionDays` are dropped. User snapshots are *never*
+ *     age-swept: a restore point someone created by hand is a promise, and it
+ *     used to silently disappear after 180 days along with the auto ones.
+ *   - **count**: when more than `maxPerWorkspace` user snapshots remain, the
+ *     oldest user-tier snapshots are dropped until the count equals the cap.
+ *     System-tier snapshots are never dropped by the count rule.
  *
  * No `vscode`, no IO. Caller iterates `delete` and runs
  * `deleteWorkspaceSnapshot(provider, workspaceId, name)`.
@@ -55,10 +56,10 @@ export function planSnapshotRetention(
   const toDelete: SnapshotInfo[] = [];
   const surviving: SnapshotInfo[] = [];
 
-  // Step 1 — age sweep.
+  // Step 1 — age sweep, system tier only (manual snapshots are kept).
   for (const s of input.snapshots) {
     const createdMs = Date.parse(s.meta.createdAt);
-    if (Number.isFinite(createdMs) && createdMs < cutoffMs) {
+    if (s.category === "system" && Number.isFinite(createdMs) && createdMs < cutoffMs) {
       toDelete.push(s);
       reasons[s.name] = "age_exceeded";
     } else {

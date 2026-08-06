@@ -33,10 +33,7 @@ export function registerConfigChangeListeners(
   const { context, fileDecorations } = deps;
 
   return vscode.workspace.onDidChangeConfiguration((e) => {
-    if (
-      e.affectsConfiguration(`${CFG}.showFileDecorations`) ||
-      e.affectsConfiguration(`${CFG}.lineEnding`)
-    ) {
+    if (e.affectsConfiguration(`${CFG}.showFileDecorations`)) {
       fileDecorations.refresh();
     }
     if (e.affectsConfiguration(`${CFG}.encryption`)) {

@@ -13,6 +13,7 @@ import * as nodePath from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { pickRoot, pickWorkspaceId } from "./_shared.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+import { summarisePushForToast } from "../core/bulkPushWizard.js";
 
 export interface SyncOpsCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -23,10 +24,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
 
   return [
     vscode.commands.registerCommand("vscodesync.pushAll", async () => {
-      await runWithEngine(async (engine) => {
-        await engine.pushAll();
-        void vscode.window.showInformationMessage("Push all: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          const results = await engine.pushAll();
+          void vscode.window.showInformationMessage(summarisePushForToast("Push all", results));
+        },
+        undefined,
+        { cancellable: "VSCodeSync: отправка всех воркспейсов…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.bulkPush", async () => {
@@ -201,7 +206,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
         "Подробнее",
       );
       if (choice === "Bulk Pull...") {
-        await vscode.commands.executeCommand("vscodesync.bulkPullSelected");
+        await vscode.commands.executeCommand("vscodesync.openDivergences");
       } else if (choice === "Подробнее") {
         const doc = await vscode.workspace.openTextDocument({
           language: "markdown",
@@ -248,7 +253,7 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
           "Закрыть как есть",
         );
         if (choice === "Bulk Pull...") {
-          await vscode.commands.executeCommand("vscodesync.bulkPullSelected");
+          await vscode.commands.executeCommand("vscodesync.openDivergences");
         }
         return;
       }
@@ -276,10 +281,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     }),
 
     vscode.commands.registerCommand("vscodesync.pullAll", async () => {
-      await runWithEngine(async (engine) => {
-        await engine.pullAll();
-        void vscode.window.showInformationMessage("Pull all: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.pullAll();
+          void vscode.window.showInformationMessage("Pull all: готово.");
+        },
+        undefined,
+        { cancellable: "VSCodeSync: скачивание всех воркспейсов…" },
+      );
     }),
 
     // F4 — Bulk Pull (selectively). Quick-pick of files with syncStatus =
@@ -287,75 +296,6 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     // with progress. Closes the "колеги обновили N файлов" workflow that
     // was the trigger for the v0.7 audit (manual one-by-one pull was
     // painful).
-    vscode.commands.registerCommand("vscodesync.bulkPullSelected", async () => {
-      const root = pickRoot();
-      if (!root) {
-        return;
-      }
-      const cfg = await WorkspaceConfigManager.load(root);
-      const cloudNewerFiles = cfg.files.filter((f) => f.syncStatus === "cloud_newer");
-      if (cloudNewerFiles.length === 0) {
-        void vscode.window.showInformationMessage(
-          "VSCodeSync: нет файлов в состоянии «облако новее» — нечего скачивать.",
-        );
-        return;
-      }
-      const wsNote = (id: string): string =>
-        cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote ?? id.slice(0, 8);
-      const picks = await vscode.window.showQuickPick(
-        cloudNewerFiles.map((f) => ({
-          label: f.localPath,
-          description: `${wsNote(f.workspaceId)} · ${f.editingByName ?? ""}`.trim(),
-          picked: true,
-          workspaceId: f.workspaceId,
-          posixRel: f.localPath,
-        })),
-        {
-          canPickMany: true,
-          title: `Bulk Pull — ${String(cloudNewerFiles.length)} файл(ов) «облако новее»`,
-          placeHolder: "Выберите файлы (Space — toggle, Enter — скачать)",
-        },
-      );
-      if (!picks || picks.length === 0) {
-        return;
-      }
-      const channel = vscode.window.createOutputChannel("VSCodeSync · Bulk Pull");
-      channel.clear();
-      channel.show(true);
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "VSCodeSync · Bulk Pull",
-          cancellable: false,
-        },
-        async (progress) => {
-          await runWithEngine(async (engine) => {
-            let done = 0;
-            let failed = 0;
-            const total = picks.length;
-            const liveCfg = await WorkspaceConfigManager.load(root);
-            for (const p of picks) {
-              progress.report({
-                message: `${p.posixRel} (${String(done + 1)}/${String(total)})`,
-                increment: 100 / total,
-              });
-              try {
-                await engine.pullFile(liveCfg, p.workspaceId, p.posixRel);
-                channel.appendLine(`  ✓ ${p.posixRel}`);
-                done += 1;
-              } catch (e) {
-                failed += 1;
-                channel.appendLine(`  ✗ ${p.posixRel}: ${e instanceof Error ? e.message : String(e)}`);
-              }
-            }
-            channel.appendLine("");
-            channel.appendLine(
-              `Bulk Pull: ${String(done)} OK · ${String(failed)} fail · ${String(total)} total`,
-            );
-          }, root);
-        },
-      );
-    }),
 
     vscode.commands.registerCommand("vscodesync.syncWorkspace", async () => {
       const root = pickRoot();
@@ -366,10 +306,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        await engine.syncWorkspace(ws);
-        void vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.syncWorkspace(ws);
+          void vscode.window.showInformationMessage(`Sync ${ws}: готово.`);
+        },
+        undefined,
+        { cancellable: "VSCodeSync: синхронизация воркспейса…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.pushWorkspace", async () => {
@@ -381,10 +325,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        await engine.pushAll(ws);
-        void vscode.window.showInformationMessage("Push workspace: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          const results = await engine.pushAll(ws);
+          void vscode.window.showInformationMessage(summarisePushForToast("Push workspace", results));
+        },
+        undefined,
+        { cancellable: "VSCodeSync: отправка воркспейса…" },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.pullWorkspace", async () => {
@@ -396,10 +344,14 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
       if (!ws) {
         return;
       }
-      await runWithEngine(async (engine) => {
-        await engine.pullAll(ws);
-        void vscode.window.showInformationMessage("Pull workspace: готово.");
-      });
+      await runWithEngine(
+        async (engine) => {
+          await engine.pullAll(ws);
+          void vscode.window.showInformationMessage("Pull workspace: готово.");
+        },
+        undefined,
+        { cancellable: "VSCodeSync: скачивание воркспейса…" },
+      );
     }),
   ];
 }

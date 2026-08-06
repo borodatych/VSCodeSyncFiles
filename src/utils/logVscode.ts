@@ -7,13 +7,38 @@ import {
   type LogSink,
 } from "./log.js";
 
+/**
+ * Ring buffer mirroring what goes into the Diagnostics output channel.
+ *
+ * `vscode.OutputChannel` is write-only — there is no API to read back what was
+ * appended — so the support bundle promised "last 5000 lines of OutputChannel"
+ * and shipped nothing. Keeping the tail in memory is the only way to put real
+ * logs in the bundle.
+ */
+const LOG_RING_CAPACITY = 5000;
+const logRing: string[] = [];
+
+function pushLogLine(line: string): void {
+  logRing.push(line);
+  if (logRing.length > LOG_RING_CAPACITY) {
+    logRing.splice(0, logRing.length - LOG_RING_CAPACITY);
+  }
+}
+
+/** Most recent log lines, oldest first. Empty before `initLog` runs. */
+export function readRecentLogLines(): readonly string[] {
+  return [...logRing];
+}
+
 export function initLog(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("VSCodeSync · Diagnostics");
   context.subscriptions.push(channel);
 
   const sink: LogSink = {
     write(level, scope, parts) {
-      channel.appendLine(formatLogLine(level, scope, parts));
+      const line = formatLogLine(level, scope, parts);
+      pushLogLine(line);
+      channel.appendLine(line);
     },
   };
   setLogSink(sink);

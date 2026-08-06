@@ -9,6 +9,7 @@
  * `shouldSuppressAutoSync` (exposed here as a singleton getter).
  */
 import * as vscode from "vscode";
+import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import {
   INITIAL_STATE,
   decayConnectivity,
@@ -81,6 +82,9 @@ export function registerConnectivityProbeWidget(
   };
 
   const probeOnce = async (): Promise<void> => {
+    if (!backgroundCloudAllowed()) {
+      return;
+    }
     const provider = await deps.tryAuthenticatedProvider().catch(() => null);
     if (!provider) {
       // No authed provider — keep state as-is; we can't probe.

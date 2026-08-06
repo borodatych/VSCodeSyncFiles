@@ -201,17 +201,19 @@ function getGuideHtml(): string {
   <pre>"vscodesync.onedriveClientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"</pre>
 
   <h3>Шаг 6 — Войди в OneDrive</h3>
-  <p>Два способа на выбор:</p>
+  <p><code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Войти в облако</strong> → выбери способ:</p>
   <ol>
     <li>
-      <strong>Браузер (рекомендуется):</strong><br>
-      <code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Sign in to OneDrive</strong><br>
-      → браузер откроется автоматически → войди в Microsoft → разреши доступ → вкладку можно закрыть
+      <strong>OneDrive · браузер (рекомендуется):</strong><br>
+      браузер откроется сам → войди в Microsoft → разреши доступ → вкладку можно закрыть.
+      Вводить ничего не нужно: ответ возвращается на <code>127.0.0.1:8736</code> —
+      тот самый Redirect URI из шага 2.
     </li>
     <li>
-      <strong>Device Code (SSH / headless):</strong><br>
-      <code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Sign in to OneDrive (Device Code)</strong><br>
-      → в панели Output появится ссылка и код → открой ссылку в любом браузере → введи код → токен сохранится автоматически
+      <strong>OneDrive · код устройства</strong> — для SSH, контейнеров и случая,
+      когда браузер не открывается:<br>
+      в панели Output появится ссылка и код → открой ссылку в любом браузере
+      (можно на другой машине) → введи код.
     </li>
   </ol>
 
@@ -277,17 +279,20 @@ function getGuideHtml(): string {
   <pre>"vscodesync.googleDriveClientId": "xxxxxxxxxxxx.apps.googleusercontent.com"</pre>
 
   <h3>Шаг 6 — Войди в Google Drive</h3>
-  <p>Два способа на выбор:</p>
+  <p><code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Войти в облако</strong> → выбери способ:</p>
   <ol>
     <li>
-      <strong>Браузер (рекомендуется):</strong><br>
-      <code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Sign in to Google Drive</strong><br>
-      → браузер откроется автоматически → войди в Google → разреши доступ → вкладку можно закрыть
+      <strong>Google Drive · браузер (рекомендуется):</strong><br>
+      браузер откроется сам → войди в Google → разреши доступ → вкладку можно закрыть.
+      Ответ возвращается на <code>127.0.0.1</code>; для клиента типа
+      <code>Desktop app</code> Google принимает loopback на любом порту, отдельно
+      регистрировать Redirect URI не нужно
     </li>
     <li>
-      <strong>Device Code (SSH / headless):</strong><br>
-      <code>Ctrl+Shift+P</code> → <strong>VSCodeSync: Sign in to Google Drive (Device Code)</strong><br>
-      → в панели Output появится ссылка и код → открой ссылку в браузере → введи код → токен сохранится автоматически
+      <strong>Google Drive · код устройства</strong> — для SSH, контейнеров и случая,
+      когда браузер не открывается:<br>
+      в панели Output появится ссылка и код → открой ссылку в любом браузере
+      (можно на другой машине) → введи код.
     </li>
   </ol>
 

@@ -1,4 +1,9 @@
 {
-  "*.{ts,tsx,mjs,cjs,js}": ["eslint --fix"],
-  "*.{json,md,yml,yaml}": []
+  "*.{ts,tsx,mjs,cjs,js}": [
+    "node scripts/check-source-hygiene.mjs",
+    "eslint --fix"
+  ],
+  "*.{json,md,yml,yaml}": [
+    "node scripts/check-source-hygiene.mjs"
+  ]
 }

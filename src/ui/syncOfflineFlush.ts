@@ -1,12 +1,15 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
 import type { OfflineQuickTransferQueueItem, OfflineQueueItem, SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
+import { warnLog } from "../utils/log.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
+import {
+  binarySkipMessage,
+  shouldAnnounceBinarySkip,
+} from "../core/binarySkipNotice.js";
 import { runQuietFullSyncAllFolders, type QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
-import { isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { noteCloudTransportFailure, noteCloudTransportSuccess } from "../core/syncOfflineHints.js";
 import {
   allowImmediateOfflineFlushRetry,
@@ -15,13 +18,20 @@ import {
 } from "../core/syncOfflineFlushBackoff.js";
 import { isQueuedQuickTransferSendExpired, sendQuickTransferFile } from "../core/quickTransfer.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
 
 const CFG = "vscodesync";
 
 export type OfflineFlushDeps = QuietFullSyncAllFoldersDeps;
 
 /**
- * Drain and execute persisted offline queue after transport recovers.
+ * Drain and execute the persisted offline queue.
+ *
+ * Since B2 this is a *user* action: the recovery monitor only counts pending
+ * items and offers a notification, and the deps carry `trigger: "user"` from
+ * the button press. The rate-limit gate below applies to what is
+ * still an automatic environment signal (they stop a user click from landing
+ * into a rate-limited provider), but nothing calls this on a timer any more.
  */
 export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: OfflineFlushDeps): Promise<void> {
   if (!vscode.workspace.isTrusted) {
@@ -29,9 +39,6 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
   }
 
   if (isAutoSyncBlockedByRateLimit()) {
-    return;
-  }
-  if (isAutoSyncBlockedBySchedule()) {
     return;
   }
 
@@ -42,12 +49,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
   const hadFull = snapshot.some((i) => i.kind === "fullSync");
   if (hadFull) {
-    await runQuietFullSyncAllFolders({
-      ...deps,
-      bypassSchedule: true,
-      bypassAutoPause: true,
-      bypassRateLimit: true,
-    });
+    await runQuietFullSyncAllFolders(deps);
   }
 
   const tail = snapshot.filter((i) => i.kind !== "fullSync");
@@ -87,10 +89,17 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
   deps.statusBar.setSyncing(true);
   let abortedQtForNetwork = false;
+  // The queue is drained *before* anything runs, so an item whose operation
+  // fails is simply gone: the old code swallowed every file-op error with
+  // `catch { /* best-effort */ }`, the user was told "processed N items", and
+  // the work was never retried. Failures are collected here and put back.
+  const failedOps: OfflineQueueItem[] = [];
+  let abortedOpsForNetwork = false;
   try {
-    for (const item of fileOps) {
+    for (let opIx = 0; opIx < fileOps.length; opIx += 1) {
+      const item = fileOps[opIx];
       const root = item.root;
-      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName);
+      const engine = deps.makeEngine(root, provider, mc.machineId, mc.machineName, deps.trigger);
       const cfg = await WorkspaceConfigManager.load(root);
       const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === item.workspaceId);
       if (!entry || normalizeWorkspaceSyncState(entry) !== "active") {
@@ -103,27 +112,50 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
 
       if (item.kind === "push") {
         const warnBin = vscode.workspace.getConfiguration(CFG).get<boolean>("warnOnBinaryFiles", true);
-        const abs = path.join(root, ...item.rel.split("/"));
+        const abs = await trackedAbsolutePathFor(root, item.rel);
+        if (abs === undefined) continue;
         if (warnBin && (await fileLooksBinary(abs))) {
+          if (shouldAnnounceBinarySkip(root, item.rel)) {
+            void vscode.window.showWarningMessage(binarySkipMessage(item.rel));
+          }
           continue;
         }
         try {
           await engine.pushFile(cfg, item.workspaceId, item.rel, entry);
           await WorkspaceConfigManager.save(cfg, root);
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          if (isLikelyUnreachableError(e)) {
+            // Network is gone again: keep this item and everything after it.
+            await store.prependItems(fileOps.slice(opIx));
+            bumpOfflineFlushBackoff();
+            allowImmediateOfflineFlushRetry();
+            noteCloudTransportFailure();
+            abortedOpsForNetwork = true;
+            break;
+          }
+          failedOps.push(item);
+          warnLog("offlineFlush", `push ${item.rel}: ${e instanceof Error ? e.message : String(e)}`);
         }
       } else {
         try {
           await engine.pullFile(cfg, item.workspaceId, item.rel, entry);
           await WorkspaceConfigManager.save(cfg, root);
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          if (isLikelyUnreachableError(e)) {
+            await store.prependItems(fileOps.slice(opIx));
+            bumpOfflineFlushBackoff();
+            allowImmediateOfflineFlushRetry();
+            noteCloudTransportFailure();
+            abortedOpsForNetwork = true;
+            break;
+          }
+          failedOps.push(item);
+          warnLog("offlineFlush", `pull ${item.rel}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
 
-    for (let i = 0; i < activeQt.length; i++) {
+    for (let i = 0; i < activeQt.length && !abortedOpsForNetwork; i++) {
       const qt = activeQt[i];
       try {
         await sendQuickTransferFile(provider, {
@@ -157,12 +189,25 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
     await deps.statusBar.refresh();
   }
 
-  if (abortedQtForNetwork) {
+  if (abortedQtForNetwork || abortedOpsForNetwork) {
     return;
+  }
+
+  // Items that failed for a non-network reason go back into the queue instead
+  // of disappearing. They are appended, not prepended, so a permanently broken
+  // item cannot starve the rest of the queue on every flush.
+  if (failedOps.length > 0) {
+    await store.prependItems(failedOps);
+    void vscode.window.showWarningMessage(
+      `VSCodeSync: оффлайн-очередь — не удалось выполнить элементов: ${String(failedOps.length)}. ` +
+        "Они возвращены в очередь, подробности — в канале Diagnostics.",
+    );
   }
 
   resetOfflineFlushBackoff();
   noteCloudTransportSuccess();
-  const n = tail.length + (hadFull ? 1 : 0);
-  void vscode.window.showInformationMessage(`VSCodeSync: оффлайн-очередь — обработано элементов: ${String(n)}.`);
+  const processed = tail.length + (hadFull ? 1 : 0) - failedOps.length;
+  void vscode.window.showInformationMessage(
+    `VSCodeSync: оффлайн-очередь — обработано элементов: ${String(processed)}.`,
+  );
 }

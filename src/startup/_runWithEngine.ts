@@ -11,6 +11,7 @@
 import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { ensureProvider } from "../commands/_providerFactory.js";
@@ -21,11 +22,11 @@ import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { verboseLog } from "../utils/log.js";
+import { isCancellation } from "../core/operationCancelled.js";
 
 export interface RunWithEngineDeps {
   registry: ProviderRegistry;
   globalConfig: GlobalConfigManager;
-  getEncKey: () => Promise<Buffer | null>;
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
   fileDecorations: SyncFileDecorationController;
@@ -34,17 +35,18 @@ export interface RunWithEngineDeps {
     provider: import("../providers/cloudProviderTypes.js").ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
+    trigger: SyncTrigger,
+    opts?: { abortSignal?: AbortSignal },
   ) => SyncEngine;
 }
 
 export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
-  const { registry, globalConfig, getEncKey, statusBar, workspacesTree, fileDecorations, makeEngine } = deps;
+  const { registry, globalConfig, statusBar, workspacesTree, fileDecorations, makeEngine } = deps;
   let seq = 0;
   return async (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
     workspaceRoot?: string,
-    options?: { showErrorDialog?: boolean },
+    options?: { showErrorDialog?: boolean; trigger?: SyncTrigger; cancellable?: string },
   ): Promise<void> => {
     const n = ++seq;
     verboseLog("rwe", `#${String(n)} START fn=${fn.name || "(anon)"}`);
@@ -58,32 +60,52 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
       return;
     }
     const cfg = await globalConfig.load();
-    const encKey = await getEncKey();
-    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, encKey);
+    // This wrapper is the command path, so "user" is its contract, not a
+    // convenience default — see the option's doc comment. Non-command callers
+    // (the task provider) pass their own trigger.
+    // `cancellable` turns this into a progress notification with a working
+    // Cancel button (A5): the token becomes an AbortSignal that reaches the
+    // engine's loops and the provider's fetches. Without it nothing changes —
+    // the operation runs exactly as before.
+    const ac = options?.cancellable === undefined ? undefined : new AbortController();
+    const engine = makeEngine(
+      root,
+      provider,
+      cfg.machineId,
+      cfg.machineName,
+      options?.trigger ?? "user",
+      { abortSignal: ac?.signal },
+    );
     statusBar.setSyncing(true);
+    let failure: unknown;
     try {
-      await fn(engine, root, globalConfig);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (options?.showErrorDialog !== false) {
-        // Special handling for expired/missing credentials
-        if (e instanceof ProviderError && e.code === "UNAUTHORIZED") {
-          const gc = await globalConfig.load();
-          const providerName = gc.activeProvider ?? "провайдер";
-          const choice = await vscode.window.showErrorMessage(
-            `VSCodeSync: сессия ${providerName} истекла или недействительна. Необходима повторная авторизация.`,
-            "Войти снова",
-          );
-          if (choice === "Войти снова") {
-            await vscode.commands.executeCommand("vscodesync.setActiveProvider");
-          }
-        } else {
-          await vscode.window.showErrorMessage(`VSCodeSync: ${msg}`);
-        }
+      if (options?.cancellable !== undefined && ac) {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: options.cancellable,
+            cancellable: true,
+          },
+          async (_progress, token) => {
+            token.onCancellationRequested(() => {
+              ac.abort();
+            });
+            await fn(engine, root, globalConfig);
+          },
+        );
       } else {
-        throw e;
+        await fn(engine, root, globalConfig);
       }
+    } catch (e: unknown) {
+      failure = e;
     } finally {
+      // Refresh runs before any notification is shown. Previously the error
+      // branch awaited `showErrorMessage`, whose promise settles only when the
+      // user dismisses the toast — and a toast carrying a button does not
+      // self-dismiss, it parks in the notification centre. Until the user
+      // clicked, this `finally` never ran: the status bar kept claiming
+      // "Синхронизация…", the tree and decorations stayed stale. That is the
+      // wrapper around all 167 commands.
       verboseLog("rwe", `#${String(n)} finally`);
       statusBar.setSyncing(false);
       await statusBar.refresh();
@@ -91,5 +113,46 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
       fileDecorations.refresh();
       void refreshActiveEditorSyncContext();
     }
+
+    if (failure === undefined) return;
+    // The user pressing Cancel is an outcome, not an error to apologise for.
+    if (isCancellation(failure)) {
+      void vscode.window.showInformationMessage("VSCodeSync: операция отменена.");
+      return;
+    }
+    if (options?.showErrorDialog === false) throw toError(failure);
+    // Fire-and-forget: the dialog only offers a follow-up action, so the
+    // command promise must not hang on the user reading it.
+    void reportEngineFailure(failure, globalConfig);
   };
+}
+
+/** Normalise anything a rejected promise may carry into a real `Error`. */
+function toError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  if (typeof value === "string") return new Error(value);
+  if (typeof value === "number" || typeof value === "boolean") return new Error(String(value));
+  if (value === undefined || value === null) return new Error("Unknown error");
+  return new Error(JSON.stringify(value));
+}
+
+/** Surface a failed engine run. Never awaited by the caller — see `finally` above. */
+async function reportEngineFailure(
+  failure: unknown,
+  globalConfig: GlobalConfigManager,
+): Promise<void> {
+  if (failure instanceof ProviderError && failure.code === "UNAUTHORIZED") {
+    const gc = await globalConfig.load();
+    const providerName = gc.activeProvider ?? "провайдер";
+    const choice = await vscode.window.showErrorMessage(
+      `VSCodeSync: сессия ${providerName} истекла или недействительна. Необходима повторная авторизация.`,
+      "Войти снова",
+    );
+    if (choice === "Войти снова") {
+      await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+    }
+    return;
+  }
+  const msg = failure instanceof Error ? failure.message : String(failure);
+  await vscode.window.showErrorMessage(`VSCodeSync: ${msg}`);
 }

@@ -33,6 +33,9 @@ export interface ProviderSignInCommandsDeps {
   signIn: {
     oneDrive: (openBrowser: boolean) => Promise<void>;
     googleDrive: (openBrowser: boolean) => Promise<void>;
+    /** PKCE + loopback: browser returns the code by itself (E13). */
+    oneDrivePkce: () => Promise<void>;
+    googleDrivePkce: () => Promise<void>;
     dropbox: (openBrowser: boolean) => Promise<void>;
     yandexDisk: (openBrowser: boolean) => Promise<void>;
   };
@@ -71,6 +74,75 @@ export function registerProviderSignInCommands(
           refreshCloudWebhooks();
         },
       });
+    }),
+
+    /**
+     * One palette entry for signing in (F12). Nine separate commands —
+     * four providers × browser/headless plus device code — filled the palette
+     * with variants the user has to know the difference between before they can
+     * choose. The per-provider commands stay registered (Command Center,
+     * keybindings, `executeCommand`), just hidden from the palette.
+     */
+    vscode.commands.registerCommand("vscodesync.signIn", async () => {
+      type Pick = vscode.QuickPickItem & { run: () => Promise<void> };
+      const items: Pick[] = [
+        // Browser-first, because that is the flow with nothing to type: the
+        // redirect comes back to 127.0.0.1 on its own. Device Code stays for
+        // hosts without a usable browser — SSH, containers, a remote machine.
+        { label: "$(cloud) OneDrive", description: "браузер", run: () => signIn.oneDrivePkce() },
+        { label: "$(cloud) Google Drive", description: "браузер", run: () => signIn.googleDrivePkce() },
+        { label: "$(cloud) Dropbox", description: "браузер", run: () => signIn.dropbox(true) },
+        { label: "$(cloud) Яндекс Диск", description: "браузер", run: () => signIn.yandexDisk(true) },
+        {
+          label: "$(key) OneDrive — код устройства",
+          description: "если браузер недоступен или вход не проходит",
+          run: () => signIn.oneDrive(true),
+        },
+        {
+          label: "$(key) Google Drive — код устройства",
+          description: "если браузер недоступен или вход не проходит",
+          run: () => signIn.googleDrive(true),
+        },
+        {
+          label: "$(terminal) OneDrive — код устройства без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.oneDrive(false),
+        },
+        {
+          label: "$(terminal) Google Drive — код устройства без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.googleDrive(false),
+        },
+        {
+          label: "$(terminal) Dropbox — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.dropbox(false),
+        },
+        {
+          label: "$(terminal) Яндекс Диск — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.yandexDisk(false),
+        },
+        {
+          label: "$(key) Device Code",
+          description: "вход с другого устройства",
+          run: async () => {
+            await vscode.commands.executeCommand("vscodesync.signInDeviceCode");
+          },
+        },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        title: "VSCodeSync: вход в облако",
+        placeHolder: "Выберите провайдера",
+      });
+      await picked?.run();
+    }),
+
+    vscode.commands.registerCommand("vscodesync.onedriveSignInBrowser", async () => {
+      await signIn.oneDrivePkce();
+    }),
+    vscode.commands.registerCommand("vscodesync.googleDriveSignInBrowser", async () => {
+      await signIn.googleDrivePkce();
     }),
 
     vscode.commands.registerCommand("vscodesync.onedriveSignIn", async () => {

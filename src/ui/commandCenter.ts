@@ -57,10 +57,12 @@ const GROUPS: CmdGroup[] = [
     icon: "🔑",
     items: [
       { label: "Сменить провайдер", desc: "Переключить OneDrive / Яндекс Диск / Google Drive / Dropbox", cmd: "vscodesync.setActiveProvider", style: "primary" },
-      { label: "Войти в Яндекс Диск", desc: "OAuth через браузер (implicit flow)", cmd: "vscodesync.yandexDiskSignIn" },
+      { label: "Войти в Яндекс Диск", desc: "OAuth через браузер (authorization code + PKCE)", cmd: "vscodesync.yandexDiskSignIn" },
       { label: "Ввести токен Яндекса вручную", desc: "Вставить токен из oauth.yandex.ru", cmd: "vscodesync.yandexDiskEnterToken" },
-      { label: "Войти в OneDrive", desc: "Device Code Flow", cmd: "vscodesync.onedriveSignIn" },
-      { label: "Войти в Google Drive", desc: "Device Code Flow", cmd: "vscodesync.gdriveSignIn" },
+      { label: "Войти в OneDrive", desc: "браузер (PKCE + loopback)", cmd: "vscodesync.onedriveSignInBrowser" },
+      { label: "Войти в Google Drive", desc: "браузер (PKCE + loopback)", cmd: "vscodesync.googleDriveSignInBrowser" },
+      { label: "Войти в OneDrive — код устройства", desc: "если браузер недоступен", cmd: "vscodesync.onedriveSignIn" },
+      { label: "Войти в Google Drive — код устройства", desc: "если браузер недоступен", cmd: "vscodesync.googleDriveSignIn" },
       { label: "Войти в Dropbox", desc: "PKCE loopback", cmd: "vscodesync.dropboxSignIn" },
       { label: "Инструкции по настройке", desc: "Пошаговые гайды по всем провайдерам", cmd: "vscodesync.showProviderSetupGuide" },
     ],
@@ -83,12 +85,12 @@ const GROUPS: CmdGroup[] = [
     icon: "☁",
     items: [
       { label: "Sync Workspace", desc: "Push + Pull — полная синхронизация", cmd: "vscodesync.syncWorkspace", style: "primary" },
-      { label: "Push All", desc: "Залить все файлы workspace на облако", cmd: "vscodesync.pushAllFiles" },
-      { label: "Pull All", desc: "Скачать все файлы workspace с облака", cmd: "vscodesync.pullAllFiles" },
+      { label: "Push All", desc: "Залить все файлы workspace на облако", cmd: "vscodesync.pushAll" },
+      { label: "Pull All", desc: "Скачать все файлы workspace с облака", cmd: "vscodesync.pullAll" },
       { label: "Push текущего файла", desc: "Залить открытый файл", cmd: "vscodesync.pushCurrentFile" },
       { label: "Pull текущего файла", desc: "Скачать открытый файл с облака", cmd: "vscodesync.pullCurrentFile" },
       { label: "Diff с облаком", desc: "Сравнить локальный файл с облачной версией", cmd: "vscodesync.diffWithCloud" },
-      { label: "Sync All Workspaces", desc: "Синхронизировать все workspace сразу", cmd: "vscodesync.syncAllWorkspaces" },
+      { label: "Расхождения", desc: "Панель: что разошлось с облаком, отправка и скачивание по выбору", cmd: "vscodesync.openDivergences" },
     ],
   },
   {
@@ -119,8 +121,8 @@ const GROUPS: CmdGroup[] = [
     items: [
       { label: "Включить Watch Mode", desc: "Фоновый автосинк по таймеру", cmd: "vscodesync.enableWatchMode", style: "primary" },
       { label: "Выключить Watch Mode", desc: "Остановить фоновый мониторинг", cmd: "vscodesync.disableWatchMode" },
-      { label: "Пауза синхронизации", desc: "Suspend — временно приостановить", cmd: "vscodesync.pauseSync" },
-      { label: "Возобновить синхронизацию", desc: "Resume после паузы", cmd: "vscodesync.resumeSync" },
+      { label: "Пауза синхронизации", desc: "Suspend — временно приостановить", cmd: "vscodesync.togglePause" },
+      { label: "Возобновить синхронизацию", desc: "Resume после паузы", cmd: "vscodesync.resume" },
     ],
   },
   {
@@ -129,7 +131,7 @@ const GROUPS: CmdGroup[] = [
     items: [
       { label: "Создать снапшот", desc: "Create Snapshot — точка восстановления workspace", cmd: "vscodesync.createSnapshot", style: "primary" },
       { label: "Restore Snapshot", desc: "Восстановить workspace из снапшота", cmd: "vscodesync.restoreSnapshot" },
-      { label: "Delete Snapshot", desc: "Удалить снапшот с облака", cmd: "vscodesync.deleteSnapshot" },
+      { label: "Diff Snapshots", desc: "Сравнить два снапшота между собой", cmd: "vscodesync.diffSnapshots" },
     ],
   },
   {
@@ -146,7 +148,7 @@ const GROUPS: CmdGroup[] = [
     title: "Шифрование",
     icon: "🔒",
     items: [
-      { label: "Настроить ключ шифрования", desc: "Создать или импортировать ключ AES-256", cmd: "vscodesync.setupEncryptionKey" },
+      { label: "Импортировать ключ шифрования", desc: "Импорт ключа AES-256 с другой машины", cmd: "vscodesync.importEncryptionKey" },
       { label: "Экспортировать ключ", desc: "Сохранить ключ с паролем", cmd: "vscodesync.exportEncryptionKey" },
       { label: "Импортировать ключ", desc: "Загрузить ключ из файла", cmd: "vscodesync.importEncryptionKey" },
       { label: "Сменить ключ", desc: "Rotate Encryption Key", cmd: "vscodesync.rotateEncryptionKey" },

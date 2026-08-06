@@ -16,17 +16,18 @@
  * dispatcher in extension.ts can notify it on new sync events.
  */
 import * as vscode from "vscode";
+import { backgroundCloudAllowed } from "../ui/backgroundCloudGate.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ProviderType } from "../core/types.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
-import { ensureWorkspaceGitignoreEntry } from "../core/workspaceGitignore.js";
+import { ensureWorkspaceGitignoreEntry } from "../ui/workspaceGitignore.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
 import { runOnboardingWizard } from "../ui/onboarding.js";
 import { SyncTimelineProvider } from "../ui/syncTimelineProvider.js";
@@ -39,12 +40,12 @@ export interface OnboardingFlowDeps {
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
   offlineQueueStore: SyncOfflineQueueStore;
-  scheduleDeferredStore: SyncScheduleDeferredStore;
   makeEngine: (
     root: string,
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   workspaceFolders: () => readonly vscode.WorkspaceFolder[];
 }
@@ -62,7 +63,6 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
     statusBar,
     workspacesTree,
     offlineQueueStore,
-    scheduleDeferredStore,
     makeEngine,
     workspaceFolders,
   } = deps;
@@ -87,6 +87,10 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
 
   void (async () => {
     try {
+      // Activation is a background moment: registering this machine writes
+      // `_machines.json` in the cloud, so it obeys the same gate as every
+      // other background poller (B11).
+      if (!backgroundCloudAllowed()) return;
       const c = await globalConfig.load();
       if (!c.onboardingCompleted) return;
       const p = await tryAuthenticatedProvider(registry);
@@ -115,12 +119,12 @@ export function registerOnboardingFlow(deps: OnboardingFlowDeps): OnboardingFlow
     registerHealthAutoCheck(context, {
       globalConfig,
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-      createEngine: (root, p) => makeEngine(root, p, gcInit.machineId, gcInit.machineName),
+      // Automatic health check — read-only (`healthCheckWorkspace`).
+      createEngine: (root, p) => makeEngine(root, p, gcInit.machineId, gcInit.machineName, "auto"),
       activeProvider: gcInit.activeProvider,
       machineId: gcInit.machineId,
       machineName: gcInit.machineName,
       offlineQueue: offlineQueueStore,
-      scheduleDeferred: scheduleDeferredStore,
     });
   })();
 

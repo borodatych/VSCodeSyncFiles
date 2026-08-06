@@ -1,0 +1,51 @@
+/**
+ * Bookkeeping for tracked files that automation refuses to push.
+ *
+ * `vscodesync.warnOnBinaryFiles` reads "Warn before syncing files that look
+ * binary", but no warning existed: every automatic path — push after save, the
+ * commit hook, the offline flush, the schedule flush — just returned. A tracked
+ * binary file was therefore never uploaded by automation, for the lifetime of
+ * the workspace, with no status, no notification and nothing in the log. From
+ * the outside it is indistinguishable from "sync is broken".
+ *
+ * Pure: the caller decides how to surface the notice.
+ */
+
+const SEPARATOR = "\u0000";
+
+function key(workspaceRoot: string, posixRel: string): string {
+  return `${workspaceRoot.replace(/\\/g, "/").toLowerCase()}${SEPARATOR}${posixRel.toLowerCase()}`;
+}
+
+const notified = new Set<string>();
+
+/**
+ * True the first time a given file is skipped in this session — the caller
+ * should tell the user. Repeat skips return false so a save loop does not turn
+ * into a notification storm.
+ */
+export function shouldAnnounceBinarySkip(workspaceRoot: string, posixRel: string): boolean {
+  const k = key(workspaceRoot, posixRel);
+  if (notified.has(k)) return false;
+  notified.add(k);
+  return true;
+}
+
+/** Called when the file is pushed explicitly, so a later skip is announced again. */
+export function clearBinarySkipNotice(workspaceRoot: string, posixRel: string): void {
+  notified.delete(key(workspaceRoot, posixRel));
+}
+
+/** Test seam. */
+export function resetBinarySkipNotices(): void {
+  notified.clear();
+}
+
+/** Message shown when automation declines to push a binary-looking file. */
+export function binarySkipMessage(posixRel: string): string {
+  return (
+    `VSCodeSync: «${posixRel}» выглядит бинарным и не отправляется автоматически ` +
+    "(настройка vscodesync.warnOnBinaryFiles). Отправьте его командой Push вручную " +
+    "или выключите настройку."
+  );
+}

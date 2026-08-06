@@ -1,5 +1,9 @@
 import type { SecretStore } from "../../core/types.js";
 import { storeGdriveTokens } from "./gdriveTokens.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 interface DeviceCodeStart {
   device_code: string;
@@ -37,11 +41,11 @@ async function pollUntilReady(
       device_code: deviceCode,
       client_id: clientId,
     });
-    const tr = await fetch(tokenUrl, {
+    const tr = await fetchWithTimeout(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
-    });
+    }, { channel: "gdrive.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
     const j = (await tr.json()) as TokenResponse & { error?: string; error_description?: string };
     if (j.access_token) {
       return j;
@@ -69,14 +73,14 @@ export async function runGoogleDriveDeviceCodeLogin(
   onUserCode: (verificationUri: string, userCode: string, message: string) => void,
 ): Promise<void> {
   const scope = "https://www.googleapis.com/auth/drive.file";
-  const startRes = await fetch("https://oauth2.googleapis.com/device/code", {
+  const startRes = await fetchWithTimeout("https://oauth2.googleapis.com/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({
       client_id: clientId,
       scope,
     }),
-  });
+  }, { channel: "gdrive.deviceCode", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   if (!startRes.ok) {
     throw new Error(await startRes.text());
   }

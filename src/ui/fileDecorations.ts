@@ -1,13 +1,12 @@
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { computeHash, type HashConfig } from "../utils/hash.js";
-import type { LineEndingMode } from "../utils/normalize.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 function decoHashConfig(): HashConfig {
-  const raw = vscode.workspace.getConfiguration("vscodesync").get<string>("lineEnding", "lf");
-  const lineEnding: LineEndingMode = raw === "crlf" || raw === "preserve" ? raw : "lf";
-  return { lineEnding };
+  // The canonical hash is always LF since 1.0.0 — the `lineEnding` setting is
+  // gone (stage 3.4, C25) and the engine hardcodes the same value.
+  return { lineEnding: "lf" };
 }
 
 function formatRelative(iso: string | undefined): string {
@@ -74,7 +73,8 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
       // with stale.
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
       if (token.isCancellationRequested) return undefined;
-      const rel = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/");
+      const rel = await trackedPosixRelFor(folder.uri.fsPath, uri.fsPath);
+      if (rel === undefined) return undefined;
       const tf = wc.files.find((f) => f.localPath === rel);
       if (!tf) {
         return undefined;

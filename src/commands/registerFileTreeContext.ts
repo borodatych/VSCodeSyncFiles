@@ -17,6 +17,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ActivityEventInput } from "../core/activityLog.js";
 import { trackedLocalAbsolutePath } from "../core/pathMapping.js";
 import { guardPathsBeforePush } from "../ui/syncGuards.js";
+import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
@@ -128,30 +129,29 @@ export function registerFileTreeContextCommands(
       await openTrackedFileInCloudStorageAt({ root: el.folderRoot.fsPath, fsPath: abs });
     }),
 
+    // Both tree actions delegate to the engine — they used to be a third copy
+    // of conflict resolution (C19): "keep mine" only cleared the flag locally
+    // and asked the user to push afterwards, and "take theirs" persisted
+    // `syncStatus = "ok"` before the pull, losing the conflict on any failure
+    // (C18). Mutating `syncStatus` from the command layer is no longer done
+    // anywhere.
     vscode.commands.registerCommand("vscodesync.treeFileKeepMine", async (el: SyncTreeElement | undefined) => {
       if (el?.kind !== "file") {
         return;
       }
       const rootPath = el.folderRoot.fsPath;
-      const cfg = await WorkspaceConfigManager.load(rootPath);
-      const gconf = await globalConfig.load();
-      const wnote =
-        cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId)?.workspaceNote ?? el.workspaceId;
-      for (const f of cfg.files) {
-        if (f.workspaceId === el.workspaceId && f.localPath === el.localPath) {
-          f.syncStatus = "ok";
+      await runWithEngine(async (engine) => {
+        const pushed = await keepMineWithCloudMovedPrompt(
+          (opts) => engine.resolveConflictKeepMine(el.workspaceId, el.localPath, opts),
+          el.localPath,
+        );
+        if (!pushed) {
+          return;
         }
-      }
-      await WorkspaceConfigManager.save(cfg, rootPath);
-      logSyncActivity({
-        kind: "resolve_keep_mine",
-        workspaceId: el.workspaceId,
-        workspaceNote: wnote,
-        relPath: el.localPath,
-        machineName: gconf.machineName,
-        provider: gconf.activeProvider ?? "onedrive",
-      });
-      void vscode.window.showInformationMessage("Конфликт снят (локально); при необходимости выполните Push.");
+        void vscode.window.showInformationMessage(
+          `Конфликт разрешён: оставлена локальная версия «${el.localPath}».`,
+        );
+      }, rootPath);
       await statusBar.refresh();
       workspacesTree.refresh();
       fileDecorations.refresh();
@@ -163,35 +163,14 @@ export function registerFileTreeContextCommands(
         return;
       }
       const rootPath = el.folderRoot.fsPath;
-      await runWithEngine(async (engine, root) => {
-        let cfg = await WorkspaceConfigManager.load(root);
-        const row = cfg.files.find((f) => f.workspaceId === el.workspaceId && f.localPath === el.localPath);
-        if (row?.syncStatus !== "conflict") {
-          await vscode.window.showWarningMessage("VSCodeSync: нет конфликта для этого файла.");
-          return;
-        }
-        row.syncStatus = "ok";
-        await WorkspaceConfigManager.save(cfg, root);
-        cfg = await WorkspaceConfigManager.load(root);
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId);
-        if (!entry) {
-          await vscode.window.showErrorMessage("VSCodeSync: workspace не найден.");
-          return;
-        }
-        await engine.pullFile(cfg, el.workspaceId, el.localPath, entry);
-        const gconf = await globalConfig.load();
-        const wnote =
-          cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId)?.workspaceNote ?? el.workspaceId;
-        logSyncActivity({
-          kind: "resolve_take_theirs",
-          workspaceId: el.workspaceId,
-          workspaceNote: wnote,
-          relPath: el.localPath,
-          machineName: gconf.machineName,
-          provider: gconf.activeProvider ?? "onedrive",
-        });
+      await runWithEngine(async (engine) => {
+        await engine.resolveConflictTakeTheirs(el.workspaceId, el.localPath);
         void vscode.window.showInformationMessage(`Принята облачная версия: ${el.localPath}`);
       }, rootPath);
+      await statusBar.refresh();
+      workspacesTree.refresh();
+      fileDecorations.refresh();
+      refreshActiveEditor();
     }),
 
     vscode.commands.registerCommand("vscodesync.treeFileForceSync", async (el: SyncTreeElement | undefined) => {

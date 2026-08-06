@@ -3,6 +3,7 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { resolveWorkspaceRootForPaletteCommand } from "../utils/workspaceRootResolver.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
 
@@ -14,6 +15,7 @@ export interface MergeWorkspacesDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   refreshAfterLocalConfigChange?: () => void | Promise<void>;
 }
@@ -103,7 +105,7 @@ export async function runMergeWorkspaces(deps: MergeWorkspacesDeps): Promise<voi
     return;
   }
   const gc = await deps.globalConfig.load();
-  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName);
+  const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "user");
 
   try {
     await vscode.window.withProgress(

@@ -18,10 +18,10 @@ import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncMachinesRegistrySelf } from "../core/machineRegistry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
-import type { SyncScheduleDeferredStore } from "../core/syncScheduleDeferredStore.js";
 import {
   forceAcquireWorkspaceInstanceLock,
   peekWorkspaceInstanceLockHolder,
@@ -36,13 +36,11 @@ export interface DiagnosticsCommandsDeps {
   globalConfig: GlobalConfigManager;
   registry: ProviderRegistry;
   offlineQueueStore: SyncOfflineQueueStore;
-  scheduleDeferredStore: SyncScheduleDeferredStore;
   healthCheckChannel: vscode.OutputChannel;
   refreshWorkspaceInstanceLock: () => void;
   /** Auth-aware lookup of the active provider; returns null when not signed in. */
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
   /** Encryption key resolver; returns null when encryption is off. */
-  getEncKey: () => Promise<Buffer | null>;
   /** Engine factory used by Health Check to run targeted ops without going
    * through the full `runWithEngine` flow. */
   makeEngine: (
@@ -50,7 +48,7 @@ export interface DiagnosticsCommandsDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   /** Open VS Code folder list — usually `vscode.workspace.workspaceFolders ?? []`. */
   roots: () => readonly vscode.WorkspaceFolder[];
@@ -65,11 +63,9 @@ export function registerDiagnosticsCommands(
     globalConfig,
     registry,
     offlineQueueStore,
-    scheduleDeferredStore,
     healthCheckChannel,
     refreshWorkspaceInstanceLock,
     tryAuthenticatedProvider,
-    getEncKey,
     makeEngine,
     roots,
     profileBuffer,
@@ -109,7 +105,6 @@ export function registerDiagnosticsCommands(
       }
       const provider = await tryAuthenticatedProvider();
       const gcData = await globalConfig.load();
-      const encKey = await getEncKey();
       const report = await buildHealthCheckReport({
         workspaceFolders: folders,
         globalConfig,
@@ -117,9 +112,8 @@ export function registerDiagnosticsCommands(
         provider,
         machineId: gcData.machineId,
         machineName: gcData.machineName,
-        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, encKey),
+        createEngine: (root, p) => makeEngine(root, p, gcData.machineId, gcData.machineName, "user"),
         offlineQueue: offlineQueueStore,
-        scheduleDeferred: scheduleDeferredStore,
       });
       healthCheckChannel.clear();
       for (const ln of report.lines) {
@@ -155,7 +149,7 @@ export function registerDiagnosticsCommands(
         let total = 0;
         for (const t of report.staleLockTargets) {
           try {
-            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, encKey);
+            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, "user");
             total += await eng.clearStaleManifestEditingLocks(t.workspaceId);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);

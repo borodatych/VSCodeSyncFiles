@@ -1,5 +1,5 @@
 /**
- * v2.11.1 — `createEngineFactory()` contract test.
+ * v2.11.1 — `createEngineFactory({ getEncKey: () => Promise.resolve(null) })` contract test.
  *
  * The factory closes over six dedup `Set<string>` stores and five callback
  * refs. The contract this test asserts:
@@ -42,20 +42,20 @@ import { createEngineFactory } from "../../src/startup/_engineFactory.js";
 
 describe("createEngineFactory", () => {
   it("exposes the public surface", () => {
-    const factory = createEngineFactory();
+    const factory = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     expect(typeof factory.makeEngine).toBe("function");
     expect(typeof factory.setRefs).toBe("function");
     expect(factory.notifiedConflictKeys).toBeInstanceOf(Set);
   });
 
   it("starts with an empty notifiedConflictKeys set", () => {
-    const factory = createEngineFactory();
+    const factory = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     expect(factory.notifiedConflictKeys.size).toBe(0);
   });
 
   it("isolates dedup state between factory instances", () => {
-    const a = createEngineFactory();
-    const b = createEngineFactory();
+    const a = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
+    const b = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     a.notifiedConflictKeys.add("ws1:rel/path.ts");
     expect(a.notifiedConflictKeys.has("ws1:rel/path.ts")).toBe(true);
     expect(b.notifiedConflictKeys.has("ws1:rel/path.ts")).toBe(false);
@@ -63,7 +63,7 @@ describe("createEngineFactory", () => {
   });
 
   it("setRefs accepts an empty shape and partials without throwing", () => {
-    const factory = createEngineFactory();
+    const factory = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     expect(() => { factory.setRefs({}); }).not.toThrow();
     expect(() =>
       { factory.setRefs({
@@ -74,7 +74,7 @@ describe("createEngineFactory", () => {
   });
 
   it("setRefs is idempotent (last call wins)", () => {
-    const factory = createEngineFactory();
+    const factory = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     const calls: string[] = [];
     factory.setRefs({ treeRefresh: () => { calls.push("first"); } });
     factory.setRefs({ treeRefresh: () => { calls.push("second"); } });
@@ -85,7 +85,7 @@ describe("createEngineFactory", () => {
   });
 
   it("notifiedConflictKeys is the same reference across calls", () => {
-    const factory = createEngineFactory();
+    const factory = createEngineFactory({ getEncKey: () => Promise.resolve(null) });
     const ref1 = factory.notifiedConflictKeys;
     const ref2 = factory.notifiedConflictKeys;
     expect(ref1).toBe(ref2);

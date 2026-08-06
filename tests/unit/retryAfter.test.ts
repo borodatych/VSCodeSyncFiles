@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseRetryAfterToDelayMs } from "../../src/utils/retryAfter.js";
+import {
+  parseRetryAfterToDelayMs,
+  RETRY_AFTER_MAX_DELAY_MS,
+} from "../../src/utils/retryAfter.js";
 
 describe("parseRetryAfterToDelayMs", () => {
   it("parses delta-seconds", () => {
@@ -37,5 +40,17 @@ describe("parseRetryAfterToDelayMs", () => {
     const now = Date.UTC(2026, 3, 29, 12, 0, 0);
     const yearAway = new Date(now + 365 * 24 * 3600_000).toUTCString();
     expect(parseRetryAfterToDelayMs(yearAway, now, 60_000)).toBe(60_000);
+  });
+
+  it("дефолтный потолок — минута, а не пять", () => {
+    // Пять минут в связке с тремя попытками и 120-секундным таймаутом запроса
+    // давали до ~16 минут на один вызов провайдера, а отменить его было нечем:
+    // для пользователя это неотличимо от зависания.
+    expect(RETRY_AFTER_MAX_DELAY_MS).toBe(60_000);
+    expect(parseRetryAfterToDelayMs("600", 0)).toBe(RETRY_AFTER_MAX_DELAY_MS);
+  });
+
+  it("значение в пределах потолка отдаётся как есть", () => {
+    expect(parseRetryAfterToDelayMs("30", 0)).toBe(30_000);
   });
 });

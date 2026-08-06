@@ -15,12 +15,12 @@
  * tick (VS Code calls provideHover for every word the cursor passes over).
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import {
   summariseHoverDiffMinimal,
   type HoverSyncStatus,
 } from "../core/hoverDiffPreview.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 const CACHE_TTL_MS = 5_000;
 
@@ -55,7 +55,8 @@ export class HoverDiffPreviewProvider implements vscode.HoverProvider, vscode.Di
       return cached.hover ?? undefined;
     }
 
-    const rel = path.relative(folder.uri.fsPath, document.uri.fsPath).split(path.sep).join("/");
+    const rel = await trackedPosixRelFor(folder.uri.fsPath, document.uri.fsPath);
+    if (rel === undefined) return undefined;
     if (!rel || rel.startsWith("..")) {
       this.cache.set(key, { at: Date.now(), hover: null });
       return undefined;

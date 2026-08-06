@@ -1,0 +1,22 @@
+# Normalize every text file to LF, both in the repository and in working trees.
+# Without this the whole tree flips to CRLF as soon as it is edited on Windows:
+# on 2026-07-30 that produced 312 "modified" files whose diff was 52811 identical
+# lines, hiding real changes completely.
+* text=auto eol=lf
+
+# Binary assets — never subject to EOL conversion or diffing as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.wasm binary
+*.vsix binary
+*.zip  binary
+
+# Windows shell scripts only work with CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf

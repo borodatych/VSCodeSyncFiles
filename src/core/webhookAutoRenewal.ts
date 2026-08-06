@@ -7,7 +7,7 @@
  * module just answers "what should I do for this set of subscriptions at
  * this `now`?".
  */
-import { isNearOrPastExpiration, SUBSCRIPTION_RENEW_SLACK_MS } from "../ui/webhookExpirationMath.js";
+import { isNearOrPastExpiration, SUBSCRIPTION_RENEW_SLACK_MS } from "./webhookExpirationMath.js";
 
 export interface WebhookSubscription {
   /** Provider-specific id; surfaced back so caller knows which to renew. */

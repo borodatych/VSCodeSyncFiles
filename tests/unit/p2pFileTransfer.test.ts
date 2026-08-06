@@ -103,6 +103,45 @@ describe("encodeManifestPayload + decodeManifestPayload", () => {
     if (!dec.ok) expect(dec.reason).toBe("bad_shape");
   });
 
+  it("rejects traversal, absolute and drive-letter relPath (B15)", () => {
+    const base: P2PFileManifest = {
+      v: 1,
+      transferId: TID,
+      relPath: "a.txt",
+      totalChunks: 1,
+      totalBytes: 0,
+      hash: "a".repeat(64),
+      chunkSize: 16,
+    };
+    for (const relPath of [
+      "../../../.ssh/authorized_keys",
+      "..",
+      "a/../../b.txt",
+      "/etc/passwd",
+      "C:/Windows/system32/drivers/etc/hosts",
+      "..\\..\\evil.txt",
+    ]) {
+      const dec = decodeManifestPayload(new TextEncoder().encode(JSON.stringify({ ...base, relPath })));
+      expect(dec.ok, relPath).toBe(false);
+      if (!dec.ok) expect(dec.reason, relPath).toBe("unsafe_path");
+    }
+  });
+
+  it("normalises a benign relPath instead of trusting the wire form", () => {
+    const m: P2PFileManifest = {
+      v: 1,
+      transferId: TID,
+      relPath: "./src//deep/./file.ts",
+      totalChunks: 1,
+      totalBytes: 0,
+      hash: "a".repeat(64),
+      chunkSize: 16,
+    };
+    const dec = decodeManifestPayload(new TextEncoder().encode(JSON.stringify(m)));
+    expect(dec.ok).toBe(true);
+    if (dec.ok) expect(dec.manifest.relPath).toBe("src/deep/file.ts");
+  });
+
   it("rejects bad hash format", () => {
     const m: P2PFileManifest = {
       v: 1,

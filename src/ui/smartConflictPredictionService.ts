@@ -18,7 +18,7 @@
  *    walk every open editor on every keystroke.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
+import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 import {
@@ -34,6 +34,7 @@ import {
   type PresenceCache,
 } from "../core/presenceCacheTTL.js";
 import { warnLog } from "../utils/log.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 const REFRESH_INTERVAL_MS = 30_000;
 /** v2.9.3 — interval at which the presence reader polls `_machines.json`.
@@ -98,6 +99,7 @@ export class SmartConflictPredictionService implements vscode.Disposable {
    *  (e.g. editor flip + save in <1s) don't double up the provider call. */
   private async fetchPresence(): Promise<void> {
     if (!this.tryAuthenticatedProvider) return;
+    if (!backgroundCloudAllowed()) return;
     const nowMs = Date.now();
     // Throttle: skip if we already fetched within the last (interval − 1s).
     // Allows the timer-driven fetch to always succeed, while debouncing
@@ -149,7 +151,8 @@ export class SmartConflictPredictionService implements vscode.Disposable {
       this.statusBar.hide();
       return;
     }
-    const rel = path.relative(folder.uri.fsPath, editor.document.uri.fsPath).split(path.sep).join("/");
+    const rel = await trackedPosixRelFor(folder.uri.fsPath, editor.document.uri.fsPath);
+    if (rel === undefined) return;
     if (!rel || rel.startsWith("..")) {
       this.statusBar.hide();
       return;

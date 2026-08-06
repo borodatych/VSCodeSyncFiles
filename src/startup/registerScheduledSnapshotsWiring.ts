@@ -34,10 +34,24 @@ export function registerScheduledSnapshotsWiring(deps: ScheduledSnapshotsWiringD
       const { createWorkspaceSnapshot, listWorkspaceSnapshots, deleteWorkspaceSnapshot } =
         await import("../core/snapshotsEngine.js");
       const { planSnapshotRetention } = await import("../core/snapshotRetentionPlan.js");
+      const { readSnapshotCrypto } = await import("../ui/snapshotCrypto.js");
+      const snapCrypto = await readSnapshotCrypto(context.secrets);
+      // Scheduled snapshots are automatic: with the key locked they are skipped
+      // entirely rather than written in the clear.
+      if (snapCrypto.required && snapCrypto.encrypt === undefined) {
+        return;
+      }
       for (const aw of wc.activeWorkspaces) {
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         try {
-          await createWorkspaceSnapshot(provider, folderRoot, aw.workspaceId, `auto-${stamp}`, gc.machineName);
+          await createWorkspaceSnapshot(
+            provider,
+            folderRoot,
+            aw.workspaceId,
+            `auto-${stamp}`,
+            gc.machineName,
+            snapCrypto,
+          );
         } catch {
           continue;
         }

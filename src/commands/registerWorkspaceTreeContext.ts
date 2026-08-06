@@ -24,6 +24,7 @@ import {
 } from "../ui/workspacesTreeFilterState.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
+import { summarisePushForToast } from "../core/bulkPushWizard.js";
 
 export interface WorkspaceTreeContextCommandsDeps {
   context: vscode.ExtensionContext;
@@ -57,8 +58,10 @@ export function registerWorkspaceTreeContextCommands(
           if (!proceed) {
             return;
           }
-          await engine.pushAll(el.workspaceId);
-          void vscode.window.showInformationMessage(`Push workspace (${el.note}): готово.`);
+          const results = await engine.pushAll(el.workspaceId);
+          void vscode.window.showInformationMessage(
+            summarisePushForToast(`Push workspace (${el.note})`, results),
+          );
         }, rootPath);
       },
     ),

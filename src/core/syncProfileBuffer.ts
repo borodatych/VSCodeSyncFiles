@@ -75,7 +75,7 @@ export function buildSyncProfileReport(
   // since the same file can be measured several times during one session.
   // Separator U+0001 is illegal in POSIX paths AND in our workspaceId regex,
   // so it's safe vs `#` which legitimately appears in filenames.
-  const SEP = "";
+  const SEP = "\u0001";
   const byKey = new Map<string, ProfileAcc>();
   for (const s of samples) {
     const key = `${s.workspaceId}${SEP}${s.posixRel}${SEP}${s.kind}`;

@@ -43,13 +43,28 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
         );
         if (!choice || choice === "Ничего") continue;
         if (choice === "Убрать из синхронизации") {
+          // Both branches run only after the user answered the prompt above.
           await runWithEngine(async (engine) => {
             await engine.removeTrackedFiles(fileEntry.workspaceId, [fsPath]);
-          }, root);
+          }, root, { trigger: "user" });
         } else {
+          // Restore means "bring back the file the user just deleted" — not
+          // `pullAll`, which force-pulls the whole workspace past detectChange
+          // and silently overwrites unsynced edits in every other file (D6).
           await runWithEngine(async (engine) => {
-            await engine.pullAll(fileEntry.workspaceId);
-          }, root);
+            const cfg = await WorkspaceConfigManager.load(root);
+            const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === fileEntry.workspaceId);
+            if (!entry) {
+              await vscode.window.showErrorMessage("VSCodeSync: workspace не найден в конфиге.");
+              return;
+            }
+            const result = await engine.pullFile(cfg, fileEntry.workspaceId, rel, entry);
+            void vscode.window.showInformationMessage(
+              result === "already_current"
+                ? `VSCodeSync: «${rel}» уже актуален.`
+                : `VSCodeSync: «${rel}» восстановлен из облака.`,
+            );
+          }, root, { trigger: "user" });
         }
       }
     }),
@@ -66,14 +81,16 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
         const newFolder = vscode.workspace.getWorkspaceFolder(newUri);
         if (newFolder?.uri.fsPath !== root) {
           // Moved outside workspace — untrack locally
+          // A rename is the user acting on their own file; the event is VS Code
+          // reporting it, not the extension deciding to move anything.
           await runWithEngine(async (engine) => {
             await engine.untrackFileLocal(fileEntry.workspaceId, [oldUri.fsPath]);
-          }, root);
+          }, root, { trigger: "user" });
           continue;
         }
         await runWithEngine(async (engine) => {
           await engine.renameTrackedFile(fileEntry.workspaceId, oldUri.fsPath, newUri.fsPath);
-        }, root);
+        }, root, { trigger: "user" });
       }
     }),
   );
@@ -81,13 +98,31 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
   registerSoftLockLifecycle(context, runWithEngine);
 }
 
+/**
+ * Soft-Lock lifecycle (B4).
+ *
+ * Behind `vscodesync.softLock.enabled`, default *off*: announcing "I am
+ * editing this file" costs two cloud round-trips (manifest download + upload)
+ * per tab switch, which only makes sense in explicit collaboration. Turning
+ * the setting on is the user's consent to that traffic.
+ *
+ * The 10-minute heartbeat and the 60-minute auto-clear timers are gone, not
+ * gated: both were pure timer paths (the mutation checkpoint would refuse
+ * them anyway), and both duties are already covered elsewhere — a lock that
+ * stops being refreshed goes stale for readers via `softLockStaleHours`, and
+ * closing the document clears it explicitly. The next real user action
+ * (tab switch, edit) re-announces presence by itself.
+ */
 function registerSoftLockLifecycle(
   context: vscode.ExtensionContext,
   runWithEngine: RunWithEngineFn,
 ): void {
-  const softLockRegistry = new Map<string, { root: string; workspaceId: string; relPath: string; lastActivityMs: number }>();
-  const SOFT_LOCK_TIMEOUT_MS = 60 * 60 * 1000; // 60 min without activity → auto-clear
-  const SOFT_LOCK_HEARTBEAT_MS = 10 * 60 * 1000; // refresh every 10 min of active editing
+  const softLockRegistry = new Map<string, { root: string; workspaceId: string; relPath: string }>();
+  const SOFT_LOCK_DEBOUNCE_MS = 1500;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const softLockEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("vscodesync").get<boolean>("softLock.enabled", false);
 
   const setSoftLockForUri = async (uri: vscode.Uri): Promise<void> => {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
@@ -101,11 +136,12 @@ function registerSoftLockLifecycle(
       root,
       workspaceId: fileEntry.workspaceId,
       relPath: rel,
-      lastActivityMs: Date.now(),
     });
+    // Opening or editing a file is the user being present in it — that is
+    // what a soft lock announces.
     await runWithEngine(async (engine) => {
       await engine.setSoftLock(fileEntry.workspaceId, rel);
-    }, root, { showErrorDialog: false });
+    }, root, { showErrorDialog: false, trigger: "user" });
   };
 
   const clearSoftLockForUri = async (uri: vscode.Uri): Promise<void> => {
@@ -114,42 +150,30 @@ function registerSoftLockLifecycle(
     softLockRegistry.delete(uri.fsPath);
     await runWithEngine(async (engine) => {
       await engine.clearSoftLock(entry.workspaceId, entry.relPath);
-    }, entry.root, { showErrorDialog: false });
+    }, entry.root, { showErrorDialog: false, trigger: "user" });
   };
 
-  const heartbeatHandle = setInterval(() => {
-    const now = Date.now();
-    for (const [fsPath, entry] of softLockRegistry) {
-      if (now - entry.lastActivityMs > SOFT_LOCK_TIMEOUT_MS) {
-        softLockRegistry.delete(fsPath);
-        void runWithEngine(async (engine) => {
-          await engine.clearSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false });
-      } else if (now - entry.lastActivityMs > SOFT_LOCK_HEARTBEAT_MS) {
-        // Refresh cloud lock without resetting the inactivity timer — only real edits do that.
-        void runWithEngine(async (engine) => {
-          await engine.setSoftLock(entry.workspaceId, entry.relPath);
-        }, entry.root, { showErrorDialog: false });
-      }
-    }
-  }, SOFT_LOCK_HEARTBEAT_MS);
-
   context.subscriptions.push(
-    new vscode.Disposable(() => { clearInterval(heartbeatHandle); }),
-    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      if (editor?.document.uri.scheme === "file") {
-        await setSoftLockForUri(editor.document.uri).catch(() => { /* non-fatal */ });
-      }
+    new vscode.Disposable(() => {
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
     }),
-    vscode.workspace.onDidCloseTextDocument(async (doc) => {
+    // Not awaited and debounced: flipping through five tabs must not fire
+    // five manifest uploads, and the event handler must not block on I/O.
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!softLockEnabled()) return;
+      if (editor?.document.uri.scheme !== "file") return;
+      const uri = editor.document.uri;
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        void setSoftLockForUri(uri).catch(() => { /* non-fatal */ });
+      }, SOFT_LOCK_DEBOUNCE_MS);
+    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      // Clear regardless of the setting: a lock set before the setting was
+      // turned off must still be removable.
       if (doc.uri.scheme === "file") {
-        await clearSoftLockForUri(doc.uri).catch(() => { /* non-fatal */ });
-      }
-    }),
-    vscode.workspace.onDidChangeTextDocument((e) => {
-      const entry = softLockRegistry.get(e.document.uri.fsPath);
-      if (entry) {
-        entry.lastActivityMs = Date.now();
+        void clearSoftLockForUri(doc.uri).catch(() => { /* non-fatal */ });
       }
     }),
   );

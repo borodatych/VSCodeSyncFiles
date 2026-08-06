@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { readSnoozeMap, setSnoozeEntry } from "../utils/snoozeStore.js";
@@ -45,13 +46,12 @@ export interface MachineApprovalNotifierDeps {
   extensionContext: vscode.ExtensionContext;
   globalConfig: GlobalConfigManager;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
-  getEncKey: () => Promise<Buffer | null>;
   makeEngine: (
     workspaceRoot: string,
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
-    encKey?: Buffer | null,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   startupChannel?: vscode.OutputChannel;
 }
@@ -72,13 +72,15 @@ async function pollOnce(deps: MachineApprovalNotifierDeps): Promise<void> {
   if (!provider) {
     return;
   }
-  const encKey = await deps.getEncKey();
   const folders = vscode.workspace.workspaceFolders ?? [];
 
   for (const folder of folders) {
     const root = folder.uri.fsPath;
     const wc = await WorkspaceConfigManager.load(root);
-    const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, encKey);
+    // The poll itself only reads the manifest; the single mutation
+    // (`setMachineManifestStatus`) runs after the user picks "Разрешить" or
+    // "Заблокировать" in the prompt below.
+    const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "user");
 
     for (const aw of wc.activeWorkspaces) {
       let machines;

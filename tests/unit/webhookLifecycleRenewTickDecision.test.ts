@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decideWebhookRenewTick } from "../../src/core/webhookLifecycleRenewTickDecision.js";
-import { SUBSCRIPTION_RENEW_SLACK_MS } from "../../src/ui/webhookExpirationMath.js";
+import { SUBSCRIPTION_RENEW_SLACK_MS } from "../../src/core/webhookExpirationMath.js";
 
 const NOW = 1_700_000_000_000;
 

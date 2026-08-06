@@ -48,9 +48,9 @@ describe("splitSettingsForSync", () => {
   it("preserves arbitrary value shapes (objects, nulls, arrays)", () => {
     const value = { enabled: true, activeHours: "09:00-18:00" };
     const result = splitSettingsForSync({
-      values: { syncSchedule: value, "_local.queue": [1, 2, 3] },
+      values: { compressUploads: value, "_local.queue": [1, 2, 3] },
     });
-    expect(result.synced.syncSchedule).toBe(value);
+    expect(result.synced.compressUploads).toBe(value);
     expect(result.localOnly["_local.queue"]).toEqual([1, 2, 3]);
   });
 });

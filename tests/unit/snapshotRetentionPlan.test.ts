@@ -71,9 +71,9 @@ describe("planSnapshotRetention — age sweep", () => {
     expect(r.delete.length).toBe(0);
   });
 
-  it("drops snapshots older than retention window with age_exceeded reason", () => {
+  it("drops system snapshots older than retention window with age_exceeded reason", () => {
     const r = planSnapshotRetention({
-      snapshots: [snap("old", 60), snap("recent", 5)],
+      snapshots: [snap("old", 60, "system"), snap("recent", 5, "system")],
       retentionDays: 30,
       maxPerWorkspace: 10,
       nowMs: NOW,
@@ -85,7 +85,7 @@ describe("planSnapshotRetention — age sweep", () => {
     expect(r.keep[0].name).toBe("recent");
   });
 
-  it("drops both user and system snapshots that exceed age", () => {
+  it("never age-sweeps user snapshots — a manual restore point is a promise (B13)", () => {
     const r = planSnapshotRetention({
       snapshots: [
         snap("user-old", 100),
@@ -96,7 +96,8 @@ describe("planSnapshotRetention — age sweep", () => {
       maxPerWorkspace: 10,
       nowMs: NOW,
     });
-    expect(r.delete.map((s) => s.name).sort()).toEqual(["auto-old", "user-old"]);
+    expect(r.delete.map((s) => s.name)).toEqual(["auto-old"]);
+    expect(r.keep.map((s) => s.name).sort()).toEqual(["user-fresh", "user-old"]);
   });
 
   it("treats unparseable createdAt as 'keep' (fail-open on bad data)", () => {
@@ -169,22 +170,23 @@ describe("planSnapshotRetention — count cap on user snapshots", () => {
     expect(r.keep.length).toBe(3);
   });
 
-  it("count cap applied AFTER age sweep — drops by age first, then by count", () => {
+  it("count cap applied AFTER age sweep — system drops by age, user only by count", () => {
     const r = planSnapshotRetention({
       snapshots: [
+        snap("auto-very-old", 100, "system"),
         snap("u-very-old", 100),
         snap("u-1", 1),
         snap("u-2", 2),
-        snap("u-3", 3),
       ],
       retentionDays: 30,
       maxPerWorkspace: 2,
       nowMs: NOW,
     });
-    // age sweep drops u-very-old. surviving = u-1, u-2, u-3 → cap 2 → drop u-3 (oldest).
-    expect(r.delete.map((s) => s.name).sort()).toEqual(["u-3", "u-very-old"]);
-    expect(r.reasons["u-very-old"]).toBe("age_exceeded");
-    expect(r.reasons["u-3"]).toBe("count_exceeded");
+    // Age sweep drops only auto-very-old; u-very-old survives it (user tier)
+    // and then loses to the count cap as the oldest user snapshot.
+    expect(r.delete.map((s) => s.name).sort()).toEqual(["auto-very-old", "u-very-old"]);
+    expect(r.reasons["auto-very-old"]).toBe("age_exceeded");
+    expect(r.reasons["u-very-old"]).toBe("count_exceeded");
   });
 });
 

@@ -11,6 +11,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import {
@@ -30,7 +31,7 @@ import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 export interface RunAfterSessionResumeDeps {
   globalConfig: GlobalConfigManager;
   registry: ProviderRegistry;
-  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string) => SyncEngine;
+  makeEngine: (root: string, provider: ICloudProvider, machineId: string, machineName: string, trigger: SyncTrigger) => SyncEngine;
   syncPreviewChannel: vscode.OutputChannel;
   statusBar: SyncStatusBarController;
   workspacesTree: WorkspacesTreeProvider;
@@ -72,7 +73,7 @@ export function createRunAfterSessionResume(deps: RunAfterSessionResumeDeps): ()
         continue;
       }
       anyRoot = true;
-      const engine = makeEngine(folder.uri.fsPath, provider, gcfg.machineId, gcfg.machineName);
+      const engine = makeEngine(folder.uri.fsPath, provider, gcfg.machineId, gcfg.machineName, "auto");
       try {
         const part = await engine.previewSyncPlan();
         allPlans.push(...part);
@@ -103,9 +104,9 @@ export function createRunAfterSessionResume(deps: RunAfterSessionResumeDeps): ()
         makeEngine,
         statusBar,
         offlineQueue: offlineQueueStore,
-        bypassSchedule: true,
-        bypassAutoPause: true,
-        bypassRateLimit: true,
+        // Reached only from the modal above, after the user chose
+        // "Синхронизировать" over the preview of what would move.
+        trigger: "user",
         refreshUi: () => {
           workspacesTree.refresh();
           fileDecorations.refresh();

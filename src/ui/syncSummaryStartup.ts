@@ -56,7 +56,7 @@ async function showSummaryModal(lines: TrackedDiffLine[], prevIso: string | unde
   const detail = buildSyncSummaryDetailText(lines, hint);
   // Skip summary modal when user wants minimal notifications
   const picked = await showSyncInfo(
-    `☁ VSCodeSync — изменения после pull (${String(lines.length)})`,
+    `☁ VSCodeSync — расхождения с облаком (${String(lines.length)})`,
     "normal",
     "Открыть изменённые файлы",
     "Закрыть",

@@ -14,7 +14,6 @@
  * can keep their existing contracts.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspacesTreeDnD } from "../ui/workspacesTreeDnD.js";
 import {
   type SyncTreeElement,
@@ -29,8 +28,10 @@ import { ensureProvider } from "../commands/_providerFactory.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { RunWithEngineFn } from "../commands/registerWorkspaceLifecycle.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
 
 export interface WorkspaceTreeWiringDeps {
   context: vscode.ExtensionContext;
@@ -43,6 +44,7 @@ export interface WorkspaceTreeWiringDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   updateBadge: (tv: vscode.TreeView<SyncTreeElement>) => Promise<void>;
 }
@@ -75,7 +77,8 @@ export function registerWorkspaceTreeWiring(
       }
       await runWithEngine(async (engine) => {
         for (const s of sources) {
-          const abs = path.join(folderRoot, ...s.localPath.split("/"));
+          const abs = await trackedAbsolutePathFor(folderRoot, s.localPath);
+          if (abs === undefined) continue;
           await engine.removeTrackedFiles(s.workspaceId, [abs]);
           await engine.addFiles(targetWorkspaceId, [abs]);
         }
@@ -84,7 +87,8 @@ export function registerWorkspaceTreeWiring(
             ? "Файл перемещён в другой workspace."
             : `Перемещено файлов: ${String(sources.length)}.`,
         );
-      }, folderRoot);
+        // Drag-and-drop in the workspaces tree — a direct user gesture.
+      }, folderRoot, { trigger: "user" });
     },
   });
 
@@ -94,7 +98,8 @@ export function registerWorkspaceTreeWiring(
     const provider = await ensureProvider(registry, globalConfig);
     if (!provider) return [];
     const cfg = await globalConfig.load();
-    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName);
+    // Tree rendering is a detector path: it only lists remote summaries.
+    const engine = makeEngine(root, provider, cfg.machineId, cfg.machineName, "auto");
     return engine.listRemoteWorkspaceSummaries();
   });
 

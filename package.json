@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "0.8.3",
+  "version": "1.0.0",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -214,16 +214,6 @@
           "default": false,
           "description": "%cfg.compressUploads.description%"
         },
-        "vscodesync.lineEnding": {
-          "type": "string",
-          "enum": [
-            "lf",
-            "crlf",
-            "preserve"
-          ],
-          "default": "lf",
-          "description": "%cfg.lineEnding.description%"
-        },
         "vscodesync.workspaceInactiveDays": {
           "type": "number",
           "default": 90,
@@ -242,33 +232,6 @@
           "default": false,
           "description": "%cfg.pushOnCommit.description%"
         },
-        "vscodesync.conflictRules": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "object",
-            "required": [
-              "pattern",
-              "strategy"
-            ],
-            "properties": {
-              "pattern": {
-                "type": "string",
-                "description": "Minimatch-glob относительно корня workspace (например '*.lock' или 'config/shared/**')"
-              },
-              "strategy": {
-                "type": "string",
-                "enum": [
-                  "keep-mine",
-                  "take-theirs",
-                  "newer"
-                ],
-                "description": "Автостратегия разрешения конфликта при матче по pattern"
-              }
-            }
-          },
-          "description": "%cfg.conflictRules.description%"
-        },
         "vscodesync.localBackupEnabled": {
           "type": "boolean",
           "default": true,
@@ -286,6 +249,12 @@
           "minimum": 1,
           "description": "%cfg.snapshotRetentionDays.description%"
         },
+        "vscodesync.tombstonePurgeDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "%cfg.tombstonePurgeDays.description%"
+        },
         "vscodesync.maxSnapshotsPerWorkspace": {
           "type": "number",
           "default": 20,
@@ -297,11 +266,6 @@
           "default": "",
           "pattern": "^$|^daily \\d{1,2}:\\d{2}$|^weekly (sun|mon|tue|wed|thu|fri|sat) \\d{1,2}:\\d{2}$",
           "description": "%cfg.snapshotSchedule.description%"
-        },
-        "vscodesync.syncScheduleExtended": {
-          "type": "string",
-          "default": "",
-          "description": "%cfg.syncScheduleExtended.description%"
         },
         "vscodesync.autoPause.learnedSchedule.enabled": {
           "type": "boolean",
@@ -396,6 +360,11 @@
           "default": false,
           "description": "Enable experimental WebRTC P2P session (cloud-bypass mode). When off, the Start P2P Session command shows the planned wizard but does not open a DataChannel. Requires the optional @roamhq/wrtc binding to be loadable."
         },
+        "vscodesync.p2p.acceptIncomingFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.p2p.acceptIncomingFiles.description%"
+        },
         "vscodesync.aiMerge.endpoint": {
           "type": "string",
           "default": "vscode-lm",
@@ -415,6 +384,11 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.gitBranchAutoSync.description%"
+        },
+        "vscodesync.tasks.allowFileMutations": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.tasks.allowFileMutations.description%"
         },
         "vscodesync.watchMode": {
           "type": "boolean",
@@ -437,65 +411,6 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.watchAdaptive.description%"
-        },
-        "vscodesync.syncSchedule": {
-          "type": "object",
-          "markdownDescription": "Окно времени для **автоматических** триггеров (onSave debounce, onFocus, onOpen, Git push-on-commit, watch poll, startup pull). Ручные команды VSCodeSync выполняются всегда. Вне окна операции накапливаются в `schedule-deferred.json` в каталоге расширения и выполняются при входе в активное окно.",
-          "default": {
-            "enabled": false,
-            "activeHours": "09:00-18:00",
-            "activeDays": [
-              "Mon",
-              "Tue",
-              "Wed",
-              "Thu",
-              "Fri"
-            ],
-            "timezone": "auto"
-          },
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": false,
-              "description": "Включить ограничение автосинхронизации по расписанию"
-            },
-            "activeHours": {
-              "type": "string",
-              "default": "09:00-18:00",
-              "description": "Интервал локального времени «HH:mm-HH:mm» (допускается переход через полночь)"
-            },
-            "activeDays": {
-              "type": "array",
-              "default": [
-                "Mon",
-                "Tue",
-                "Wed",
-                "Thu",
-                "Fri"
-              ],
-              "items": {
-                "type": "string"
-              },
-              "description": "Дни недели (Mon…Sun или полные имена). Пустой список = все дни"
-            },
-            "timezone": {
-              "type": "string",
-              "default": "auto",
-              "description": "IANA (Europe/Moscow) или auto — системная зона"
-            }
-          },
-          "additionalProperties": true
-        },
-        "vscodesync.deltaSync": {
-          "type": "boolean",
-          "default": false,
-          "description": "%cfg.deltaSync.description%"
-        },
-        "vscodesync.deltaThresholdKB": {
-          "type": "number",
-          "default": 100,
-          "minimum": 1,
-          "description": "%cfg.deltaThresholdKB.description%"
         },
         "vscodesync.webhooks.enabled": {
           "type": "boolean",
@@ -523,31 +438,21 @@
         },
         "vscodesync.autoSyncMode": {
           "type": "string",
-          "enum": ["off", "check-only", "full"],
+          "enum": [
+            "off",
+            "check-only"
+          ],
           "default": "check-only",
           "markdownDescription": "%cfg.autoSyncMode.description%",
           "enumDescriptions": [
-            "Отключить любую автоматику. Никаких push/pull/проверок без явной команды пользователя.",
-            "Только проверять состояние файлов и подсвечивать в дереве (cloud_newer / local_newer / conflict). Никаких автоматических push и pull — пользователь жмёт Sync/Push/Pull сам.",
-            "Полная автосинхронизация — push на save (debounce), pull на open, full sync на focus, watch poll. Историческое поведение."
+            "Отключить любую автоматику. Никаких проверок и обращений к облаку без явной команды пользователя.",
+            "Только проверять состояние файлов и подсвечивать расхождения (панель, дерево, статус-бар). Отправка и скачивание — всегда по вашей команде."
           ]
-        },
-        "vscodesync.quietHours.start": {
-          "type": "string",
-          "default": "",
-          "pattern": "^(|([01]?[0-9]|2[0-3]):[0-5][0-9])$",
-          "markdownDescription": "Начало тихих часов в формате `HH:MM`. Если задано вместе с `quietHours.end` — `check-only` режим в эти часы апгрейдится до `full` (никто не работает — фоновая синхронизация безопасна). Пусто = выключено."
         },
         "vscodesync.webhookDigestUrl": {
           "type": "string",
           "default": "",
           "markdownDescription": "URL для webhook-дайджеста активности (Discord webhook, Slack webhook, Telegram bot `/sendMessage`, или generic JSON). Формат определяется по hostname URL. Команда — `VSCodeSync: Send Webhook Digest`."
-        },
-        "vscodesync.quietHours.end": {
-          "type": "string",
-          "default": "",
-          "pattern": "^(|([01]?[0-9]|2[0-3]):[0-5][0-9])$",
-          "markdownDescription": "Конец тихих часов (`HH:MM`). Может быть меньше `start` — окно переходит через полночь (например `22:00`→`08:00`)."
         },
         "vscodesync.sync.concurrency": {
           "type": "number",
@@ -565,7 +470,10 @@
         },
         "vscodesync.verifyUploadHash": {
           "type": "string",
-          "enum": ["plaintext-only", "never"],
+          "enum": [
+            "plaintext-only",
+            "never"
+          ],
           "default": "plaintext-only",
           "markdownDescription": "%cfg.verifyUploadHash.description%",
           "enumDescriptions": [
@@ -582,7 +490,11 @@
         },
         "vscodesync.historyMode": {
           "type": "string",
-          "enum": ["inline", "lazy", "off"],
+          "enum": [
+            "inline",
+            "lazy",
+            "off"
+          ],
           "default": "inline",
           "markdownDescription": "%cfg.historyMode.description%",
           "enumDescriptions": [
@@ -612,6 +524,11 @@
           "maximum": 10,
           "markdownDescription": "%cfg.verifyRetries.description%"
         },
+        "vscodesync.softLock.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.softLock.enabled.description%"
+        },
         "vscodesync.softLockStaleHours": {
           "type": "number",
           "default": 3,
@@ -625,20 +542,6 @@
           "minimum": 1,
           "maximum": 60,
           "markdownDescription": "%cfg.tokenRefreshSkewMinutes.description%"
-        },
-        "vscodesync.saveDebounceSecDefault": {
-          "type": "number",
-          "default": 3,
-          "minimum": 0,
-          "maximum": 300,
-          "markdownDescription": "%cfg.saveDebounceSecDefault.description%"
-        },
-        "vscodesync.watchIdleCyclesBeforeBackoff": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 100,
-          "markdownDescription": "%cfg.watchIdleCyclesBeforeBackoff.description%"
         },
         "vscodesync.localBackupDir": {
           "type": "string",
@@ -708,37 +611,72 @@
       {
         "id": "vscodeSync.health.conflict",
         "description": "Workspace tree cloud icon — files in conflict (manual resolution required).",
-        "defaults": { "dark": "#DA3633", "light": "#CF222E", "highContrast": "#FF0000", "highContrastLight": "#B30000" }
+        "defaults": {
+          "dark": "#DA3633",
+          "light": "#CF222E",
+          "highContrast": "#FF0000",
+          "highContrastLight": "#B30000"
+        }
       },
       {
         "id": "vscodeSync.health.editing",
         "description": "Workspace tree cloud icon — soft-lock held by another machine.",
-        "defaults": { "dark": "#DAAA3F", "light": "#9A6700", "highContrast": "#FFD700", "highContrastLight": "#7A5200" }
+        "defaults": {
+          "dark": "#DAAA3F",
+          "light": "#9A6700",
+          "highContrast": "#FFD700",
+          "highContrastLight": "#7A5200"
+        }
       },
       {
         "id": "vscodeSync.health.noData",
         "description": "Workspace tree cloud icon — no tracked files or no valid lastSync (cold state).",
-        "defaults": { "dark": "#54AEFF", "light": "#0969DA", "highContrast": "#00BFFF", "highContrastLight": "#003F8F" }
+        "defaults": {
+          "dark": "#54AEFF",
+          "light": "#0969DA",
+          "highContrast": "#00BFFF",
+          "highContrastLight": "#003F8F"
+        }
       },
       {
         "id": "vscodeSync.health.staleDeep",
         "description": "Workspace tree cloud icon — all files in sync, but max(lastSync) > 14 days (very-very dark green).",
-        "defaults": { "dark": "#0E4019", "light": "#022A0F", "highContrast": "#003300", "highContrastLight": "#001A07" }
+        "defaults": {
+          "dark": "#0E4019",
+          "light": "#022A0F",
+          "highContrast": "#003300",
+          "highContrastLight": "#001A07"
+        }
       },
       {
         "id": "vscodeSync.health.staleOk",
         "description": "Workspace tree cloud icon — all files in sync, 48 h ≤ max(lastSync) ≤ 14 d (dark green).",
-        "defaults": { "dark": "#1A6B33", "light": "#044F1E", "highContrast": "#005500", "highContrastLight": "#02340F" }
+        "defaults": {
+          "dark": "#1A6B33",
+          "light": "#044F1E",
+          "highContrast": "#005500",
+          "highContrastLight": "#02340F"
+        }
       },
       {
         "id": "vscodeSync.health.recent",
         "description": "Workspace tree cloud icon — all files in sync, 12 h ≤ max(lastSync) < 48 h (medium green).",
-        "defaults": { "dark": "#2DA44E", "light": "#116329", "highContrast": "#00AA00", "highContrastLight": "#055A1B" }
+        "defaults": {
+          "dark": "#2DA44E",
+          "light": "#116329",
+          "highContrast": "#00AA00",
+          "highContrastLight": "#055A1B"
+        }
       },
       {
         "id": "vscodeSync.health.fresh",
         "description": "Workspace tree cloud icon — all files in sync, max(lastSync) < 12 h (bright green).",
-        "defaults": { "dark": "#3FB950", "light": "#1A7F37", "highContrast": "#00FF00", "highContrastLight": "#0E7A2D" }
+        "defaults": {
+          "dark": "#3FB950",
+          "light": "#1A7F37",
+          "highContrast": "#00FF00",
+          "highContrastLight": "#0E7A2D"
+        }
       }
     ],
     "viewsContainers": {
@@ -792,13 +730,13 @@
           {
             "id": "addFile",
             "title": "Добавьте файл в синхронизацию",
-            "description": "ПКМ на любом файле в Explorer → VSCodeSync → Add file. Файл попадёт в облако и автоматически синхронизируется со всеми вашими машинами.",
+            "description": "ПКМ на любом файле в Explorer → VSCodeSync → Добавить файл. Файл попадёт в облако; на других машинах расширение покажет его в панели «Расхождения», а скачивание подтверждаете вы.",
             "media": {
               "image": "media/vscodesync.png",
               "altText": "VSCodeSync logo"
             },
             "completionEvents": [
-              "onCommand:vscodesync.addFile"
+              "onCommand:vscodesync.addCurrentFile"
             ]
           },
           {
@@ -953,10 +891,6 @@
         "title": "%cmd.pullAll.title%"
       },
       {
-        "command": "vscodesync.bulkPullSelected",
-        "title": "%cmd.bulkPullSelected.title%"
-      },
-      {
         "command": "vscodesync.goHomePreflight",
         "title": "%cmd.goHomePreflight.title%"
       },
@@ -1006,6 +940,11 @@
         "title": "%cmd.showSyncSummary.title%"
       },
       {
+        "command": "vscodesync.openDivergences",
+        "title": "%cmd.openDivergences.title%",
+        "icon": "$(diff)"
+      },
+      {
         "command": "vscodesync.previewSync",
         "title": "%cmd.previewSync.title%"
       },
@@ -1032,6 +971,22 @@
       {
         "command": "vscodesync.migrateToAnotherProvider",
         "title": "%cmd.migrateToAnotherProvider.title%"
+      },
+      {
+        "command": "vscodesync.signIn",
+        "title": "%cmd.signIn.title%"
+      },
+      {
+        "command": "vscodesync.openDashboard",
+        "title": "%cmd.openDashboard.title%"
+      },
+      {
+        "command": "vscodesync.onedriveSignInBrowser",
+        "title": "%cmd.onedriveSignInBrowser.title%"
+      },
+      {
+        "command": "vscodesync.googleDriveSignInBrowser",
+        "title": "%cmd.googleDriveSignInBrowser.title%"
       },
       {
         "command": "vscodesync.onedriveSignIn",
@@ -1088,10 +1043,6 @@
         "command": "vscodesync.collapseAllWorkspaces",
         "title": "%cmd.collapseAllWorkspaces.title%",
         "icon": "$(collapse-all)"
-      },
-      {
-        "command": "vscodesync.resolveKeepMine",
-        "title": "%cmd.resolveKeepMine.title%"
       },
       {
         "command": "vscodesync.showSyncDashboard",
@@ -1228,10 +1179,6 @@
       {
         "command": "vscodesync.openInCloudStorage",
         "title": "%cmd.openInCloudStorage.title%"
-      },
-      {
-        "command": "vscodesync.resolveTakeTheirs",
-        "title": "%cmd.resolveTakeTheirs.title%"
       },
       {
         "command": "vscodesync.treeFileTakeTheirs",
@@ -1584,10 +1531,6 @@
       {
         "command": "vscodesync.prefetchActiveWorkspace",
         "title": "%cmd.prefetchActiveWorkspace.title%"
-      },
-      {
-        "command": "vscodesync.openAnalyticsPanel",
-        "title": "%cmd.openAnalyticsPanel.title%"
       }
     ],
     "menus": {
@@ -1662,6 +1605,66 @@
         },
         {
           "command": "vscodesync.addFolderToSync",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.dropboxSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.dropboxSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.yandexDiskSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.yandexDiskSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.signInDeviceCode",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.showSyncDashboard",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.showConflictHeatmap",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.openActivityFeed",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.openMachinesGraph",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignInBrowser",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignInBrowser",
           "when": "false"
         }
       ],
@@ -1869,12 +1872,12 @@
       "vscodesync.submenu": [
         {
           "command": "vscodesync.addCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
           "group": "1_sync@1"
         },
         {
           "command": "vscodesync.addToNewWorkspace",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
           "group": "1_sync@2"
         },
         {
@@ -1884,47 +1887,47 @@
         },
         {
           "command": "vscodesync.pushCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@1"
         },
         {
           "command": "vscodesync.pullCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@2"
         },
         {
           "command": "vscodesync.diffWithCloud",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@3"
         },
         {
           "command": "vscodesync.showFileHistory",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@4"
         },
         {
           "command": "vscodesync.openInCloudStorage",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@5"
         },
         {
           "command": "vscodesync.moveCurrentFileToWorkspace",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "3_manage@1"
         },
         {
           "command": "vscodesync.removeFromSync",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "3_manage@2"
         },
         {
-          "command": "vscodesync.resolveKeepMine",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "command": "vscodesync.keepMine",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileConflict",
           "group": "4_conflict@1"
         },
         {
-          "command": "vscodesync.resolveTakeTheirs",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "command": "vscodesync.takeTheirs",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileConflict",
           "group": "4_conflict@2"
         }
       ],
@@ -2026,13 +2029,15 @@
     ]
   },
   "scripts": {
-    "compile": "node scripts/generate-web-stub-commands.mjs && node esbuild.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "compile": "node scripts/generate-web-stub-commands.mjs && node scripts/generate-settings-schema.mjs && node esbuild.mjs",
     "verify:web": "node scripts/verify-web-bundle.mjs",
     "watch": "node esbuild.mjs --watch",
     "lint": "eslint ./src ./tests ./cli/src",
-    "pretest": "npm run compile",
+    "pretest": "node scripts/generate-web-stub-commands.mjs",
     "test": "vitest run",
     "test:integration": "npm run compile && node ./tests/integration/runTest.cjs",
+    "verify": "npm run typecheck && npm run lint && npm run compile && npm run verify:web && npm run test",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies --allow-missing-repository",
     "prepare": "husky"
@@ -2042,7 +2047,7 @@
     "@types/mocha": "^10.0.9",
     "@types/node": "^20.17.6",
     "@types/vscode": "~1.80.0",
-    "@vscode/test-electron": "^2.4.1",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.0",
     "eslint": "^9.15.0",

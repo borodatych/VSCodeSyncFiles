@@ -1,6 +1,10 @@
 import type { SecretStore } from "../../core/types.js";
 import { storeDropboxTokens } from "./dropboxTokens.js";
 import { runPkceLoopbackOAuth } from "../_shared/pkceLoopbackOAuth.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 /** Must match redirect URIs registered for the Dropbox app (127.0.0.1 avoids localhost ambiguity on Windows). */
 export const DROPBOX_OAUTH_REDIRECT_PORT = 8734;
@@ -29,11 +33,11 @@ async function exchangeCode(
     client_id: clientId,
     code_verifier: codeVerifier,
   });
-  const r = await fetch(TOKEN_URL, {
+  const r = await fetchWithTimeout(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
-  });
+  }, { channel: "dropbox.oauth", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   if (!r.ok) {
     throw new Error(await r.text());
   }

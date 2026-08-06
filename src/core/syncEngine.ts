@@ -7,10 +7,10 @@ import type {
   ActiveWorkspaceEntry,
   ManifestMachineCacheEntry,
   WorkspaceSyncState,
-  ConflictRule,
 } from "./types.js";
 import { normalizeWorkspaceSyncState } from "./types.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
+import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./io/workspaceConfigStore.js";
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
   CLOUD_ROOT_DIR,
@@ -25,14 +25,18 @@ import {
 } from "./cloudLayout.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
-import { createWorkspaceSnapshot } from "./snapshotsEngine.js";
-import { planLocalBackupRetention } from "./localBackupRetentionPlan.js";
+import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
+import { backupLocalWithPrune, LOCAL_BACKUP_DIR_DEFAULT } from "./localFileBackup.js";
 import { mergeMetaEntries } from "./metaMerge.js";
-import { detectChange, type ChangeAction } from "./changeDetection.js";
+import { createMetaStore, type MetaStore, type MetaWriteReason } from "./io/metaStore.js";
+import { createHistoryStore, type HistoryStore, type LazyHistoryEntry } from "./io/historyStore.js";
+import { createBlobTransfer, type BlobTransfer } from "./io/blobTransfer.js";
+import { createManifestStore, type ManifestStore } from "./io/manifestStore.js";
+import type { ChangeAction } from "./changeDetection.js";
+import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
-import type { LineEndingMode } from "../utils/normalize.js";
 import {
   computeHash,
   hashCanonicalBuffer,
@@ -40,29 +44,27 @@ import {
   type HashConfig,
 } from "../utils/hash.js";
 import { verboseLog, warnLog } from "../utils/log.js";
-import { validateManifestShape } from "./manifestValidate.js";
 import { detectMassChange } from "./massChangeGuard.js";
 import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.js";
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
-import { isDeltaSyncEligible } from "./deltaSyncGate.js";
+import { assertMutationAllowed, mutationPolicy, type MutationOp } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
 import {
-  isPullMetaCloudWriteActive,
   isSecondaryWorkspaceInstanceReadOnly,
   rejectIfSecondaryWorkspaceInstanceReadOnly,
-  withPullCloudMetaWriteAllowed,
 } from "./syncWorkspaceInstanceReadOnly.js";
 import type { ActivityEventInput } from "./activityLog.js";
 import type { SyncTransferEvent } from "./syncStatsStore.js";
 import {
   blobCloudPath,
-  gunzipToPlaintext,
-  gzipIfShrinks,
-  plaintextLooksCompressible,
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
+import { planUploadEncoding } from "./plan/planUploadEncoding.js";
+import { planTrackingDiff } from "./plan/planTrackingDiff.js";
+import { throwIfAborted } from "./operationCancelled.js";
+import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -84,24 +86,58 @@ const LAST_SYNC_REFRESH_THROTTLE_MS = 5 * 60_000;
  * Minimal glob matcher for conflict rules.
  * Supports `*` (within one path segment) and `**` (any depth).
  */
-function minimatchGlob(str: string, pattern: string): boolean {
-  // Use  (private-use) as a safe sentinel for `**` so we can rewrite it
-  // to `.*` after escaping `*` → `[^/]*` for single segments.
-  const SENTINEL = "";
-  const reStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, SENTINEL)
-    .replace(/\*/g, "[^/]*")
-    .replaceAll(SENTINEL, ".*");
-  return new RegExp(`^${reStr}$`).test(str);
-}
-
-const LOCAL_BACKUP_DIR_DEFAULT = path.join(".vscode", "vscodesync-local-backup");
 
 /** Soft lock (`ManifestFile.editingSince`) older than this is stale (Health Check / repair). */
 export const STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT = 3 * 3600_000;
 /** Backwards-compat alias — engine callers can still read the default directly. */
 export const STALE_MANIFEST_EDITING_LOCK_MS = STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT;
+
+/**
+ * Cloud manifest could not be parsed.
+ *
+ * Distinct from "manifest absent": absence means the workspace was deleted
+ * elsewhere and local detach is correct, whereas a corrupt body means we simply
+ * do not know, and destroying local tracking over it is never right.
+ */
+/**
+ * Operation denied by a workspace-level rule, not by anything about the file.
+ *
+ * Suspend / freeze, a machine still awaiting approval, a read-only secondary
+ * window — these apply to every file of the workspace equally. `pushAll`
+ * isolates *per-file* failures so one unreadable file cannot abort the rest;
+ * without this type a policy denial would be recorded once per file and the
+ * workspace would still report success.
+ */
+/**
+ * The file is in conflict and neither side may be moved until it is resolved.
+ *
+ * `pushFile` used to return silently here while `pullFile` threw a bare `Error`.
+ * The same user action therefore produced either a false "done" or an
+ * exception, depending on direction.
+ */
+export class FileConflictError extends Error {
+  constructor(readonly posixRel: string) {
+    super(
+      `VSCodeSync: «${posixRel}» в конфликте — синхронизация файла остановлена. ` +
+        "Разрешите конфликт: «Принять моё» или «Принять их версию».",
+    );
+    this.name = "FileConflictError";
+  }
+}
+
+export class WorkspacePolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspacePolicyError";
+  }
+}
+
+/**
+ * Re-exported so existing importers keep working; the class itself now lives
+ * with the code that throws it (`io/manifestStore`). Two separate classes with
+ * the same name would make `instanceof` lie.
+ */
+export { ManifestCorruptError } from "./io/manifestStore.js";
 
 /** Файл, потерявший синхронизацию: отслеживался локально, но исчез из облачного манифеста (tombstone очищен). */
 export interface PurgeLostFileItem {
@@ -121,6 +157,15 @@ export interface PushAllResult {
   skipped?: "not_active";
   /** When `ok === false` — error message captured from the failing call. */
   error?: string;
+  /**
+   * Files that failed individually while the workspace as a whole succeeded.
+   *
+   * A single unreadable file used to reject the whole workspace: `computeHash`
+   * throws ENOENT for a file deleted from disk since the last sync, the
+   * `parallelLimit` callback rejected, and every remaining file in that
+   * workspace was skipped. One stale entry blocked the entire push.
+   */
+  failedFiles?: { posixRel: string; error: string }[];
 }
 
 /** Progress event surfaced by `pushAll(_, onProgress)`. Two events per workspace. */
@@ -157,229 +202,20 @@ export interface SyncPreviewWorkspace {
   files: SyncPreviewFileRow[];
 }
 
-export interface SyncEngineDeps {
-  workspaceRoot: string;
-  provider: ICloudProvider;
-  machineId: string;
-  machineName: string;
-  /** Лимит размера одного файла (байт). Не задан или 0 — без лимита (тесты). */
-  maxFileSizeBytes?: number;
-  /** Нормализация строк при хэше; по умолчанию `lf` (тесты). */
-  lineEnding?: LineEndingMode;
-  /** Локальная копия перед перезаписью при pull. По умолчанию true. */
-  localBackupEnabled?: boolean;
-  /** Удалять каталоги бэкапов старше N дней (mtime). `0` — не чистить. По умолчанию 7. */
-  localBackupRetentionDays?: number;
-  /**
-   * Optional E2E encryption applied after canonical pipeline and before upload.
-   * The hash stored in `_meta` is always the PLAINTEXT canonical hash.
-   */
-  encrypt?: (buf: Buffer) => Buffer;
-  /**
-   * Optional E2E decryption applied after download and before writing locally.
-   * Must be the inverse of `encrypt`.
-   */
-  decrypt?: (buf: Buffer) => Buffer;
-  /** When `fileEncoding` is utf8 (default): BOM / invalid UTF-8 hints during hashing. */
-  encodingLint?: boolean;
-  onEncodingIssue?: (kind: "bom" | "invalid_utf8", trackedPosixRel: string) => void;
-  /** When `lineEnding=preserve` and conflict is likely CRLF vs LF only (LF-canonical hashes match). */
-  onPreserveLineEndingConflictHint?: (trackedPosixRel: string) => void;
-  /** When true: new machines joining an existing workspace manifest get `pending` until approved on another machine. */
-  requireMachineApproval?: () => boolean;
-  /** Local activity log (Activity Feed); optional to keep tests and headless engines quiet. */
-  onSyncActivity?: (ev: ActivityEventInput) => void;
-  /** Bytes on the wire for tracked file upload/download (stats.json). */
-  onTransfer?: (ev: SyncTransferEvent) => void;
-  /** User setting: gzip text uploads when `_meta` records `wireGzip`. Default false. */
-  compressUploads?: boolean;
-  /**
-   * Estimated plaintext bytes spared when gzip wire encoding is smaller than raw UTF-8 plaintext.
-   */
-  onCompressionSaving?: (plaintextBytesSaved: number) => void;
-  /**
-   * §8.2 Delta sync (roadmap): when true and file size ≥ threshold, rolling-hash path will apply (not implemented yet — full upload).
-   */
-  deltaSync?: boolean;
-  /** Minimum plaintext size in KB for delta consideration. Default 100. */
-  deltaThresholdKB?: number;
-  /**
-   * Ordered list of auto-conflict-resolution rules. Checked before showing conflict to user.
-   * First matching rule wins. Strategies: keep-mine (push local), take-theirs (pull cloud), newer (compare updatedAt).
-   */
-  conflictRules?: ConflictRule[];
-  /** Days after which tombstone entries (removedAt) are purged from the manifest on next PUT. Default 30. */
-  tombstonePurgeDays?: number;
-  /**
-   * Called when a locally-tracked file disappears from the cloud manifest (tombstone purged after 30+ days offline).
-   * The local file still exists on disk but is no longer tracked. UI should warn the user.
-   */
-  onPurgeLostFiles?: (items: PurgeLostFileItem[]) => void;
-  /**
-   * Called when a new conflict is detected for a file.
-   * `isBinary` = true when the file looks binary (no-null-bytes heuristic failed = has null bytes).
-   * UI layer should surface a notification / quick-pick.
-   */
-  onNewConflict?: (workspaceId: string, workspaceNote: string, relPath: string, isBinary: boolean) => void;
-  /**
-   * Called when an already-connected workspace manifest has a higher schemaVersion
-   * than this extension supports (future-compat: user needs to update extension).
-   * UI layer should warn the user and skip sync for that workspace.
-   */
-  onSchemaVersionTooNew?: (workspaceId: string, detectedVersion: number) => void;
-  /**
-   * Called when the cloud manifest fails JSON / shape validation.
-   * UI layer offers Repair State (rebuild from local).
-   */
-  onCorruptManifest?: (workspaceId: string, reason: string) => void;
-  /**
-   * v0.17 D02 — fired when an upload returns `STORAGE_QUOTA_EXCEEDED`.
-   * The UI layer surfaces the quota banner with `planQuotaExhaustion` +
-   * top-N heaviest files. Default behaviour (callback absent): the
-   * error propagates as-is.
-   */
-  onQuotaExhausted?: (workspaceId: string, posixRel: string, providerLabel: string) => void;
-  /**
-   * Called when a locally-attached workspace is detected as deleted on the cloud by another machine
-   * (manifest NOT_FOUND). The workspace is auto-detached locally before this callback fires.
-   * UI layer should notify the user and optionally offer to re-upload via `repushWorkspaceToCloud`.
-   */
-  onRemoteWorkspaceDeleted?: (
-    workspaceId: string,
-    workspaceNote: string,
-    workspaceRoot: string,
-    savedEntry: ActiveWorkspaceEntry,
-    savedFiles: TrackedFile[],
-  ) => void;
-  /**
-   * Called after a file is successfully written to disk during pull.
-   * Provides old and new UTF-8 content for diff/notification purposes.
-   * `oldContent` is null when the file did not exist locally before pull.
-   */
-  onFilePulled?: (posixRel: string, oldContent: string | null, newContent: string) => void;
-  /**
-   * Called before `putManifest` writes a manifest that would tombstone a large
-   * batch of files (see `detectMassChange`). UI layer surfaces a confirmation
-   * modal. Resolve `true` to proceed, `false` to abort the manifest write.
-   * If undefined, the guard is disabled and putManifest proceeds unconditionally.
-   */
-  onMassChange?: (
-    workspaceId: string,
-    report: import("./massChangeGuard.js").MassChangeReport,
-  ) => Promise<boolean>;
-  /**
-   * Returns the current `vscodesync.canonicalHashAlgo` setting. When the
-   * caller resolves `"blake3"` or `"dual"`, `pushFile` writes both `hash`
-   * (SHA-256, wire-compat) and `hashBlake3` into the meta entry. Default
-   * `"sha256"` keeps legacy behaviour (no BLAKE3 column).
-   */
-  canonicalHashAlgo?: () => "sha256" | "blake3" | "dual";
-  /**
-   * v2.1.4 — opt-in P2P file-transfer hook. Called after a successful
-   * `pushFile` upload completes (cloud authoritative). The P2P UI runtime
-   * can mirror the same plaintext buffer to peers via WebRTC DataChannel
-   * — no canonicalisation needed (cloud upload already used the canonical
-   * form). Errors thrown by the hook are swallowed by the engine; the
-   * push itself has already succeeded.
-   */
-  onPushFile?: (
-    workspaceId: string,
-    posixRel: string,
-    plaintext: Buffer,
-    meta: { hash: string; hashBlake3?: string; version: number },
-  ) => void;
-  /**
-   * v0.18 W3 — fired by `attachCloudWorkspace` when the cloud manifest
-   * has a `schemaVersion` we don't natively support. UI returns
-   * `"migrate"` to attempt a coordinated migration (caller schedules it),
-   * `"abort"` to cancel the attach. When the callback is absent the
-   * engine behaves as before — throws on mismatch.
-   */
-  onSchemaVersionMismatch?: (
-    workspaceId: string,
-    detectedVersion: number,
-    supportedVersion: number,
-  ) => Promise<"migrate" | "abort">;
-  /**
-   * v0.18 D01 — opt-in provider-side hash verification. When `true` and
-   * the provider exposes a digest via `getMetadata` (gdrive md5, yandex
-   * md5, dropbox content_hash, onedrive sha256), we compute the expected
-   * digest locally and abort the push on mismatch.
-   *
-   * Default `false` so existing users see no behaviour change; opt in
-   * via `vscodesync.providerHashVerify` setting.
-   */
-  providerHashVerify?: () => boolean;
-  /**
-   * v0.18 D06 — opt-in trust check. When set, `requireMachineApproval`
-   * flow skips approval gate for machineIds the user has marked as
-   * trusted. Default (no callback): legacy behaviour — every new machine
-   * is `pending` until manually approved on another machine.
-   */
-  isTrustedTeammate?: (machineId: string) => boolean;
-  /**
-   * v0.7 — bounded concurrency for the per-workspace file iteration
-   * (syncWorkspace / forcePullWorkspace / pushAll inner loop). Returns the
-   * desired concurrency cap (1 = legacy serial). Setting via
-   * `vscodesync.sync.concurrency`. Resolver-shaped so the engine picks up
-   * live setting changes without rebuild.
-   */
-  syncFileConcurrency?: () => number;
-  /**
-   * v0.7 — bounded concurrency for the outer iteration across workspaces
-   * inside one workspace folder (pushAll / pullAll). 1 = legacy serial.
-   * Setting via `vscodesync.sync.workspaceConcurrency`.
-   */
-  syncWorkspaceConcurrency?: () => number;
-  /**
-   * v0.7 — verification mode for `pushFile`. After upload, the engine may
-   * download the blob again and re-hash it against the local plaintext hash
-   * to catch wire corruption. Default `"plaintext-only"` preserves the
-   * historical behaviour (verify only when bytes hit the cloud unencrypted).
-   * `"never"` skips the post-upload GET entirely — fastest, leans on
-   * provider ETag / managed integrity instead.
-   */
-  verifyUploadHash?: () => "plaintext-only" | "never";
-  /** v0.7 — overrides `HISTORY_VERSIONS_DEFAULT` (10). Setting via `vscodesync.historyVersions`. */
-  historyVersions?: () => number;
-  /** v0.7 — overrides `META_WRITE_RETRIES_DEFAULT` (3). Setting via `vscodesync.metaWriteRetries`. */
-  metaWriteRetries?: () => number;
-  /** v0.7 — overrides `VERIFY_RETRIES_DEFAULT` (3). Setting via `vscodesync.verifyRetries`. */
-  verifyRetries?: () => number;
-  /** v0.7 — overrides `STALE_MANIFEST_EDITING_LOCK_MS_DEFAULT` (3h). Setting via `vscodesync.softLockStaleHours`. */
-  softLockStaleMs?: () => number;
-  /** v0.7 — local backup dir under workspace root. Default `.vscode/vscodesync-local-backup`. Setting via `vscodesync.localBackupDir`. */
-  localBackupDir?: () => string;
-  /**
-   * v0.7 — when `inline`, snapshot the old blob into `.history/` synchronously
-   * before each push (legacy). When `lazy`, queue snapshots in memory and let
-   * the host flush them periodically via `drainLazyHistoryQueue`. When `off`,
-   * skip history entirely. Setting via `vscodesync.historyMode`.
-   */
-  historyMode?: () => "inline" | "lazy" | "off";
-  /**
-   * v0.7 — drain hook for the lazy history queue. Host calls this on a
-   * timer; engine returns the queued (workspaceId, posixRel, oldCloudPath)
-   * triples and clears its in-memory queue. Pure side-effect-free read.
-   */
-  onLazyHistoryQueued?: (entry: LazyHistoryEntry) => void;
-  /**
-   * v0.7 — opt-in profiler hook. When set, the engine emits per-file timing
-   * samples (hash ms, upload ms, verify ms, full round-trip ms) so the UI
-   * can render a "slow files" diagnostic. Setting via
-   * `vscodesync.diagnostics.profileSync`.
-   */
-  onSyncProfileSample?: (sample: SyncProfileSample) => void;
-}
+/**
+ * The engine's dependency set, split into ports / config / events
+ * (`engineDeps.ts`). Re-exported so existing importers keep working.
+ */
+export type {
+  EnginePorts,
+  EngineConfig,
+  EngineEvents,
+  SyncEngineDeps,
+} from "./engineDeps.js";
+import type { SyncEngineDeps } from "./engineDeps.js";
 
-/** v0.7 — deferred history snapshot. */
-export interface LazyHistoryEntry {
-  workspaceId: string;
-  posixRel: string;
-  oldCloudPath: string;
-  /** ms — when the snapshot was queued (so drain can age-out stale entries). */
-  queuedAtMs: number;
-}
+/** v0.7 — deferred history snapshot. Owned by `io/historyStore`. */
+export type { LazyHistoryEntry } from "./io/historyStore.js";
 
 /** v0.7 — single-file timing sample from `pushFile` / `pullFile`. */
 export interface SyncProfileSample {
@@ -398,8 +234,86 @@ export interface SyncProfileSample {
 }
 
 export class SyncEngine {
-  private readonly manifestByWs = new Map<string, CloudManifest>();
-  private readonly metaByWs = new Map<string, MetaJson>();
+  /**
+   * `manifest.json` I/O, its etag-matched cache and the 412-merge (этап 5.2).
+   * Built on first use — a field initialiser would run before `deps` exists.
+   */
+  private manifestStoreRef: ManifestStore | undefined;
+
+  private get manifestStore(): ManifestStore {
+    this.manifestStoreRef ??= createManifestStore({
+      provider: this.deps.provider,
+      tombstonePurgeDays: () => this.deps.tombstonePurgeDays ?? TOMBSTONE_PURGE_DAYS_DEFAULT,
+      onCorrupt: (workspaceId, reason) => this.deps.onCorruptManifest?.(workspaceId, reason),
+      onEtag: (workspaceId, etag, manifest) =>
+        this.patchEntry(workspaceId, {
+          manifestEtag: etag,
+          ...this.entryPatchFromManifest(manifest),
+        }),
+      currentEtag: async (workspaceId) =>
+        (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId)
+          ?.manifestEtag,
+      beforeWrite: async (workspaceId) => {
+        this.assertMayMutate("putManifest");
+        rejectIfSecondaryWorkspaceInstanceReadOnly();
+        await this.ensureNotFrozenForCloudWrites(workspaceId);
+      },
+      onMassChange: this.deps.onMassChange
+        ? (workspaceId, report) => this.deps.onMassChange!(workspaceId, report)
+        : undefined,
+    });
+    return this.manifestStoreRef;
+  }
+
+  /** Cache a manifest body together with the etag that names it (if known). */
+  private cacheManifest(workspaceId: string, manifest: CloudManifest, etag: string | undefined): void {
+    this.manifestStore.cache(workspaceId, manifest, etag);
+  }
+
+  /**
+   * The manifest etag as of the most recent download in this instance,
+   * falling back to what the caller had. Callers that download and then write
+   * must use this: `patchEntry` has already advanced the stored etag, and the
+   * copy they loaded earlier is one write behind.
+   */
+  private async currentManifestEtag(
+    workspaceId: string,
+    fallback: string | undefined,
+  ): Promise<string | undefined> {
+    const fresh = (await this.loadCfg()).activeWorkspaces.find(
+      (w) => w.workspaceId === workspaceId,
+    )?.manifestEtag;
+    return fresh ?? fallback;
+  }
+
+  private evictManifestCache(workspaceId: string): void {
+    this.manifestStore.forget(workspaceId);
+  }
+  /**
+   * `_meta.json` I/O and its in-memory copy (этап 5.2). Policy stays here: the
+   * store calls back into `beforeWrite` for the mutation checks.
+   *
+   * Built on first use — a field initialiser would run before `deps` exists.
+   */
+  private metaStoreRef: MetaStore | undefined;
+
+  private get metaStore(): MetaStore {
+    this.metaStoreRef ??= createMetaStore({
+      provider: this.deps.provider,
+      metaWriteRetries: () => this.resolveMetaWriteRetries(),
+      onEtag: (workspaceId, etag) => this.patchEntry(workspaceId, { metaEtag: etag }),
+      beforeWrite: async (workspaceId, reason) => {
+        this.assertMayMutate("pushMetaJson");
+        // A secondary window may finish its own pull (recording what it just
+        // downloaded); everything else is a cloud write it must not make.
+        if (reason !== "pull-completion") {
+          rejectIfSecondaryWorkspaceInstanceReadOnly();
+        }
+        await this.ensureNotFrozenForCloudWrites(workspaceId);
+      },
+    });
+    return this.metaStoreRef;
+  }
   /**
    * When set, `persistMutatedCfg(cfgRef)` only marks the batch dirty and
    * skips the disk write. Used by `syncWorkspace` / `forcePullWorkspace`
@@ -410,7 +324,32 @@ export class SyncEngine {
   private _batchCfgRef: WorkspaceConfig | null = null;
   private _batchCfgDirty = false;
   /** v0.7 — deferred history snapshots when `historyMode = lazy`. */
-  private readonly lazyHistoryQueue: LazyHistoryEntry[] = [];
+  /** `.history/` I/O and the deferred-snapshot queue (этап 5.2). */
+  private historyStoreRef: HistoryStore | undefined;
+
+  /** Blob-level cloud I/O (этап 5.2). */
+  private blobTransferRef: BlobTransfer | undefined;
+
+  private get blobTransfer(): BlobTransfer {
+    this.blobTransferRef ??= createBlobTransfer({
+      provider: this.deps.provider,
+      decrypt: this.deps.decrypt,
+      hashCfg: (posixRel) => this.hashCfg(posixRel),
+      verifyRetries: () => this.resolveVerifyRetries(),
+    });
+    return this.blobTransferRef;
+  }
+
+  private get historyStore(): HistoryStore {
+    this.historyStoreRef ??= createHistoryStore({
+      provider: this.deps.provider,
+      machineName: this.deps.machineName,
+      mode: () => this.resolveHistoryMode(),
+      versions: () => this.resolveHistoryVersions(),
+      onQueued: (entry) => this.deps.onLazyHistoryQueued?.(entry),
+    });
+    return this.historyStoreRef;
+  }
   /**
    * Files currently under a user-initiated pull/push/conflict-resolve.
    * Read by `iterateTrackedFiles` (check-only and full) to skip the file
@@ -423,8 +362,37 @@ export class SyncEngine {
 
   constructor(private readonly deps: SyncEngineDeps) {}
 
+  /**
+   * The mutation checkpoint (F2). First statement of every method listed in
+   * `MutationOp`; throws `MutationDeniedError` when an automatic source tries
+   * to move data. The policy is imported, not injected — see `syncPolicy.ts`.
+   */
+  /** Non-throwing form, for the few places that skip work instead of failing. */
+  /** Cancellation for this operation, when the caller supplied one (A5). */
+  private get abortSignal(): AbortSignal | undefined {
+    return this.deps.abortSignal;
+  }
+
+  /** Stop between units of work rather than after everything in flight. */
+  private assertNotCancelled(op: string): void {
+    throwIfAborted(this.abortSignal, op);
+  }
+
+  private mayMutate(op: MutationOp): boolean {
+    return mutationPolicy(op, this.deps.trigger) === "allow";
+  }
+
+  private assertMayMutate(op: MutationOp): void {
+    if (this.mayMutate(op)) return;
+    // Refusing a background source is the extension behaving correctly, so it
+    // is a diagnostic line and not an error toast. Without it the symptom reads
+    // as "the extension does nothing" with no trace of why.
+    warnLog("syncPolicy", `deny ${op} (trigger=${this.deps.trigger})`);
+    assertMutationAllowed(op, this.deps.trigger);
+  }
+
   private inFlightKey(workspaceId: string, posixRel: string): string {
-    return `${workspaceId} ${posixRel}`;
+    return `${workspaceId}\u0000${posixRel}`;
   }
 
   /** True while a user-initiated pull/push/conflict-resolve holds the file. */
@@ -481,6 +449,15 @@ export class SyncEngine {
   }
   private resolveLocalBackupDir(): string {
     return this.deps.localBackupDir?.() ?? LOCAL_BACKUP_DIR_DEFAULT;
+  }
+
+  /** Snapshot blobs use the engine's own encryption context. */
+  private snapshotCrypto(): SnapshotCrypto {
+    return {
+      required: this.deps.encryptionRequired === true,
+      encrypt: this.deps.encrypt,
+      decrypt: this.deps.decrypt,
+    };
   }
   private resolveHistoryMode(): "inline" | "lazy" | "off" {
     return this.deps.historyMode?.() ?? "inline";
@@ -553,16 +530,15 @@ export class SyncEngine {
    * actually uploading them via `runDeferredHistorySnapshots`.
    */
   drainLazyHistoryQueue(): LazyHistoryEntry[] {
-    if (this.lazyHistoryQueue.length === 0) return [];
-    const drained = this.lazyHistoryQueue.splice(0, this.lazyHistoryQueue.length);
-    return drained;
+    return this.historyStore.drain();
   }
 
   /** v0.7 — execute queued history snapshots from a prior drain. */
   async runDeferredHistorySnapshots(entries: readonly LazyHistoryEntry[]): Promise<void> {
+    this.assertMayMutate("runDeferredHistorySnapshots");
     for (const e of entries) {
       try {
-        await this.snapshotHistoryNow(e.workspaceId, e.posixRel, e.oldCloudPath);
+        await this.historyStore.snapshotNow(e.workspaceId, e.posixRel, e.oldCloudPath);
       } catch (err) {
         warnLog("syncEngine", `lazy history snapshot failed (${e.workspaceId}/${e.posixRel}): ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -593,10 +569,10 @@ export class SyncEngine {
     }
     const st = normalizeWorkspaceSyncState(entry);
     if (st === "suspended") {
-      throw new Error("Workspace в режиме Suspend: загрузка и выгрузка файлов отключены.");
+      throw new WorkspacePolicyError("Workspace в режиме Suspend: загрузка и выгрузка файлов отключены.");
     }
     if (st === "frozen") {
-      throw new Error("Workspace заморожен (Freeze): операции с файлами отключены.");
+      throw new WorkspacePolicyError("Workspace заморожен (Freeze): операции с файлами отключены.");
     }
   }
 
@@ -614,12 +590,12 @@ export class SyncEngine {
     }
     const st = await this.getSelfMachineStatusInManifest(workspaceId);
     if (st === "pending") {
-      throw new Error(
+      throw new WorkspacePolicyError(
         "Workspace: эта машина ожидает подтверждения в манифесте — отправка и изменение состава файлов отключены (выполните Pull или дождитесь одобрения на другой машине).",
       );
     }
     if (st === "blocked") {
-      throw new Error("Workspace: машина заблокирована в манифесте — запись отключена.");
+      throw new WorkspacePolicyError("Workspace: машина заблокирована в манифесте — запись отключена.");
     }
   }
 
@@ -767,6 +743,7 @@ export class SyncEngine {
    * Returns the list of discovered file paths (posix-relative to workspace root).
    */
   async repairByCloudScan(workspaceId: string): Promise<string[]> {
+    this.assertMayMutate("repairByCloudScan");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const root = workspaceRootPath(workspaceId);
     const listed = await this.deps.provider.listFolder(root);
@@ -821,7 +798,7 @@ export class SyncEngine {
       metaCloudPath(workspaceId),
       Buffer.from(`${JSON.stringify(reconstructedMeta, null, 2)}\n`, "utf8"),
     );
-    this.metaByWs.set(workspaceId, reconstructedMeta);
+    this.metaStore.put(workspaceId, reconstructedMeta);
 
     // Update local config to record that this workspace has been scanned
     const cfg = await this.loadCfg();
@@ -866,6 +843,7 @@ export class SyncEngine {
    * трекинг файлов из манифеста и sync (pull при необходимости).
    */
   async attachCloudWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("attachCloudWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg0 = await this.loadCfg();
     if (cfg0.activeWorkspaces.some((w) => w.workspaceId === workspaceId)) {
@@ -922,8 +900,8 @@ export class SyncEngine {
       metaEtag,
     });
     await this.saveCfg(cfg0);
-    this.manifestByWs.set(workspaceId, manifest);
-    this.metaByWs.set(workspaceId, meta);
+    this.cacheManifest(workspaceId, manifest, manifestDl.etag);
+    this.metaStore.put(workspaceId, meta);
 
     const now = new Date().toISOString();
     const withMachine: CloudManifest = {
@@ -956,36 +934,48 @@ export class SyncEngine {
     }
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
     const stamp = new Date().toISOString();
+
+    // Which files to take over is decided by `planTrackingDiff` (pure); this
+    // loop only applies the decision. `existsLocally` is resolved up front so
+    // the planner stays free of I/O.
+    const candidatePaths = manifest.files
+      .filter((f) => !f.removedAt)
+      .map((f) => f.path);
+    const existing = new Set<string>();
+    for (const posixRel of candidatePaths) {
+      if (await fileExists(this.localAbs(cfg, posixRel))) existing.add(posixRel);
+    }
+    const diff = planTrackingDiff({
+      workspaceId,
+      manifestFiles: manifest.files,
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      metaHashFor: (rel: string) => meta.files[rel]?.hash,
+      wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
+      existsLocally: (rel: string) => existing.has(rel),
+    });
+
     let changed = false;
-    for (const mf of manifest.files.filter((f) => !f.removedAt)) {
-      const posixRel = mf.path;
-      if (cfg.files.some((f) => f.workspaceId === workspaceId && f.localPath === posixRel)) {
-        continue;
-      }
-      // Detect rename: if manifest says this file was renamed from another path,
-      // update the existing entry instead of registering a duplicate.
-      if (mf.renamedFrom) {
-        const oldIdx = cfg.files.findIndex(
-          (f) => f.workspaceId === workspaceId && f.localPath === mf.renamedFrom,
-        );
-        if (oldIdx >= 0) {
-          cfg.files[oldIdx] = {
-            ...cfg.files[oldIdx],
-            localPath: posixRel,
-            cloudPath: trackedFileCloudPath(workspaceId, posixRel),
-            localHash: meta.files[posixRel]?.hash ?? "",
-          };
-          changed = true;
-          continue;
-        }
-      }
+    for (const r of diff.rename) {
+      const oldIdx = cfg.files.findIndex(
+        (f) => f.workspaceId === workspaceId && f.localPath === r.from,
+      );
+      if (oldIdx < 0) continue;
+      cfg.files[oldIdx] = {
+        ...cfg.files[oldIdx],
+        localPath: r.to,
+        cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
+        localHash: r.localHash,
+      };
+      changed = true;
+    }
+    for (const a of diff.adopt) {
       cfg.files.push({
-        localPath: posixRel,
+        localPath: a.posixRel,
         workspaceId,
-        cloudPath: trackedFileCloudPath(workspaceId, posixRel),
+        cloudPath: blobCloudPath(workspaceId, a.posixRel, a.wireGzip),
         lastSync: stamp,
-        localHash: meta.files[posixRel]?.hash ?? "",
-        syncStatus: "ok",
+        localHash: a.localHash,
+        syncStatus: a.syncStatus,
       });
       changed = true;
     }
@@ -994,12 +984,17 @@ export class SyncEngine {
     }
   }
 
+  /** Single owner of `.vscode/vscodesync.json` for this workspace root. */
+  private get cfgStore(): WorkspaceConfigStore {
+    return getWorkspaceConfigStore(this.deps.workspaceRoot);
+  }
+
   private async loadCfg(): Promise<WorkspaceConfig> {
-    return WorkspaceConfigManager.load(this.deps.workspaceRoot);
+    return this.cfgStore.load();
   }
 
   private async saveCfg(c: WorkspaceConfig): Promise<void> {
-    return WorkspaceConfigManager.save(c, this.deps.workspaceRoot);
+    return this.cfgStore.save(c);
   }
 
   private posixRel(cfg: WorkspaceConfig, fsPath: string): string {
@@ -1024,13 +1019,15 @@ export class SyncEngine {
   }
 
   private async patchEntry(workspaceId: string, patch: Partial<ActiveWorkspaceEntry>): Promise<void> {
-    const cfg = await this.loadCfg();
-    const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
-    if (ix < 0) {
-      throw new Error(`active workspace not found: ${workspaceId}`);
-    }
-    cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], ...patch };
-    await this.saveCfg(cfg);
+    // Runs inside the store's serialised queue: load, mutate and save cannot be
+    // interleaved by another workspace branch any more.
+    await this.cfgStore.mutate((cfg) => {
+      const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
+      if (ix < 0) {
+        throw new Error(`active workspace not found: ${workspaceId}`);
+      }
+      cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], ...patch };
+    });
   }
 
   private findTracked(cfg: WorkspaceConfig, workspaceId: string, posixRel: string): TrackedFile | undefined {
@@ -1038,6 +1035,7 @@ export class SyncEngine {
   }
 
   async createWorkspace(workspaceNote: string, providerType: CloudManifest["providerType"]): Promise<string> {
+    this.assertMayMutate("createWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const workspaceId = randomBytes(4).toString("hex");
     const now = new Date().toISOString();
@@ -1076,12 +1074,28 @@ export class SyncEngine {
       metaEtag: metaUp.etag,
     });
     await this.saveCfg(cfg);
-    this.manifestByWs.set(workspaceId, manifest);
+    this.cacheManifest(workspaceId, manifest, up.etag);
     return workspaceId;
   }
 
   /** Только локально: убрать workspace и его трекинг (облако не изменяется). */
   async detachWorkspaceLocal(workspaceId: string): Promise<void> {
+    this.assertMayMutate("detachWorkspaceLocal");
+    await this.detachWorkspaceLocalInternal(workspaceId);
+  }
+
+  /**
+   * Ungated body of {@link detachWorkspaceLocal}.
+   *
+   * Detach is reachable two ways: as a user command, and as the engine's own
+   * reaction to a manifest that answered NOT_FOUND. The gate therefore sits on
+   * the public entry point, and internal callers use this after deciding for
+   * themselves — `deleteWorkspaceFromCloud` and `forcePullWorkspace` because
+   * they are already past their own checkpoint, `syncWorkspace` because it asks
+   * `mayMutate` first, the check-only branch having deliberately skipped the
+   * checkpoint.
+   */
+  private async detachWorkspaceLocalInternal(workspaceId: string): Promise<void> {
     const cfg = await this.loadCfg();
     const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
     if (ix < 0) {
@@ -1090,8 +1104,8 @@ export class SyncEngine {
     cfg.activeWorkspaces.splice(ix, 1);
     cfg.files = cfg.files.filter((f) => f.workspaceId !== workspaceId);
     await this.saveCfg(cfg);
-    this.manifestByWs.delete(workspaceId);
-    this.metaByWs.delete(workspaceId);
+    this.evictManifestCache(workspaceId);
+    this.metaStore.forget(workspaceId);
   }
 
   /**
@@ -1099,13 +1113,14 @@ export class SyncEngine {
    * Ignores Suspend/Freeze — destructive op.
    */
   async deleteWorkspaceFromCloud(workspaceId: string): Promise<void> {
+    this.assertMayMutate("deleteWorkspaceFromCloud");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     if (!cfg.activeWorkspaces.some((w) => w.workspaceId === workspaceId)) {
       throw new Error("workspace не подключён к этому проекту");
     }
     await this.deleteCloudFilesOnly(workspaceId);
-    await this.detachWorkspaceLocal(workspaceId);
+    await this.detachWorkspaceLocalInternal(workspaceId);
   }
 
   /**
@@ -1117,6 +1132,7 @@ export class SyncEngine {
    * so deleteCloudFolderRecursive alone would miss .vscodesync-workspace.json.
    */
   async deleteCloudFilesOnly(workspaceId: string): Promise<void> {
+    this.assertMayMutate("deleteCloudFilesOnly");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.deleteCloudFolderRecursive(workspaceRootPath(workspaceId));
     // Explicitly delete known dot-prefixed files that listFolder may skip
@@ -1136,6 +1152,7 @@ export class SyncEngine {
    * Used for rollback when cloud deletion fails after early local detach.
    */
   async restoreWorkspaceLocal(entry: ActiveWorkspaceEntry, files: TrackedFile[]): Promise<void> {
+    this.assertMayMutate("restoreWorkspaceLocal");
     const cfg = await this.loadCfg();
     if (!cfg.activeWorkspaces.some((w) => w.workspaceId === entry.workspaceId)) {
       cfg.activeWorkspaces.push(entry);
@@ -1158,6 +1175,7 @@ export class SyncEngine {
     savedEntry: ActiveWorkspaceEntry,
     savedFiles: TrackedFile[],
   ): Promise<void> {
+    this.assertMayMutate("repushWorkspaceToCloud");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.restoreWorkspaceLocal(savedEntry, savedFiles);
     const cfg = await this.loadCfg();
@@ -1183,18 +1201,30 @@ export class SyncEngine {
     }
     for (const it of items) {
       const p = it.cloudPath;
-      const childPrefix = p.endsWith("/") ? p : `${p}/`;
-      let nested: FileMetadata[];
-      try {
-        nested = await this.deps.provider.listFolder(childPrefix);
-      } catch (e) {
-        if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-          nested = [];
-        } else {
-          throw e;
+      // `isFolder` comes straight from the listing on all four providers. Only
+      // when it is absent do we fall back to the old probe — which used to run
+      // for every entry, including plain files that can never have children,
+      // turning one delete into one extra `listFolder` per object.
+      let hasChildren: boolean;
+      if (it.isFolder === false) {
+        hasChildren = false;
+      } else if (it.isFolder === true) {
+        hasChildren = true;
+      } else {
+        const childPrefix = p.endsWith("/") ? p : `${p}/`;
+        let nested: FileMetadata[];
+        try {
+          nested = await this.deps.provider.listFolder(childPrefix);
+        } catch (e) {
+          if (e instanceof ProviderError && e.code === "NOT_FOUND") {
+            nested = [];
+          } else {
+            throw e;
+          }
         }
+        hasChildren = nested.length > 0;
       }
-      if (nested.length > 0) {
+      if (hasChildren) {
         await this.deleteCloudFolderRecursive(p);
       }
       try {
@@ -1218,6 +1248,7 @@ export class SyncEngine {
     targetWorkspaceId: string,
     options: { deleteSourceWorkspace?: boolean } = {},
   ): Promise<void> {
+    this.assertMayMutate("mergeWorkspaces");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const deleteSourceWorkspace = options.deleteSourceWorkspace ?? false;
     if (sourceWorkspaceId === targetWorkspaceId) {
@@ -1234,10 +1265,10 @@ export class SyncEngine {
       throw new Error("Оба workspace должны быть подключены в этом проекте.");
     }
 
-    this.manifestByWs.delete(sourceWorkspaceId);
-    this.manifestByWs.delete(targetWorkspaceId);
-    this.metaByWs.delete(sourceWorkspaceId);
-    this.metaByWs.delete(targetWorkspaceId);
+    this.evictManifestCache(sourceWorkspaceId);
+    this.evictManifestCache(targetWorkspaceId);
+    this.metaStore.forget(sourceWorkspaceId);
+    this.metaStore.forget(targetWorkspaceId);
 
     const srcManifestFull = await this.downloadManifest(sourceWorkspaceId, entSrc.manifestEtag);
     const tgtManifestFull = await this.downloadManifest(targetWorkspaceId, entTgt.manifestEtag);
@@ -1262,12 +1293,14 @@ export class SyncEngine {
     }
 
     const snapHint = `auto-pre-merge-${new Date().toISOString().slice(0, 10)}`;
+    const snapCrypto = this.snapshotCrypto();
     await createWorkspaceSnapshot(
       this.deps.provider,
       this.deps.workspaceRoot,
       sourceWorkspaceId,
       snapHint,
       this.deps.machineName,
+      snapCrypto,
     );
     await createWorkspaceSnapshot(
       this.deps.provider,
@@ -1275,12 +1308,19 @@ export class SyncEngine {
       targetWorkspaceId,
       snapHint,
       this.deps.machineName,
+      snapCrypto,
     );
 
+    // Both sides of the copy must respect the wire encoding recorded in the
+    // source `_meta`: `trackedFileCloudPath` always omits the `.gz` suffix, so
+    // merging a workspace with `compressUploads` on silently skipped every
+    // compressed blob and left the target pointing at objects that do not exist.
+    const srcMetaForCopy = await this.pullMeta(sourceWorkspaceId, entSrc.metaEtag);
     const sortedPaths = [...srcPaths].sort((a, b) => a.localeCompare(b));
     for (const posixRel of sortedPaths) {
-      const srcCloud = trackedFileCloudPath(sourceWorkspaceId, posixRel);
-      const dstCloud = trackedFileCloudPath(targetWorkspaceId, posixRel);
+      const wireGzip = srcMetaForCopy.files[posixRel]?.wireGzip === true;
+      const srcCloud = blobCloudPath(sourceWorkspaceId, posixRel, wireGzip);
+      const dstCloud = blobCloudPath(targetWorkspaceId, posixRel, wireGzip);
       await copyCloudFileBetweenProviders(this.deps.provider, this.deps.provider, srcCloud, dstCloud);
     }
 
@@ -1318,7 +1358,7 @@ export class SyncEngine {
     if (!entTgt3) {
       throw new Error("Целевой workspace пропал из конфига после putManifest.");
     }
-    await this.pushMetaJson(targetWorkspaceId, mergedMeta, entTgt3.metaEtag);
+    await this.pushMetaJson(targetWorkspaceId, mergedMeta, entTgt3.metaEtag, "push");
 
     if (!deleteSourceWorkspace) {
       await this.evacuateMergedSourceWorkspace(sourceWorkspaceId, srcManifestFull);
@@ -1330,12 +1370,12 @@ export class SyncEngine {
       await this.deleteCloudFolderRecursive(workspaceRootPath(sourceWorkspaceId));
     }
 
-    this.manifestByWs.delete(sourceWorkspaceId);
-    this.metaByWs.delete(sourceWorkspaceId);
+    this.evictManifestCache(sourceWorkspaceId);
+    this.metaStore.forget(sourceWorkspaceId);
 
     cfgInit = await this.loadCfg();
     const tgtEntryPost = cfgInit.activeWorkspaces.find((w) => w.workspaceId === targetWorkspaceId);
-    this.manifestByWs.delete(targetWorkspaceId);
+    this.evictManifestCache(targetWorkspaceId);
     await this.downloadManifest(targetWorkspaceId, tgtEntryPost?.manifestEtag);
   }
 
@@ -1349,9 +1389,14 @@ export class SyncEngine {
       throw new Error("источник merge не найден в конфиге (evacuate)");
     }
     const now = new Date().toISOString();
+    // NOT_FOUND is swallowed below, so a path missing the `.gz` suffix looked
+    // like a successful delete while the real blob stayed in the cloud forever
+    // as garbage — and the manifest was emptied regardless.
+    const srcMetaForEvacuate = await this.pullMeta(sourceWorkspaceId, ent.metaEtag);
     for (const mf of priorManifest.files.filter((f) => !f.removedAt)) {
+      const wireGzip = srcMetaForEvacuate.files[mf.path]?.wireGzip === true;
       try {
-        await this.deps.provider.deleteFile(trackedFileCloudPath(sourceWorkspaceId, mf.path));
+        await this.deps.provider.deleteFile(blobCloudPath(sourceWorkspaceId, mf.path, wireGzip));
       } catch (e) {
         if (!(e instanceof ProviderError && e.code === "NOT_FOUND")) {
           throw e;
@@ -1370,7 +1415,7 @@ export class SyncEngine {
     if (!entAfter) {
       throw new Error("источник пропал после putManifest (evacuate)");
     }
-    await this.pushMetaJson(sourceWorkspaceId, EMPTY_META_JSON, entAfter.metaEtag);
+    await this.pushMetaJson(sourceWorkspaceId, EMPTY_META_JSON, entAfter.metaEtag, "push");
   }
 
   /**
@@ -1407,6 +1452,7 @@ export class SyncEngine {
 
   /** Обновить название workspace в облачном манифесте и в `vscodesync.json`. */
   async renameWorkspaceNote(workspaceId: string, newNote: string): Promise<void> {
+    this.assertMayMutate("renameWorkspaceNote");
     const note = newNote.trim();
     if (!note) {
       throw new Error("Название не может быть пустым");
@@ -1452,6 +1498,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceGitBranch(workspaceId: string, gitBranchRaw: string): Promise<void> {
+    this.assertMayMutate("setWorkspaceGitBranch");
     const branch = gitBranchRaw.trim();
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1502,6 +1549,7 @@ export class SyncEngine {
     targetMachineId: string,
     next: "active" | "blocked",
   ): Promise<void> {
+    this.assertMayMutate("setMachineManifestStatus");
     await this.ensureNotFrozenForCloudWrites(workspaceId);
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1548,6 +1596,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceTags(workspaceId: string, tags: string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceTags");
     const normalized = [...new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))];
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -1570,6 +1619,7 @@ export class SyncEngine {
   }
 
   async setWorkspaceSharedIgnorePatterns(workspaceId: string, patterns: string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceSharedIgnorePatterns");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const normalized = normalizeIgnorePatternStrings(patterns);
     const cfg = await this.loadCfg();
@@ -1640,27 +1690,13 @@ export class SyncEngine {
     if (!m) {
       return [];
     }
-    const now = Date.now();
-    const out: { path: string; editingBy: string; editingSince: string; ageHours: number }[] = [];
-    for (const f of m.files) {
-      if (f.removedAt) {
-        continue;
-      }
-      if (!f.editingBy || !f.editingSince) {
-        continue;
-      }
-      const t = Date.parse(f.editingSince);
-      if (Number.isNaN(t) || now - t < this.resolveSoftLockStaleMs()) {
-        continue;
-      }
-      out.push({
-        path: f.path,
-        editingBy: f.editingBy,
-        editingSince: f.editingSince,
-        ageHours: (now - t) / 3600_000,
-      });
-    }
-    return out;
+    // One definition of "stale", shared with the clearing path below.
+    return findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => ({
+      path: r.posixRel,
+      editingBy: r.machineId,
+      editingSince: r.editingSince,
+      ageHours: r.ageMs / 3600_000,
+    }));
   }
 
   /**
@@ -1668,6 +1704,7 @@ export class SyncEngine {
    * @returns Number of files updated.
    */
   async clearStaleManifestEditingLocks(workspaceId: string): Promise<number> {
+    this.assertMayMutate("clearStaleManifestEditingLocks");
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -1678,25 +1715,24 @@ export class SyncEngine {
       throw new Error("manifest missing");
     }
     const nowIso = new Date().toISOString();
-    const now = Date.now();
-    let cleared = 0;
+    const stale = new Set(
+      findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => r.posixRel),
+    );
+    const cleared = stale.size;
+    if (cleared === 0) {
+      return 0;
+    }
+    // Clearing someone else's abandoned lock *is* an edit to the row, so the
+    // version bumps here — unlike taking or dropping your own lock.
     const files: ManifestFile[] = m.files.map((f) => {
-      if (!f.editingBy || !f.editingSince) {
+      if (!stale.has(f.path)) {
         return f;
       }
-      const t = Date.parse(f.editingSince);
-      if (Number.isNaN(t) || now - t < this.resolveSoftLockStaleMs()) {
-        return f;
-      }
-      cleared += 1;
       const rest = { ...f };
       delete rest.editingBy;
       delete rest.editingSince;
       return { ...rest, version: f.version + 1 };
     });
-    if (cleared === 0) {
-      return 0;
-    }
     const updated: CloudManifest = {
       ...m,
       files,
@@ -1713,6 +1749,7 @@ export class SyncEngine {
    * Non-fatal: if manifest write fails, lock is not set (graceful degradation).
    */
   async setSoftLock(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("setSoftLock");
     verboseLog("softlock", `set START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
       return;
@@ -1726,24 +1763,27 @@ export class SyncEngine {
     if (!m) {
       return;
     }
+    // `downloadManifest` just refreshed the stored etag; re-read it instead of
+    // sending the pre-download one. The stale etag put every lock write on the
+    // 412-merge path, where the version tie-break belongs to the remote row —
+    // which was masked while `setSoftLock` inflated `version` on each call.
+    const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
     const now = new Date().toISOString();
-    const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
-    if (mfIx < 0) {
+    const files = applyLockChange(m.files, posixRel, {
+      machineId: this.deps.machineId,
+      sinceIso: now,
+    });
+    if (files === null) {
       return;
     }
-    // Already locked by this machine — just update editingSince (heartbeat)
     const updated: CloudManifest = {
       ...m,
       updatedAt: now,
       machines: this.touchMachine(m.machines, now),
-      files: m.files.map((f, i) =>
-        i === mfIx
-          ? { ...f, editingBy: this.deps.machineId, editingSince: now, version: f.version + 1 }
-          : f,
-      ),
+      files,
     };
     try {
-      await this.putManifest(workspaceId, updated, entry.manifestEtag);
+      await this.putManifest(workspaceId, updated, freshEtag);
       verboseLog("softlock", `set DONE ${posixRel}`);
     } catch (e: unknown) {
       warnLog(
@@ -1758,6 +1798,7 @@ export class SyncEngine {
    * Should be called when user closes the file or finishes Push.
    */
   async clearSoftLock(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("clearSoftLock");
     verboseLog("softlock", `clear START ws=${workspaceId} file=${posixRel}`);
     if (isSecondaryWorkspaceInstanceReadOnly()) {
       return;
@@ -1771,26 +1812,24 @@ export class SyncEngine {
     if (!m) {
       return;
     }
-    const mfIx = m.files.findIndex((f) => f.path === posixRel && !f.removedAt);
-    if (mfIx < 0) {
-      return;
-    }
-    const existing = m.files[mfIx];
-    if (!existing.editingBy || existing.editingBy !== this.deps.machineId) {
+    const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
+    const existing = m.files.find((f) => f.path === posixRel && !f.removedAt);
+    if (!existing?.editingBy || existing.editingBy !== this.deps.machineId) {
       return; // Only clear own lock
     }
     const now = new Date().toISOString();
-    const { editingBy: _editingBy, editingSince: _editingSince, ...rest } = existing;
+    const files = applyLockChange(m.files, posixRel, null);
+    if (files === null) {
+      return;
+    }
     const updated: CloudManifest = {
       ...m,
       updatedAt: now,
       machines: this.touchMachine(m.machines, now),
-      files: m.files.map((f, i) =>
-        i === mfIx ? { ...rest, version: f.version + 1 } : f,
-      ),
+      files,
     };
     try {
-      await this.putManifest(workspaceId, updated, entry.manifestEtag);
+      await this.putManifest(workspaceId, updated, freshEtag);
       verboseLog("softlock", `clear DONE ${posixRel}`);
     } catch (e: unknown) {
       warnLog(
@@ -1805,6 +1844,7 @@ export class SyncEngine {
    * Не выполняет push/pull файлов.
    */
   async repairLocalStateFromCloud(workspaceId?: string): Promise<void> {
+    this.assertMayMutate("repairLocalStateFromCloud");
     const cfg = await this.loadCfg();
     const list = workspaceId
       ? cfg.activeWorkspaces.filter((w) => w.workspaceId === workspaceId)
@@ -1827,7 +1867,7 @@ export class SyncEngine {
         throw new Error(`workspace ${id}: workspaceId в манифесте не совпадает`);
       }
       const manifest = rawManifest as CloudManifest;
-      this.manifestByWs.set(id, manifest);
+      this.cacheManifest(id, manifest, manDl.etag);
       let meta: MetaJson;
       let metaEtag: string | undefined;
       try {
@@ -1842,7 +1882,7 @@ export class SyncEngine {
           throw e;
         }
       }
-      this.metaByWs.set(id, meta);
+      this.metaStore.put(id, meta);
       const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === id);
       if (ix < 0) {
         continue;
@@ -1863,6 +1903,7 @@ export class SyncEngine {
   }
 
   async addFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("addFiles");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -1885,7 +1926,6 @@ export class SyncEngine {
     for (const abs of absolutePaths) {
       await this.assertFileWithinSizeLimit(abs);
       const posixRel = this.posixRel(cfg, abs);
-      const cloudPath = trackedFileCloudPath(workspaceId, posixRel);
       const markers = await this.fileHasSyncMarkers(abs);
       const exists = localCopy.files.some((f) => f.path === posixRel && !f.removedAt);
       if (!exists) {
@@ -1896,19 +1936,39 @@ export class SyncEngine {
           hasSyncignoreMarkers: markers,
         });
       }
-      await this.pushBlobRaw(cloudPath, abs);
+      // Same pipeline as `pushFile`. This used to call `pushBlobRaw`, which
+      // uploaded the file byte-for-byte: no compression, and — with encryption
+      // switched on — no encryption either, to a path computed without the
+      // `.gz` suffix. The blob was then downloaded again in full purely to read
+      // its etag, which `uploadFile` already returns.
+      this.assertEncryptionReady();
+      const plaintext = await fs.readFile(abs);
+      const encoded = planUploadEncoding({
+        workspaceId,
+        posixRel,
+        plaintext,
+        encrypt: this.deps.encrypt,
+        decrypt: this.deps.decrypt,
+        compressUploads: this.deps.compressUploads,
+      });
+      const cloudPath = encoded.cloudPath;
+      const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body, { signal: this.abortSignal });
+      this.emitTransfer({ direction: "upload", bytes: encoded.body.length });
       const hash = await computeHash(abs, this.hashCfg(posixRel));
-      const dl = await this.deps.provider.downloadFile(cloudPath);
       const prev = meta.files[posixRel];
       const prevVersion = prev === undefined ? 0 : prev.version;
-      meta.files[posixRel] = {
+      const row: MetaEntry = {
         hash,
-        etag: dl.etag ?? "",
+        etag: uploaded.etag ?? "",
         version: prevVersion + 1,
         machineId: this.deps.machineId,
         updatedAt: new Date().toISOString(),
       };
-      this.metaByWs.set(workspaceId, meta);
+      if (encoded.wireGzip) {
+        row.wireGzip = true;
+      }
+      meta.files[posixRel] = row;
+      this.metaStore.put(workspaceId, meta);
       const tracked: TrackedFile = {
         localPath: posixRel,
         workspaceId,
@@ -1937,7 +1997,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -1952,6 +2012,7 @@ export class SyncEngine {
 
   /** Удалить файлы из трекинга: blob в облаке, строка в `_meta`, tombstone в манифесте, запись в локальном кэше. */
   async removeTrackedFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("removeTrackedFiles");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -1975,22 +2036,23 @@ export class SyncEngine {
     };
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
 
+    // Two passes on purpose. Deletion used to happen inside the same loop that
+    // built the tombstones, while the mass-change guard only runs later, inside
+    // `putManifest`. By the time the user was asked "about to tombstone 500
+    // files, continue?" all 500 blobs were already gone — and answering "no"
+    // left the data deleted and the manifest untouched, the worst of both.
+    // Pass 1 computes what the manifest would become and asks; pass 2 deletes.
+    const plannedRemovals: { posixRel: string; cloudPath: string }[] = [];
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
       const tracked = this.findTracked(cfg, workspaceId, posixRel);
-      const cloudPath = tracked?.cloudPath ?? trackedFileCloudPath(workspaceId, posixRel);
+      const cloudPath =
+        tracked?.cloudPath ??
+        blobCloudPath(workspaceId, posixRel, meta.files[posixRel]?.wireGzip === true);
+      plannedRemovals.push({ posixRel, cloudPath });
+    }
 
-      try {
-        await this.deps.provider.deleteFile(cloudPath);
-      } catch (e) {
-        if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
-          throw e;
-        }
-      }
-      meta.files = Object.fromEntries(
-        Object.entries(meta.files).filter(([key]) => key !== posixRel),
-      );
-
+    for (const { posixRel } of plannedRemovals) {
       const mfIx = localCopy.files.findIndex((f) => f.path === posixRel);
       const nextVer = this.nextManifestVersion(localCopy.files);
       if (mfIx >= 0) {
@@ -2009,6 +2071,32 @@ export class SyncEngine {
           removedAt: now,
         });
       }
+    }
+
+    // Ask before anything is destroyed.
+    if (this.deps.onMassChange) {
+      const report = detectMassChange(remoteManifest, localCopy);
+      if (report.triggered) {
+        const proceed = await this.deps.onMassChange(workspaceId, report);
+        if (!proceed) {
+          throw new WorkspacePolicyError(
+            "VSCodeSync: удаление отменено пользователем (защита от массового изменения). Ничего не удалено.",
+          );
+        }
+      }
+    }
+
+    for (const { posixRel, cloudPath } of plannedRemovals) {
+      try {
+        await this.deps.provider.deleteFile(cloudPath);
+      } catch (e) {
+        if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
+          throw e;
+        }
+      }
+      meta.files = Object.fromEntries(
+        Object.entries(meta.files).filter(([key]) => key !== posixRel),
+      );
       this.fireActivity({
         kind: "remove",
         workspaceId,
@@ -2019,7 +2107,7 @@ export class SyncEngine {
       });
     }
 
-    const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
+    const relSet = new Set(plannedRemovals.map((r) => r.posixRel));
     cfg.files = cfg.files.filter((f) => !(f.workspaceId === workspaceId && relSet.has(f.localPath)));
 
     let diskCfg = await this.loadCfg();
@@ -2027,7 +2115,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2042,6 +2130,7 @@ export class SyncEngine {
 
   /** Remove file tracking only from local vscodesync.json. Cloud manifest and blob are untouched. */
   async untrackFileLocal(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("untrackFileLocal");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -2056,6 +2145,7 @@ export class SyncEngine {
    * but do NOT delete the cloud blob. Removes from meta + local config.
    */
   async untrackFileTombstoneOnly(workspaceId: string, absolutePaths: string[]): Promise<void> {
+    this.assertMayMutate("untrackFileTombstoneOnly");
     if (absolutePaths.length === 0) {
       return;
     }
@@ -2112,7 +2202,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2131,6 +2221,7 @@ export class SyncEngine {
    * manifest entry with renamedFrom/renamedAt markers.
    */
   async renameTrackedFile(workspaceId: string, oldAbsPath: string, newAbsPath: string): Promise<void> {
+    this.assertMayMutate("renameTrackedFile");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -2154,11 +2245,19 @@ export class SyncEngine {
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
 
     const oldCloudPath = trackedEntry.cloudPath;
-    const newCloudPath = trackedFileCloudPath(workspaceId, newRel);
+    // The new path must carry the same wire encoding as the old one. It used to
+    // be built with `trackedFileCloudPath`, i.e. always without the `.gz`
+    // suffix, while the `_meta` row was moved across verbatim — `wireGzip: true`
+    // included. `pullFile` then asked for `<newRel>.gz`, which did not exist,
+    // and the file was NOT_FOUND forever: a plain rename with `compressUploads`
+    // on permanently broke the file.
+    const renameWireGzip = meta.files[oldRel]?.wireGzip === true;
+    const newCloudPath = blobCloudPath(workspaceId, newRel, renameWireGzip);
 
-    // Copy blob: download old, upload to new path
+    // Copy blob: download old, upload to new path. Bytes are moved in their
+    // wire form on purpose — no decode/re-encode, so no key is needed here.
     try {
-      const dl = await this.deps.provider.downloadFile(oldCloudPath);
+      const dl = await this.deps.provider.downloadFile(oldCloudPath, { signal: this.abortSignal });
       await this.deps.provider.uploadFile(newCloudPath, dl.body, undefined);
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -2227,7 +2326,7 @@ export class SyncEngine {
     if (!entDisk) {
       throw new Error("workspace entry lost");
     }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag);
+    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
     diskCfg = await this.loadCfg();
     const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entAfterMeta) {
@@ -2309,64 +2408,7 @@ export class SyncEngine {
     workspaceId: string,
     ifNoneMatch: string | undefined,
   ): Promise<CloudManifest | null> {
-    let dl: Awaited<ReturnType<typeof this.deps.provider.downloadFile>>;
-    try {
-      dl = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId), {
-        ifNoneMatch,
-      });
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return null;
-      }
-      throw e;
-    }
-    if (dl.notModified) {
-      const cached = this.manifestByWs.get(workspaceId);
-      if (cached) {
-        return cached;
-      }
-      const full = await this.deps.provider.downloadFile(manifestCloudPath(workspaceId));
-      const m = this.parseManifestSafe(workspaceId, full.body);
-      if (!m) return null;
-      this.manifestByWs.set(workspaceId, m);
-      if (full.etag) {
-        await this.patchEntry(workspaceId, {
-          manifestEtag: full.etag,
-          ...this.entryPatchFromManifest(m),
-        });
-      }
-      return m;
-    }
-    const m = this.parseManifestSafe(workspaceId, dl.body);
-    if (!m) return null;
-    this.manifestByWs.set(workspaceId, m);
-    if (dl.etag) {
-      await this.patchEntry(workspaceId, {
-        manifestEtag: dl.etag,
-        ...this.entryPatchFromManifest(m),
-      });
-    }
-    return m;
-  }
-
-  /**
-   * Parse a cloud manifest body. On JSON / shape errors notifies the host and
-   * returns `null` so callers fall through to the «manifest gone» recovery
-   * path — which will surface to the user (auto-detach or rebuild).
-   */
-  private parseManifestSafe(workspaceId: string, body: Buffer): CloudManifest | null {
-    try {
-      const parsed = JSON.parse(body.toString("utf8")) as CloudManifest;
-      if (!parsed.workspaceId || !Array.isArray(parsed.files)) {
-        throw new Error("manifest schema mismatch");
-      }
-      return parsed;
-    } catch (e: unknown) {
-      const reason = e instanceof Error ? e.message : String(e);
-      warnLog("syncEngine", `manifest corrupt for ${workspaceId}: ${reason}`);
-      this.deps.onCorruptManifest?.(workspaceId, reason);
-      return null;
-    }
+    return this.manifestStore.download(workspaceId, ifNoneMatch);
   }
 
   /** Manifest was deleted from cloud while workspace still exists locally — rebuild from tracked files and re-upload. */
@@ -2406,98 +2448,27 @@ export class SyncEngine {
       metaEtag: metaUp.etag,
       ...this.entryPatchFromManifest(manifest),
     });
-    this.manifestByWs.set(workspaceId, manifest);
-    this.metaByWs.set(workspaceId, EMPTY_META_JSON);
+    this.cacheManifest(workspaceId, manifest, up.etag);
+    this.metaStore.put(workspaceId, EMPTY_META_JSON);
   }
 
   /** Purge tombstone entries older than `tombstonePurgeDays` and stale `renamedFrom` markers. */
-  private purgeTombstones(manifest: CloudManifest): CloudManifest {
-    const purgeDays = this.deps.tombstonePurgeDays ?? TOMBSTONE_PURGE_DAYS_DEFAULT;
-    if (purgeDays <= 0) {
-      return manifest;
-    }
-    const cutoff = Date.now() - purgeDays * 24 * 60 * 60 * 1000;
-    const files = manifest.files.filter((f) => {
-      if (!f.removedAt) {
-        return true;
-      }
-      const t = Date.parse(f.removedAt);
-      return Number.isNaN(t) || t >= cutoff;
-    }).map((f) => {
-      if (!f.renamedFrom || !f.renamedAt) {
-        return f;
-      }
-      const t = Date.parse(f.renamedAt);
-      if (!Number.isNaN(t) && t < cutoff) {
-        const { renamedFrom: _, renamedAt: __, ...rest } = f;
-        return rest;
-      }
-      return f;
-    });
-    if (files.length === manifest.files.length) {
-      return manifest;
-    }
-    return { ...manifest, files };
-  }
 
-  /**
-   * Find first matching ConflictRule for the given posixRel path.
-   * Uses simple glob matching: `*` matches within segment, `**` matches any depth.
-   */
-  private matchConflictRule(posixRel: string): ConflictRule | undefined {
-    const rules = this.deps.conflictRules;
-    if (!rules || rules.length === 0) {
-      return undefined;
-    }
-    for (const rule of rules) {
-      if (minimatchGlob(posixRel, rule.pattern)) {
-        return rule;
-      }
-    }
-    return undefined;
-  }
-
-  /** Apply a matched ConflictRule during syncOneFile (before surfacing conflict to user). */
-  private async applyConflictRule(
-    cfg: WorkspaceConfig,
-    workspaceId: string,
-    file: TrackedFile,
-    entry: ActiveWorkspaceEntry,
-    meta: MetaJson,
-    rule: ConflictRule,
-  ): Promise<void> {
-    let strategy = rule.strategy;
-    if (strategy === "newer") {
-      const localMtime = await fs.stat(this.localAbs(cfg, file.localPath)).then((s) => s.mtimeMs).catch(() => 0);
-      const cloudUpdatedAt = meta.files[file.localPath]?.updatedAt;
-      const cloudMs = cloudUpdatedAt ? Date.parse(cloudUpdatedAt) : 0;
-      strategy = localMtime >= cloudMs ? "keep-mine" : "take-theirs";
-    }
-    if (strategy === "keep-mine") {
-      if (!isSecondaryWorkspaceInstanceReadOnly() && !(await this.shouldSkipPushDueToMachineApproval(workspaceId))) {
-        // pushFile internally fires resolve_keep_mine activity with asAutoResolvedKeepMine=true
-        await this.pushFile(cfg, workspaceId, file.localPath, entry, { asAutoResolvedKeepMine: true });
-      }
-    } else {
-      // take-theirs: pullFile fires "pull" activity
-      file.syncStatus = "ok";
-      await this.pullFile(cfg, workspaceId, file.localPath, entry, meta);
-      this.fireActivity({
-        kind: "resolve_take_theirs",
-        workspaceId,
-        workspaceNote: entry.workspaceNote,
-        relPath: file.localPath,
-        machineName: this.deps.machineName,
-        provider: this.deps.provider.type,
-        meta: { autoResolved: true, rule: rule.pattern },
-      });
-    }
-  }
 
   /**
    * Resolve a conflict by keeping the local (mine) version: push local file to cloud, clear conflict status.
+   *
+   * Returns `"cloud_moved"` — without touching the cloud — when the cloud copy
+   * is no longer the one recorded when the conflict was flagged: that content
+   * was never shown to the user, and "Keep Mine" would bury it (D5). Pass
+   * `force` after the user has been told and still wants the local version.
    */
-  async resolveConflictKeepMine(workspaceId: string, posixRel: string): Promise<void> {
+  async resolveConflictKeepMine(
+    workspaceId: string,
+    posixRel: string,
+    opts?: { force?: boolean },
+  ): Promise<"pushed" | "cloud_moved" | "not_conflicting"> {
+    this.assertMayMutate("resolveConflictKeepMine");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -2506,21 +2477,52 @@ export class SyncEngine {
       throw new Error(`not tracked: ${posixRel}`);
     }
     if (file.syncStatus !== "conflict") {
-      return;
+      return "not_conflicting";
     }
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
       throw new Error("workspace not active");
     }
+    if (opts?.force !== true && (await this.cloudMovedSinceConflict(file))) {
+      return "cloud_moved";
+    }
     file.syncStatus = "ok";
+    file.conflictCloudHash = undefined;
     await this.pushFile(cfg, workspaceId, posixRel, entry, { asAutoResolvedKeepMine: true });
     await this.saveCfg(cfg);
+    // A 412 inside `pushFile` re-flags the conflict: the cloud moved between
+    // the check above and the upload. Report that instead of claiming success.
+    // Re-read through the config so we see what `pushFile` actually left.
+    const after = this.findTracked(cfg, workspaceId, posixRel);
+    return after?.syncStatus === "conflict" ? "cloud_moved" : "pushed";
+  }
+
+  /**
+   * True when the cloud blob differs from what it was when the conflict was
+   * raised. An unknown baseline (412 path) or an unreadable cloud copy answers
+   * `false` — this check may warn, never block on its own uncertainty.
+   */
+  private async cloudMovedSinceConflict(file: TrackedFile): Promise<boolean> {
+    const baseline = file.conflictCloudHash;
+    if (baseline === undefined || baseline === "") {
+      return false;
+    }
+    try {
+      const meta = await this.pullMeta(file.workspaceId, undefined);
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
+      const buf = this.decodeCloudBlob(dl.body, meta.files[file.localPath]?.wireGzip === true);
+      const current = hashCanonicalBuffer(buf, file.localPath, this.hashCfg(file.localPath));
+      return current !== baseline;
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Resolve a conflict by accepting the cloud (theirs) version: pull cloud file, clear conflict status.
    */
   async resolveConflictTakeTheirs(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("resolveConflictTakeTheirs");
     await this.ensureWorkspaceNotSuspendedNorFrozen(workspaceId);
     const cfg = await this.loadCfg();
     const file = this.findTracked(cfg, workspaceId, posixRel);
@@ -2555,6 +2557,7 @@ export class SyncEngine {
    * push doesn't lose the local-only edits either.
    */
   async resolveConflictKeepBoth(workspaceId: string, posixRel: string): Promise<void> {
+    this.assertMayMutate("resolveConflictKeepBoth");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const cfg = await this.loadCfg();
@@ -2615,53 +2618,7 @@ export class SyncEngine {
     ifMatch: string | undefined,
     retries = 3,
   ): Promise<string | undefined> {
-    rejectIfSecondaryWorkspaceInstanceReadOnly();
-    await this.ensureNotFrozenForCloudWrites(workspaceId);
-    try {
-      const clean = this.purgeTombstones(manifest);
-      // Pre-flight schema validation: never push a manifest that we ourselves
-      // would reject on download. Catches accidental shape regressions before
-      // they corrupt cloud state for other machines.
-      const validation = validateManifestShape(clean);
-      if (!validation.ok) {
-        throw new Error(`putManifest aborted: ${validation.reason}`);
-      }
-      // Mass-change guard: ask the UI for confirmation when this push would
-      // tombstone a large batch of files (absolute or percent threshold).
-      // Only consult on the first attempt — on a 412 retry the merged manifest
-      // is the result of our prior intent, so we don't re-prompt.
-      if (this.deps.onMassChange && retries === 3) {
-        const prev = this.manifestByWs.get(workspaceId);
-        const report = detectMassChange(prev, clean);
-        if (report.triggered) {
-          const proceed = await this.deps.onMassChange(workspaceId, report);
-          if (!proceed) throw new Error("putManifest aborted: mass-change guard");
-        }
-      }
-      const body = Buffer.from(`${JSON.stringify(clean, null, 2)}\n`, "utf8");
-      const res = await this.deps.provider.uploadFile(manifestCloudPath(workspaceId), body, {
-        ifMatch,
-      });
-      if (res.etag) {
-        await this.patchEntry(workspaceId, {
-          manifestEtag: res.etag,
-          ...this.entryPatchFromManifest(clean),
-        });
-      }
-      this.manifestByWs.set(workspaceId, clean);
-      return res.etag;
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "PRECONDITION_FAILED" && retries > 0) {
-        const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-        const remote = await this.downloadManifest(workspaceId, entry?.manifestEtag);
-        if (!remote) {
-          throw e;
-        }
-        const merged = mergeCloudManifests(manifest, remote);
-        return this.putManifest(workspaceId, merged, entry?.manifestEtag, retries - 1);
-      }
-      throw e;
-    }
+    return this.manifestStore.put(workspaceId, manifest, ifMatch, retries);
   }
 
   /**
@@ -2678,6 +2635,7 @@ export class SyncEngine {
     workspaceId: string,
     tasks: { relPath: string; existingSha256: string }[],
   ): Promise<{ applied: number; skippedMissing: number; skippedDrift: number; skippedAlreadyDone: number }> {
+    this.assertMayMutate("applyHashBlake3Backfill");
     const cfg = await WorkspaceConfigManager.load(this.deps.workspaceRoot);
     const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!ent) {
@@ -2719,87 +2677,46 @@ export class SyncEngine {
       applied += 1;
     }
     if (applied > 0) {
-      await this.pushMetaJson(workspaceId, updated, ent.metaEtag);
+      await this.pushMetaJson(workspaceId, updated, ent.metaEtag, "push");
     }
     return { applied, skippedMissing, skippedDrift, skippedAlreadyDone };
   }
 
   private async pullMeta(workspaceId: string, ifNoneMatch: string | undefined): Promise<MetaJson> {
-    try {
-      const dl = await this.deps.provider.downloadFile(metaCloudPath(workspaceId), { ifNoneMatch });
-      if (dl.notModified) {
-        const cached = this.metaByWs.get(workspaceId);
-        if (cached) {
-          return cached;
-        }
-        const full = await this.deps.provider.downloadFile(metaCloudPath(workspaceId));
-        if (full.etag) {
-          await this.patchEntry(workspaceId, { metaEtag: full.etag });
-        }
-        const parsed = JSON.parse(full.body.toString("utf8")) as MetaJson;
-        this.metaByWs.set(workspaceId, parsed);
-        return parsed;
-      }
-      if (dl.etag) {
-        await this.patchEntry(workspaceId, { metaEtag: dl.etag });
-      }
-      const parsed = JSON.parse(dl.body.toString("utf8")) as MetaJson;
-      this.metaByWs.set(workspaceId, parsed);
-      return parsed;
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        const empty: MetaJson = { files: {} };
-        this.metaByWs.set(workspaceId, empty);
-        return empty;
-      }
-      throw e;
-    }
+    return this.metaStore.pull(workspaceId, ifNoneMatch);
   }
 
-  private async pushMetaJson(workspaceId: string, meta: MetaJson, ifMatch: string | undefined): Promise<string> {
-    if (isSecondaryWorkspaceInstanceReadOnly() && !isPullMetaCloudWriteActive()) {
-      rejectIfSecondaryWorkspaceInstanceReadOnly();
-    }
-    await this.ensureNotFrozenForCloudWrites(workspaceId);
-    let etag = ifMatch;
-    let current = meta;
-    const metaWriteRetries = this.resolveMetaWriteRetries();
-    for (let attempt = 0; attempt < metaWriteRetries; attempt += 1) {
-      try {
-        const body = Buffer.from(`${JSON.stringify(current, null, 2)}\n`, "utf8");
-        const res = await this.deps.provider.uploadFile(metaCloudPath(workspaceId), body, {
-          ifMatch: etag,
-        });
-        if (res.etag) {
-          await this.patchEntry(workspaceId, { metaEtag: res.etag });
-        }
-        this.metaByWs.set(workspaceId, current);
-        return res.etag ?? "";
-      } catch (e) {
-        if (!(e instanceof ProviderError) || e.code !== "PRECONDITION_FAILED") {
-          throw e;
-        }
-        const remoteBuf = await this.deps.provider.downloadFile(metaCloudPath(workspaceId));
-        const remote = JSON.parse(remoteBuf.body.toString("utf8")) as MetaJson;
-        current = mergeMetaEntries(current, remote);
-        etag = remoteBuf.etag;
-      }
-    }
-    throw new Error("pushMetaJson: retries exhausted");
+  /**
+   * `reason` is required: every `_meta` write states whether it records a push
+   * or completes a pull. The distinction used to travel through a process-wide
+   * depth counter (`withPullCloudMetaWriteAllowed`) — while any parallel pull
+   * held the window open, an unrelated push on a read-only secondary instance
+   * slipped through the check (F7). An argument cannot leak across operations.
+   */
+  private async pushMetaJson(
+    workspaceId: string,
+    meta: MetaJson,
+    ifMatch: string | undefined,
+    reason: MetaWriteReason,
+  ): Promise<string> {
+    return this.metaStore.push(workspaceId, meta, ifMatch, reason);
   }
 
-  async syncWorkspace(workspaceId: string, options?: { checkOnly?: boolean }): Promise<void> {
-    // v0.7 — opportunistically drain any deferred history snapshots queued
-    // by `historyMode = lazy` since the last sync. Cheap when the queue is
-    // empty; bounded by `historyVersions` per file otherwise.
-    if (this.lazyHistoryQueue.length > 0) {
-      const drained = this.drainLazyHistoryQueue();
-      try {
-        await this.runDeferredHistorySnapshots(drained);
-      } catch (e) {
-        warnLog("syncEngine", `lazy history drain failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+  /**
+   * Everything a pass over a workspace needs before it looks at a single file.
+   *
+   * Extracted so the detector and the full sync stop being the same method with
+   * a flag. The flag reached only `iterateTrackedFiles`; the shared prologue ran
+   * regardless, so "check only" adopted files from someone else's manifest,
+   * pruned tracked entries, and — on a NOT_FOUND manifest — detached the
+   * workspace outright. That is `checkOnly` in name and a mutation in fact.
+   */
+  private async loadWorkspaceSyncContext(workspaceId: string): Promise<{
+    cfg: WorkspaceConfig;
+    manifest: CloudManifest;
+    trackedFiles: TrackedFile[];
+    meta: MetaJson;
+  } | null> {
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -2807,20 +2724,33 @@ export class SyncEngine {
     }
     const manifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
     if (!manifest) {
+      // Reached only when the provider answered NOT_FOUND. A manifest that
+      // exists but fails to parse throws `ManifestCorruptError` instead, so it
+      // can no longer be mistaken for a deletion.
+      //
       // Manifest is gone from cloud — regardless of whether the folder has leftover content,
-      // treat this as intentional deletion by another machine. Auto-detach locally and let
-      // the user decide: remove locally (default) or re-upload to cloud.
+      // treat this as intentional deletion by another machine.
+      //
+      // Detaching drops the workspace and every one of its tracked entries from
+      // the local config. On the check-only path that ran unconditionally, so a
+      // background status tick destroyed local tracking state on the strength of
+      // a NOT_FOUND from the cloud. The finding is reported either way; only a
+      // user-triggered run acts on it.
       const savedEntry = { ...entry };
       const savedFiles = cfg.files.filter((f) => f.workspaceId === workspaceId);
-      await this.detachWorkspaceLocal(workspaceId);
+      const detached = this.mayMutate("detachWorkspaceLocal");
+      if (detached) {
+        await this.detachWorkspaceLocalInternal(workspaceId);
+      }
       this.deps.onRemoteWorkspaceDeleted?.(
         workspaceId,
         entry.workspaceNote,
         this.deps.workspaceRoot,
         savedEntry,
         savedFiles,
+        detached,
       );
-      return;
+      return null;
     }
 
     // Forward-compat: if the cloud manifest has a newer schemaVersion, skip sync
@@ -2828,7 +2758,7 @@ export class SyncEngine {
     const rawSchema = (manifest as unknown as { schemaVersion: number }).schemaVersion;
     if (rawSchema > SUPPORTED_MANIFEST_SCHEMA) {
       this.deps.onSchemaVersionTooNew?.(workspaceId, rawSchema);
-      return;
+      return null;
     }
 
     // Detect files that would be silently pruned (tombstone purged while offline)
@@ -2855,18 +2785,24 @@ export class SyncEngine {
       }
     }
 
-    // Adopt new files added by other machines since last sync (before pruning)
-    // Important: must run BEFORE pruneTrackingFromManifest so renamedFrom detection can
-    // find the old entry while it still exists in cfg.files.
-    await this.adoptManifestFilesFromCloud(workspaceId);
-
-    // Reload cfg after adoption (adoptManifestFilesFromCloud saves its own copy)
-    const cfgAfterAdopt = await this.loadCfg();
-    this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
-    await this.saveCfg(cfgAfterAdopt);
+    // Adopting files another machine added, and pruning entries it removed,
+    // changes *what this machine tracks*. No byte moves either way, but the
+    // local tracking list is the user's, so a background pass reports the drift
+    // and leaves it alone; a user-triggered pass applies it as before.
+    if (this.mayMutate("applyTrackingFromCloud")) {
+      // Adopt before pruning: `renamedFrom` detection needs the old entry to
+      // still be in `cfg.files`.
+      await this.adoptManifestFilesFromCloud(workspaceId);
+      // Reload cfg after adoption (adoptManifestFilesFromCloud saves its own copy)
+      const cfgAfterAdopt = await this.loadCfg();
+      this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
+      await this.saveCfg(cfgAfterAdopt);
+    } else {
+      this.reportTrackingDrift(cfg, workspaceId, entry.workspaceNote, manifest);
+    }
 
     if (normalizeWorkspaceSyncState(entry) !== "active") {
-      return;
+      return null;
     }
 
     // Use the fresh config after adopt + prune
@@ -2888,18 +2824,78 @@ export class SyncEngine {
     // cache, eliminating N getMetadata(_meta.json) HTTP round-trips for N tracked files.
     const entInit = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entInit) {
-      return;
+      return null;
     }
-    const metaNow = await this.pullMeta(workspaceId, entInit.metaEtag);
+    const meta = await this.pullMeta(workspaceId, entInit.metaEtag);
 
-    await this.iterateTrackedFiles(
-      cfgSync,
+    return { cfg: cfgSync, manifest, trackedFiles, meta };
+  }
+
+  /**
+   * Report tracking composition that differs from the cloud manifest without
+   * changing it. This is what the detector produces instead of adopting and
+   * pruning on its own; the panel and the notification turn it into a choice.
+   */
+  private reportTrackingDrift(
+    cfg: WorkspaceConfig,
+    workspaceId: string,
+    workspaceNote: string,
+    manifest: CloudManifest,
+  ): void {
+    if (!this.deps.onTrackingDriftDetected) return;
+    // Same planner the adoption uses, so the notification cannot promise a
+    // different set of changes than the action would apply. `existsLocally` is
+    // irrelevant to the counts, so the detector answers it cheaply.
+    const diff = planTrackingDiff({
       workspaceId,
-      manifest,
-      trackedFiles,
-      metaNow,
-      options?.checkOnly === true,
-    );
+      manifestFiles: manifest.files,
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      metaHashFor: () => undefined,
+      wireGzipFor: () => false,
+      existsLocally: () => false,
+    });
+    const toAdopt = [...diff.adopt.map((a) => a.posixRel), ...diff.rename.map((r) => r.to)];
+    const toPrune = diff.prune;
+    if (toAdopt.length === 0 && toPrune.length === 0) return;
+    this.deps.onTrackingDriftDetected({ workspaceId, workspaceNote, toAdopt, toPrune });
+  }
+
+  /**
+   * Bring the local tracking list in line with the cloud manifest — the
+   * user-driven half of what the detector only reports.
+   */
+  async applyTrackingFromCloud(workspaceId: string): Promise<void> {
+    this.assertMayMutate("applyTrackingFromCloud");
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const manifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!manifest) return;
+    await this.adoptManifestFilesFromCloud(workspaceId);
+    const cfgAfterAdopt = await this.loadCfg();
+    this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
+    await this.saveCfg(cfgAfterAdopt);
+  }
+
+  async syncWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("syncWorkspace");
+    // v0.7 — opportunistically drain any deferred history snapshots queued by
+    // `historyMode = lazy` since the last sync. Cheap when the queue is empty;
+    // bounded by `historyVersions` per file otherwise. Uploading them is a cloud
+    // write, which is why it lives here and not in the shared prologue.
+    if (this.historyStore.pending() > 0) {
+      const drained = this.drainLazyHistoryQueue();
+      try {
+        await this.runDeferredHistorySnapshots(drained);
+      } catch (e) {
+        warnLog("syncEngine", `lazy history drain failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const ctx = await this.loadWorkspaceSyncContext(workspaceId);
+    if (!ctx) return;
+    await this.iterateTrackedFiles(ctx.cfg, workspaceId, ctx.manifest, ctx.trackedFiles, ctx.meta, false);
   }
 
   /**
@@ -2921,6 +2917,9 @@ export class SyncEngine {
       await parallelLimit(
         trackedFiles,
         async (file) => {
+          // Cancellation lands between files (A5): the request in flight
+          // finishes, nothing new starts.
+          this.assertNotCancelled(checkOnly ? "проверка расхождений" : "синхронизация");
           const m = manifest.files.find((x) => x.path === file.localPath && !x.removedAt);
           if (!m) return;
           if (file.syncStatus === "conflict") return;
@@ -2967,11 +2966,12 @@ export class SyncEngine {
     const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
     let cloudCurrent = "";
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag });
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
-        cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+        const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+        cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -2979,27 +2979,13 @@ export class SyncEngine {
       }
       cloudCurrent = "";
     }
-    // Meta consensus already updated by another machine; our cached
-    // `file.localHash` lags behind. detectChange would call this "push"
-    // because it doesn't know `localHash` is stale — but the right
-    // verdict is "pull": cloud has changed, we're out of date.
-    // (Identical guard exists in syncOneFile:2994-3005 for the full-sync
-    //  path; check-only must mirror it or we mis-report status as
-    //  pending_push when a remote machine pushed a newer version.)
-    const consensusLagsLocally =
-      base !== undefined &&
-      base !== "" &&
-      file.localHash !== base &&
-      cloudCurrent === base &&
-      localCurrent !== cloudCurrent;
-    const action: ChangeAction = consensusLagsLocally
-      ? "pull"
-      : detectChange(base, localCurrent, cloudCurrent);
-    let next: WorkspaceConfig["files"][number]["syncStatus"] = file.syncStatus;
-    if (action === "push") next = "pending_push";
-    else if (action === "pull") next = "cloud_newer";
-    else if (action === "none") next = "ok";
-    else next = "conflict";
+    const { action } = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrent,
+      cloudHash: cloudCurrent,
+    });
+    const next = syncStatusForAction(action);
     if (file.syncStatus !== next) {
       verboseLog(
         "syncEngine",
@@ -3018,8 +3004,16 @@ export class SyncEngine {
    * Surface this from auto-triggers when `vscodesync.autoSyncMode` is
    * `check-only` — no file content moves until the user invokes Push/Pull.
    */
+  /**
+   * The divergence detector: reads the manifest, hashes locally, records
+   * `syncStatus`. Writes nothing else — no blob, no manifest, no `_meta`, no
+   * change to which files are tracked. This is the one pass a background source
+   * is allowed to run, so its guarantees have to hold without a checkpoint.
+   */
   async checkWorkspaceStatus(workspaceId: string): Promise<void> {
-    return this.syncWorkspace(workspaceId, { checkOnly: true });
+    const ctx = await this.loadWorkspaceSyncContext(workspaceId);
+    if (!ctx) return;
+    await this.iterateTrackedFiles(ctx.cfg, workspaceId, ctx.manifest, ctx.trackedFiles, ctx.meta, true);
   }
 
   private pruneTrackingFromManifest(cfg: WorkspaceConfig, manifest: CloudManifest): void {
@@ -3041,18 +3035,19 @@ export class SyncEngine {
     meta: MetaJson,
     entry: ActiveWorkspaceEntry,
   ): Promise<void> {
+    this.assertMayMutate("syncOneFile");
     const metaRow = meta.files[file.localPath];
     const base = metaRow === undefined ? undefined : metaRow.hash;
     const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag });
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
-        cloudBuf = dl.body;
-        cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+        cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+        cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -3060,20 +3055,23 @@ export class SyncEngine {
       }
       cloudCurrent = "";
     }
-    /** `_meta` already updated by another machine; our cached `localHash` lags behind consensus. */
-    if (
-      base !== undefined &&
-      base !== "" &&
-      file.localHash !== base &&
-      cloudCurrent === base
-    ) {
+    const planned = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrent,
+      cloudHash: cloudCurrent,
+    });
+    if (planned.reason === "consensus_lag") {
+      // `_meta` already updated by another machine; our cached `localHash` lags
+      // behind consensus. Report it and let the user pull — a full sync must
+      // not silently overwrite what they pushed.
       if (file.syncStatus !== "cloud_newer") {
         file.syncStatus = "cloud_newer";
         await this.persistMutatedCfg(cfg);
       }
       return;
     }
-    const action = detectChange(base, localCurrent, cloudCurrent);
+    const action = planned.action;
     if (action === "push") {
       if (file.syncStatus === "cloud_newer") {
         file.syncStatus = "ok";
@@ -3116,12 +3114,8 @@ export class SyncEngine {
       if (file.syncStatus === "conflict") {
         return;
       }
-      const rule = this.matchConflictRule(file.localPath);
-      if (rule) {
-        await this.applyConflictRule(cfg, workspaceId, file, entry, meta, rule);
-        return;
-      }
       file.syncStatus = "conflict";
+      file.conflictCloudHash = cloudCurrent;
       await this.persistMutatedCfg(cfg);
       if (this.deps.onNewConflict) {
         const isBin = await fileLooksBinary(this.localAbs(cfg, file.localPath)).catch(() => false);
@@ -3147,7 +3141,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set(cfg.activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces);
     const results: SyncPreviewWorkspace[] = [];
 
     for (const wsId of ids) {
@@ -3212,8 +3206,20 @@ export class SyncEngine {
         const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
         let cloudCurrent = "";
         try {
-          const dl = await this.deps.provider.downloadFile(file.cloudPath);
-          cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+          // Conditional GET (этап 5.2): the preview used to download the full
+          // body of every tracked file on every run — the one pass that reads
+          // the whole workspace, doing it the most expensive way possible.
+          // A 304 means the blob still hashes to `_meta.hash`, which is exactly
+          // what we were about to compute.
+          const dl = await this.deps.provider.downloadFile(file.cloudPath, {
+            ifNoneMatch: metaRow?.etag !== undefined && metaRow.etag !== "" ? metaRow.etag : undefined,
+          });
+          if (dl.notModified) {
+            cloudCurrent = base ?? "";
+          } else {
+            const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+            cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
+          }
         } catch (e) {
           if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
             throw e;
@@ -3221,12 +3227,12 @@ export class SyncEngine {
           cloudCurrent = "";
         }
 
-        let action: PreviewSyncFileAction;
-        if (base !== undefined && base !== "" && file.localHash !== base && cloudCurrent === base) {
-          action = "pull";
-        } else {
-          action = detectChange(base, localCurrent, cloudCurrent);
-        }
+        const action: PreviewSyncFileAction = planFileAction({
+          baseHash: base,
+          cachedLocalHash: file.localHash,
+          localHash: localCurrent,
+          cloudHash: cloudCurrent,
+        }).action;
         rows.push({ localPath: file.localPath, action });
       }
 
@@ -3264,9 +3270,9 @@ export class SyncEngine {
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath);
-      cloudBuf = dl.body;
-      cloudCurrent = hashCanonicalBuffer(dl.body, file.localPath, this.hashCfg(file.localPath));
+      const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
+      cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
+      cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
         throw e;
@@ -3274,12 +3280,18 @@ export class SyncEngine {
       cloudCurrent = "";
     }
 
-    if (base !== undefined && base !== "" && file.localHash !== base && cloudCurrent === base) {
+    const planned = planFileAction({
+      baseHash: base,
+      cachedLocalHash: file.localHash,
+      localHash: localCurrentHash,
+      cloudHash: cloudCurrent,
+    });
+    if (planned.reason === "consensus_lag") {
       await this.pullFile(cfg, workspaceId, file.localPath, entry, meta);
       return false;
     }
 
-    const action = detectChange(base, localCurrentHash, cloudCurrent);
+    const action = planned.action;
     if (action === "push") {
       if (isSecondaryWorkspaceInstanceReadOnly()) {
         return false;
@@ -3325,12 +3337,8 @@ export class SyncEngine {
     if (file.syncStatus === "conflict") {
       return false;
     }
-    const rule = this.matchConflictRule(file.localPath);
-    if (rule) {
-      await this.applyConflictRule(cfg, workspaceId, file, entry, meta, rule);
-      return false;
-    }
     file.syncStatus = "conflict";
+    file.conflictCloudHash = cloudCurrent;
     await this.persistMutatedCfg(cfg);
     if (this.deps.onNewConflict) {
       const isBin = await fileLooksBinary(this.localAbs(cfg, file.localPath)).catch(() => false);
@@ -3352,11 +3360,12 @@ export class SyncEngine {
     workspaceId?: string,
     onProgress?: (ev: PushAllProgressEvent) => void,
   ): Promise<PushAllResult[]> {
+    this.assertMayMutate("pushAll");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg = await this.loadCfg();
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set(cfg.activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces);
     const fileConcurrency = this.resolveFileConcurrency();
     const workspaceConcurrency = this.resolveWorkspaceConcurrency();
     const results: PushAllResult[] = new Array<PushAllResult>(ids.length);
@@ -3367,6 +3376,7 @@ export class SyncEngine {
     await parallelLimit(
       ids,
       async (id, idx) => {
+        this.assertNotCancelled("отправка в облако");
         const note =
           cfg.activeWorkspaces.find((w) => w.workspaceId === id)?.workspaceNote ?? id;
         onProgress?.({
@@ -3377,7 +3387,18 @@ export class SyncEngine {
           total: ids.length,
         });
         let pushedFiles = 0;
-        await this.syncWorkspace(id);
+        // Push means push. This used to be `syncWorkspace(id)`, so the Push
+        // command started with a two-way pass: pulling cloud-newer files over
+        // local ones and auto-resolving conflicts before a single byte went
+        // up (B17). Now it refreshes statuses the way the detector does —
+        // manifest, meta, per-file compare, no data movement — and then only
+        // uploads. Adopt/prune still applies here (user-triggered pass).
+        const ctxPush = await this.loadWorkspaceSyncContext(id);
+        if (ctxPush) {
+          await this.iterateTrackedFiles(
+            ctxPush.cfg, id, ctxPush.manifest, ctxPush.trackedFiles, ctxPush.meta, true,
+          );
+        }
         const c2 = await this.loadCfg();
         const entry = c2.activeWorkspaces.find((w) => w.workspaceId === id);
         if (!entry) {
@@ -3395,20 +3416,38 @@ export class SyncEngine {
           return;
         }
         const dirtyFiles = c2.files.filter((x) => x.workspaceId === id && x.syncStatus !== "conflict");
+        const failedFiles: { posixRel: string; error: string }[] = [];
         await this.withBatchedCfgWrites(c2, async () => {
           await parallelLimit(
             dirtyFiles,
             async (f) => {
-              const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
-              if (localHash !== f.localHash) {
-                await this.pushFile(c2, id, f.localPath, entry);
-                pushedFiles++;
+              this.assertNotCancelled("отправка в облако");
+              // Per-file isolation: one unreadable or vanished file must not
+              // abort the other files of the same workspace.
+              try {
+                const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
+                if (localHash !== f.localHash) {
+                  await this.pushFile(c2, id, f.localPath, entry);
+                  pushedFiles++;
+                }
+              } catch (e: unknown) {
+                // A workspace-level denial applies to every file equally —
+                // recording it per file would let the workspace report success.
+                if (e instanceof WorkspacePolicyError) throw e;
+                const reason = e instanceof Error ? e.message : String(e);
+                warnLog("syncEngine", `pushAll: ${f.localPath} пропущен — ${reason}`);
+                failedFiles.push({ posixRel: f.localPath, error: reason });
               }
             },
             { concurrency: fileConcurrency },
           );
         });
-        results[idx] = { workspaceId: id, ok: true, pushedFiles };
+        results[idx] = {
+          workspaceId: id,
+          ok: true,
+          pushedFiles,
+          ...(failedFiles.length > 0 ? { failedFiles } : {}),
+        };
         onProgress?.({
           kind: "workspace_finished",
           workspaceId: id,
@@ -3427,13 +3466,15 @@ export class SyncEngine {
   }
 
   async pullAll(workspaceId?: string): Promise<void> {
+    this.assertMayMutate("pullAll");
     const ids = workspaceId
       ? [workspaceId]
-      : [...new Set((await this.loadCfg()).activeWorkspaces.map((w) => w.workspaceId))];
+      : this.workspaceIdsForCurrentProvider((await this.loadCfg()).activeWorkspaces);
     const workspaceConcurrency = this.resolveWorkspaceConcurrency();
     await parallelLimit(
       ids,
       async (id) => {
+        this.assertNotCancelled("скачивание из облака");
         await this.forcePullWorkspace(id);
       },
       { concurrency: workspaceConcurrency },
@@ -3443,6 +3484,7 @@ export class SyncEngine {
   /** Force-pulls every tracked file from cloud, bypassing soft locks and detectChange.
    * Runs the same manifest/adopt/prune prep as syncWorkspace; skips conflict files only. */
   private async forcePullWorkspace(workspaceId: string): Promise<void> {
+    this.assertMayMutate("forcePullWorkspace");
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -3452,13 +3494,19 @@ export class SyncEngine {
     if (!manifest) {
       const savedEntry = { ...entry };
       const savedFiles = cfg.files.filter((f) => f.workspaceId === workspaceId);
-      await this.detachWorkspaceLocal(workspaceId);
+      // Reached only from `forcePullWorkspace`, which is gated, so the trigger
+      // is always "user" here — but ask the policy rather than assume it.
+      const detached = this.mayMutate("detachWorkspaceLocal");
+      if (detached) {
+        await this.detachWorkspaceLocalInternal(workspaceId);
+      }
       this.deps.onRemoteWorkspaceDeleted?.(
         workspaceId,
         entry.workspaceNote,
         this.deps.workspaceRoot,
         savedEntry,
         savedFiles,
+        detached,
       );
       return;
     }
@@ -3501,6 +3549,7 @@ export class SyncEngine {
       await parallelLimit(
         trackedFiles,
         async (file) => {
+          this.assertNotCancelled("скачивание из облака");
           if (file.syncStatus === "conflict") return;
           // Intentionally no soft-lock skip: manual pull overrides editingBy
           await this.pullFile(cfgSync, workspaceId, file.localPath, freshEntry);
@@ -3517,6 +3566,13 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean },
   ): Promise<void> {
+    this.assertMayMutate("pushFile");
+    this.assertEncryptionReady();
+    // A read-only secondary window must be stopped *before* the blob goes up
+    // (F7). Without this check the upload succeeded and only the following
+    // `pushMetaJson` threw, leaving an orphaned blob in the cloud that no
+    // `_meta` row referenced.
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
     const ent =
       entry ?? (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -3528,7 +3584,10 @@ export class SyncEngine {
       throw new Error("not tracked");
     }
     if (file.syncStatus === "conflict") {
-      return;
+      // Symmetric with `pullFile`: a conflicted file is never moved silently.
+      // `pushAll` already filters conflicts out before reaching here, and a
+      // stray one is now recorded as a skipped file rather than a false success.
+      throw new FileConflictError(posixRel);
     }
     const profileStart = this.deps.onSyncProfileSample ? Date.now() : 0;
     const meta = await this.pullMeta(workspaceId, ent.metaEtag);
@@ -3558,73 +3617,58 @@ export class SyncEngine {
       // v0.7 — re-use the meta we already fetched outside the lock when our
       // own etag is current. `pullMeta` will short-circuit via 304 anyway,
       // but reusing the in-memory copy saves the round-trip entirely.
-      const cachedMeta = this.metaByWs.get(workspaceId);
+      const cachedMeta = this.metaStore.peek(workspaceId);
       const metaLocked = cachedMeta ?? (await this.pullMeta(workspaceId, ent.metaEtag));
       const prevLocked = metaLocked.files[posixRel];
       const prevEtagLocked = prevLocked === undefined ? undefined : prevLocked.etag;
       const prevWireGzipLocked = prevLocked?.wireGzip === true;
-      await this.snapshotHistory(workspaceId, posixRel, oldBlobPathForHistory);
+      await this.historyStore.snapshot(workspaceId, posixRel, oldBlobPathForHistory);
       const plaintextBufLocked = await fs.readFile(abs);
-      // v0.7 — only re-hash when the file changed between the unlocked
-      // pre-check and acquiring the lock. We detect that via mtime stat on
-      // the path (cheap) — if unchanged, reuse `hash` from above.
-      let hashLocked = hash;
-      try {
-        const st = await fs.stat(abs);
-        // Re-hash only if the file was rewritten between the unlocked
-        // pre-check and acquiring the lock. The fast-path detects "nothing
-        // changed" via size; equal size with different content still races
-        // through to the safe re-hash branch below via the catch path.
-        if (plaintextBufLocked.length !== st.size) {
-          const hashStart2 = this.deps.onSyncProfileSample ? Date.now() : 0;
-          hashLocked = await computeHash(abs, this.hashCfg(posixRel));
-          if (this.deps.onSyncProfileSample) {
-            hashMsAccum += Date.now() - hashStart2;
-          }
-        }
-      } catch {
-        const hashStart2 = this.deps.onSyncProfileSample ? Date.now() : 0;
-        hashLocked = await computeHash(abs, this.hashCfg(posixRel));
-        if (this.deps.onSyncProfileSample) {
-          hashMsAccum += Date.now() - hashStart2;
-        }
+      // Hash the exact bytes we are about to upload.
+      //
+      // The previous version reused `hash` from the unlocked pre-check and only
+      // re-hashed when `plaintextBufLocked.length !== st.size` — comparing a
+      // buffer just read from `abs` against a `stat` of the same `abs` taken
+      // immediately after. Those agree essentially always, so the "did it change
+      // while we waited for the lock" check never fired. When the file *had*
+      // been rewritten in between, the new content went to the cloud while
+      // `_meta.hash` recorded the hash of the old content: every other machine
+      // saw a permanent mismatch and this one believed it was in sync.
+      //
+      // Hashing the in-memory buffer removes the race by construction and costs
+      // no second read of the file.
+      const hashStartLocked = this.deps.onSyncProfileSample ? Date.now() : 0;
+      const hashLocked = hashCanonicalBuffer(plaintextBufLocked, posixRel, this.hashCfg(posixRel));
+      if (this.deps.onSyncProfileSample) {
+        hashMsAccum += Date.now() - hashStartLocked;
       }
+      // `hash` above stays as it is: it feeds the pre-lock three-way check that
+      // decides whether to upload at all. Only the value recorded in `_meta`
+      // had to become the hash of the bytes actually sent.
 
-      if (
-        isDeltaSyncEligible({
-          deltaSync: this.deps.deltaSync ?? false,
-          deltaThresholdKB: this.deps.deltaThresholdKB ?? 100,
-          plaintextByteLength: plaintextBufLocked.length,
-        })
-      ) {
-        // §8.2: rolling-hash delta + conditional GET — not implemented; upload proceeds as full body below.
-      }
+      const encoded = planUploadEncoding({
+        workspaceId,
+        posixRel,
+        plaintext: plaintextBufLocked,
+        encrypt: this.deps.encrypt,
+        decrypt: this.deps.decrypt,
+        compressUploads: this.deps.compressUploads,
+      });
+      const wireGzip = encoded.wireGzip;
 
-      let wireGzip = false;
-      let gzipWireBody: Buffer | undefined;
-      if (this.deps.compressUploads && plaintextLooksCompressible(posixRel, plaintextBufLocked)) {
-        gzipWireBody = gzipIfShrinks(plaintextBufLocked);
-        wireGzip = gzipWireBody !== undefined;
-      }
-
-      const uploadCloudPath = blobCloudPath(workspaceId, posixRel, wireGzip);
+      const uploadCloudPath = encoded.cloudPath;
       const pathModeChanged =
         uploadCloudPath !== file.cloudPath ||
         prevWireGzipLocked !== wireGzip ||
         oldBlobPathForHistory !== uploadCloudPath;
 
-      let uploadBuf: Buffer;
-      if (wireGzip && gzipWireBody !== undefined) {
-        uploadBuf = this.deps.encrypt ? this.deps.encrypt(gzipWireBody) : gzipWireBody;
-      } else {
-        uploadBuf = this.deps.encrypt ? this.deps.encrypt(plaintextBufLocked) : plaintextBufLocked;
-      }
+      const uploadBuf = encoded.body;
 
       const ifMatchBlob = pathModeChanged ? undefined : prevEtagLocked;
       let etag = prevEtagLocked;
       const networkStartMs = this.deps.onSyncProfileSample ? Date.now() : 0;
       try {
-        const res = await this.deps.provider.uploadFile(uploadCloudPath, uploadBuf, { ifMatch: ifMatchBlob });
+        const res = await this.deps.provider.uploadFile(uploadCloudPath, uploadBuf, { ifMatch: ifMatchBlob, signal: this.abortSignal });
         etag = res.etag ?? etag;
         const networkMs = this.deps.onSyncProfileSample ? Date.now() - networkStartMs : 0;
         // v0.7 — verifyUploadHash setting gate. Default `plaintext-only`
@@ -3648,20 +3692,22 @@ export class SyncEngine {
         ) {
           try {
             const meta = await this.deps.provider.getMetadata(uploadCloudPath);
-            if (meta?.etag) {
+            // `contentDigest` is the field defined as a hash of the bytes (E10).
+            // This used to read `meta.etag`, which on OneDrive is a Graph token
+            // `{GUID},N` and on Dropbox is `rev` — so with the setting on, every
+            // OneDrive push failed with INTEGRITY_FAILED right after a
+            // successful upload. A provider that exposes no digest is skipped.
+            if (meta?.contentDigest) {
               const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
               const expected = expectedProviderDigests(this.deps.provider.type, plaintextBufLocked);
-              // Provider's etag string sometimes IS the md5 hex (gdrive,
-              // yandex). Match against any expected digest; mismatch with
-              // ALL of them → INTEGRITY_FAILED.
-              const cleaned = (meta.etag ?? "").replace(/^"+|"+$/g, "").toLowerCase();
-              const matched = expected.some((d) => digestEquals(d.value, cleaned));
-              if (!matched && cleaned.length >= 32) {
-                // Provider returned a digest-looking ETag but it doesn't
-                // match any of our computed hashes — likely corruption.
+              const actual = meta.contentDigest.value.toLowerCase();
+              const matched = expected.some(
+                (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
+              );
+              if (!matched) {
                 throw new ProviderError(
                   "INTEGRITY_FAILED",
-                  `Provider digest mismatch on ${posixRel}: provider=${cleaned} expected one of [${expected.map((d) => d.value).join(", ")}]`,
+                  `Provider digest mismatch on ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
                 );
               }
             }
@@ -3696,7 +3742,7 @@ export class SyncEngine {
             [posixRel]: row,
           },
         };
-        await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag);
+        await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "push");
         if (this.deps.onPushFile) {
           try {
             this.deps.onPushFile(workspaceId, posixRel, plaintextBufLocked, {
@@ -3713,8 +3759,10 @@ export class SyncEngine {
         }
         file.cloudPath = uploadCloudPath;
         await this.persistMutatedCfg(cfg);
-        if (wireGzip && gzipWireBody !== undefined) {
-          const saved = plaintextBufLocked.length - gzipWireBody.length;
+        if (wireGzip) {
+          // `encoded.body` may be encrypted on top of the gzip, but AES-GCM adds
+          // a fixed overhead, so the delta still reflects the real saving.
+          const saved = plaintextBufLocked.length - encoded.body.length;
           if (saved > 0) {
             this.deps.onCompressionSaving?.(saved);
           }
@@ -3753,6 +3801,9 @@ export class SyncEngine {
       } catch (e) {
         if (e instanceof ProviderError && e.code === "PRECONDITION_FAILED") {
           file.syncStatus = "conflict";
+          // 412 during upload: the cloud side was never downloaded here, so we
+          // have no hash to compare a later "Keep Mine" against.
+          file.conflictCloudHash = undefined;
           if (this.deps.onNewConflict) {
             const isBin = await fileLooksBinary(this.localAbs(cfg, posixRel)).catch(() => false);
             this.deps.onNewConflict(workspaceId, ent.workspaceNote, posixRel, isBin);
@@ -3789,11 +3840,59 @@ export class SyncEngine {
     });
   }
 
-  private async pushBlobRaw(cloudPath: string, abs: string): Promise<void> {
-    rejectIfSecondaryWorkspaceInstanceReadOnly();
-    const buf = await fs.readFile(abs);
-    await this.deps.provider.uploadFile(cloudPath, buf);
-    this.emitTransfer({ direction: "upload", bytes: buf.length });
+  /**
+   * Refuse any blob operation when encryption is switched on but no key reached
+   * this engine. Silently falling back to plaintext is the worst of the three
+   * possible outcomes: on push it puts readable content into the cloud over
+   * encrypted blobs *and* records a matching `_meta.hash`, so nothing ever
+   * notices; on pull it overwrites the user's file with ciphertext.
+   */
+  /**
+   * Turn a downloaded blob back into plaintext.
+   *
+   * The upload pipeline is `plaintext -> [gzip] -> [encrypt] -> upload`, so
+   * reading it back means decrypt first, then gunzip. Four comparison sites
+   * hashed `dl.body` as-is, which is the *wire* form: with encryption or
+   * compression enabled the result could never equal `_meta.hash` (always the
+   * plaintext canonical hash), so every such file was reported as a conflict
+   * forever, and the same raw bytes were handed to the line-ending comparison.
+   */
+  private decodeCloudBlob(body: Buffer, wireGzip: boolean): Buffer {
+    return this.blobTransfer.decode(body, wireGzip);
+  }
+
+  /**
+   * Workspaces that belong to the provider currently signed in.
+   *
+   * `providerType` is cached on the entry from the cloud manifest. Bulk
+   * operations used to walk *every* active workspace with whatever provider was
+   * active: a workspace created on Google Drive, visited with OneDrive selected,
+   * produced NOT_FOUND on its manifest — which the caller reads as "another
+   * machine deleted it" and responds to by detaching it locally and wiping its
+   * tracking. Entries with no cached `providerType` are kept: they predate the
+   * field, and excluding them would be its own kind of silent loss.
+   */
+  private workspaceIdsForCurrentProvider(entries: readonly ActiveWorkspaceEntry[]): string[] {
+    const active = this.deps.provider.type;
+    const kept = entries.filter((w) => w.providerType === undefined || w.providerType === active);
+    const skipped = entries.length - kept.length;
+    if (skipped > 0) {
+      verboseLog(
+        "syncEngine",
+        `пропущено воркспейсов чужого провайдера: ${String(skipped)} (активен ${active})`,
+      );
+    }
+    return [...new Set(kept.map((w) => w.workspaceId))];
+  }
+
+  private assertEncryptionReady(): void {
+    if (this.deps.encryptionRequired !== true) return;
+    if (this.deps.encrypt !== undefined && this.deps.decrypt !== undefined) return;
+    throw new Error(
+      "VSCodeSync: шифрование включено, но ключ недоступен для этой операции. " +
+        "Операция отменена, чтобы не залить открытый текст в облако и не перезаписать файл шифротекстом. " +
+        "Проверьте команду «VSCodeSync: Encryption Key» и повторите.",
+    );
   }
 
   private async verifyUploadPlaintextHash(
@@ -3802,84 +3901,11 @@ export class SyncEngine {
     posixRel: string,
     wireGzip: boolean,
   ): Promise<void> {
-    const verifyRetries = this.resolveVerifyRetries();
-    for (let i = 0; i < verifyRetries; i += 1) {
-      const got = await this.deps.provider.downloadFile(cloudPath);
-      let body = got.body;
-      if (wireGzip) {
-        body = gunzipToPlaintext(body);
-      }
-      const h = hashCanonicalBuffer(body, posixRel, this.hashCfg(posixRel));
-      if (h === expectedPlaintextHash) {
-        return;
-      }
-    }
-    throw new Error("verifyUploadPlaintextHash: hash mismatch after retries");
+    return this.blobTransfer.verifyUpload(cloudPath, expectedPlaintextHash, posixRel, wireGzip);
   }
 
   private async deleteRemoteBlobBestEffort(cloudPath: string): Promise<void> {
-    try {
-      await this.deps.provider.deleteFile(cloudPath);
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return;
-      }
-      warnLog(
-        "syncEngine",
-        `deleteRemoteBlobBestEffort(${cloudPath}) suppressed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-
-  private async snapshotHistory(workspaceId: string, posixRel: string, cloudPath: string): Promise<void> {
-    const mode = this.resolveHistoryMode();
-    if (mode === "off") return;
-    if (mode === "lazy") {
-      const entry: LazyHistoryEntry = {
-        workspaceId,
-        posixRel,
-        oldCloudPath: cloudPath,
-        queuedAtMs: Date.now(),
-      };
-      this.lazyHistoryQueue.push(entry);
-      this.deps.onLazyHistoryQueued?.(entry);
-      return;
-    }
-    await this.snapshotHistoryNow(workspaceId, posixRel, cloudPath);
-  }
-
-  private async snapshotHistoryNow(workspaceId: string, posixRel: string, cloudPath: string): Promise<void> {
-    try {
-      const cur = await this.deps.provider.downloadFile(cloudPath);
-      if (cur.notModified || cur.body.length === 0) {
-        return;
-      }
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const ext = posixRel.includes(".") ? posixRel.slice(posixRel.lastIndexOf(".")) : "";
-      const safeMachine = this.deps.machineName.replace(/[/\\:*?"<>|]/g, "_");
-      const histPath = `${historyDirForFile(workspaceId, posixRel)}/${stamp}_${safeMachine}${ext}`;
-      await this.deps.provider.uploadFile(histPath, cur.body);
-      await this.pruneHistory(workspaceId, posixRel);
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return;
-      }
-      throw e;
-    }
-  }
-
-  private async pruneHistory(workspaceId: string, posixRel: string): Promise<void> {
-    const dir = historyDirForFile(workspaceId, posixRel);
-    const items = await this.deps.provider.listFolder(dir);
-    const historyVersions = this.resolveHistoryVersions();
-    if (items.length <= historyVersions) {
-      return;
-    }
-    const sorted = [...items].sort((a, b) => a.cloudPath.localeCompare(b.cloudPath));
-    const drop = sorted.slice(0, Math.max(0, sorted.length - historyVersions));
-    for (const d of drop) {
-      await this.deps.provider.deleteFile(d.cloudPath);
-    }
+    return this.blobTransfer.deleteBestEffort(cloudPath);
   }
 
   async pullFile(
@@ -3889,6 +3915,8 @@ export class SyncEngine {
     entry?: ActiveWorkspaceEntry,
     metaIn?: MetaJson,
   ): Promise<"updated" | "already_current"> {
+    this.assertMayMutate("pullFile");
+    this.assertEncryptionReady();
     return runWithSyncFileLock(this.deps.workspaceRoot, posixRel, "pull", async () => {
     return this.withInFlightOp(workspaceId, posixRel, async () => {
     await this.ensureWorkspaceNotSuspendedNorFrozen(workspaceId);
@@ -3902,7 +3930,7 @@ export class SyncEngine {
       throw new Error("not tracked");
     }
     if (file.syncStatus === "conflict") {
-      throw new Error("файл в конфликте — используйте «Принять моё» или «Принять их версию»");
+      throw new FileConflictError(posixRel);
     }
     const meta = metaIn ?? (await this.pullMeta(workspaceId, ent.metaEtag));
     const metaRow = meta.files[posixRel];
@@ -3939,15 +3967,20 @@ export class SyncEngine {
       this.resolveProviderHashVerify()
     ) {
       try {
-        if (dl.etag) {
+        // Same field as the push-side check (E10): a download's `etag` is not a
+        // digest, so the comparison has to come from provider metadata.
+        const meta = await this.deps.provider.getMetadata(downloadPath);
+        if (meta?.contentDigest) {
           const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
           const expected = expectedProviderDigests(this.deps.provider.type, dl.body);
-          const cleaned = dl.etag.replace(/^"+|"+$/g, "").toLowerCase();
-          const matched = expected.some((d) => digestEquals(d.value, cleaned));
-          if (!matched && cleaned.length >= 32) {
+          const actual = meta.contentDigest.value.toLowerCase();
+          const matched = expected.some(
+            (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
+          );
+          if (!matched) {
             throw new ProviderError(
               "INTEGRITY_FAILED",
-              `Provider digest mismatch on pull ${posixRel}: provider=${cleaned} expected one of [${expected.map((d) => d.value).join(", ")}]`,
+              `Provider digest mismatch on pull ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
             );
           }
         }
@@ -3969,10 +4002,7 @@ export class SyncEngine {
     if (hadLocal && this.deps.localBackupEnabled !== false) {
       await backupLocalWithPrune(abs, this.deps.workspaceRoot, posixRel, this.deps.localBackupRetentionDays ?? 7, this.resolveLocalBackupDir());
     }
-    let rawBody: Buffer = this.deps.decrypt ? this.deps.decrypt(dl.body) : dl.body;
-    if (wireGzip) {
-      rawBody = gunzipToPlaintext(rawBody);
-    }
+    const rawBody: Buffer = this.decodeCloudBlob(dl.body, wireGzip);
     await fs.mkdir(path.dirname(abs), { recursive: true });
     if (bufferLooksBinary(rawBody)) {
       await fs.writeFile(abs, rawBody);
@@ -4010,7 +4040,7 @@ export class SyncEngine {
         [posixRel]: rowMeta,
       },
     };
-    await withPullCloudMetaWriteAllowed(() => this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag));
+    await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "pull-completion");
     file.localHash = hash;
     file.lastSync = new Date().toISOString();
     file.syncStatus = "ok";
@@ -4067,16 +4097,11 @@ export class SyncEngine {
     if (!norm.startsWith(prefix)) {
       throw new Error("not a history path for this file");
     }
-    let dl = await this.deps.provider.downloadFile(norm);
+    let dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
     if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(norm);
+      dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
     }
-    let body: Buffer = dl.body;
-    body = this.deps.decrypt ? this.deps.decrypt(body) : body;
-    if (wireGzip) {
-      body = gunzipToPlaintext(body);
-    }
-    return body;
+    return this.decodeCloudBlob(dl.body, wireGzip);
   }
 
   /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
@@ -4094,16 +4119,11 @@ export class SyncEngine {
     const row = meta.files[posixRel];
     const wireGzip = row?.wireGzip === true;
     const path = blobCloudPath(hit.workspaceId, posixRel, wireGzip);
-    let dl = await this.deps.provider.downloadFile(path);
+    let dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
     if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(path);
+      dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
     }
-    let body: Buffer = dl.body;
-    body = this.deps.decrypt ? this.deps.decrypt(body) : body;
-    if (wireGzip) {
-      body = gunzipToPlaintext(body);
-    }
-    return { body };
+    return { body: this.decodeCloudBlob(dl.body, wireGzip) };
   }
 }
 
@@ -4116,42 +4136,10 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-async function backupLocalWithPrune(
-  localFileAbs: string,
-  workspaceRoot: string,
-  posixRelMirror: string,
-  retentionDays: number,
-  backupDir: string,
-): Promise<void> {
-  const src = localFileAbs;
-  const stamp = new Date().toISOString().replace(/:/g, "-");
-  const dest = path.join(workspaceRoot, backupDir, stamp, ...posixRelMirror.split("/"));
-  await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.copyFile(src, dest);
-  if (retentionDays > 0) {
-    await pruneLocalBackups(workspaceRoot, retentionDays, backupDir);
-  }
-}
-
-async function pruneLocalBackups(workspaceRoot: string, retentionDays: number, backupDir: string): Promise<void> {
-  const root = path.join(workspaceRoot, backupDir);
-  let names: string[];
-  try {
-    names = await fs.readdir(root);
-  } catch {
-    return;
-  }
-  const entries = [];
-  for (const name of names) {
-    try {
-      const st = await fs.stat(path.join(root, name));
-      entries.push({ name, mtimeMs: st.mtimeMs, isDirectory: st.isDirectory() });
-    } catch {
-      /* skip — disappeared between readdir and stat */
-    }
-  }
-  const plan = planLocalBackupRetention({ entries, retentionDays });
-  await Promise.all(
-    plan.delete.map((name) => fs.rm(path.join(root, name), { recursive: true, force: true })),
-  );
-}
+/**
+ * Backup folders are named after the moment they were created. Second
+ * resolution, not millisecond: at millisecond resolution every single pulled
+ * file landed in a folder of its own, so a 500-file Pull All produced 500
+ * folders and the retention set grew while the very pass that reads it was
+ * still running.
+ */

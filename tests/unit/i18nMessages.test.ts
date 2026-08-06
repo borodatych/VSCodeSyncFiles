@@ -12,10 +12,9 @@ describe("i18nMessages — central UI string table", () => {
     expect(Object.keys(syncStatusLabels)).toHaveLength(6);
   });
 
-  it("autoSyncModeLabels has off/checkOnly/full", () => {
+  it("autoSyncModeLabels has off/checkOnly", () => {
     expect(autoSyncModeLabels.off).toBeTruthy();
     expect(autoSyncModeLabels.checkOnly).toBeTruthy();
-    expect(autoSyncModeLabels.full).toBeTruthy();
   });
 
   it("actionLabels covers pull/push/cancel/undo", () => {

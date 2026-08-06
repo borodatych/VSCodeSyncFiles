@@ -12,6 +12,7 @@ import {
 import { manifestCloudPath } from "../core/cloudLayout.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
@@ -30,6 +31,7 @@ export interface WorkspaceStructureIoDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
 }
@@ -224,7 +226,7 @@ async function importLitePortable(
   }
 
   await backupLocalConfig(workspaceRoot);
-  const engine = deps.makeEngine(workspaceRoot, provider, gc.machineId, gc.machineName);
+  const engine = deps.makeEngine(workspaceRoot, provider, gc.machineId, gc.machineName, "user");
   const absPaths = resolved.map((r) => r.abs);
 
   if (mode === "extend_local") {

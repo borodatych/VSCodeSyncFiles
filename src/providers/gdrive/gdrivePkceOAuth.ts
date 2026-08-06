@@ -10,6 +10,10 @@
 import type { SecretStore } from "../../core/types.js";
 import { storeGdriveTokens } from "./gdriveTokens.js";
 import { runPkceLoopbackOAuth } from "../_shared/pkceLoopbackOAuth.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 export const GDRIVE_PKCE_REDIRECT_PORT = 8737;
 export const GDRIVE_PKCE_REDIRECT_PATH = "/oauth-callback";
@@ -38,11 +42,11 @@ async function exchangeCode(
     client_id: clientId,
     code_verifier: codeVerifier,
   });
-  const r = await fetch(TOKEN_URL, {
+  const r = await fetchWithTimeout(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
-  });
+  }, { channel: "gdrive.oauth", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   if (!r.ok) {
     throw new Error(`Google Drive PKCE token exchange failed: ${await r.text()}`);
   }

@@ -33,13 +33,11 @@ export const syncStatusLabels: SyncStatusLabels = {
 export interface AutoSyncModeLabels {
   off: string;
   checkOnly: string;
-  full: string;
 }
 
 export const autoSyncModeLabels: AutoSyncModeLabels = {
-  off: "Авто-синхронизация выключена",
+  off: "Авто-проверка выключена",
   checkOnly: "Авто: только проверка статусов",
-  full: "Авто: полная синхронизация",
 };
 
 export interface ActionLabels {

@@ -29,13 +29,12 @@ export interface ExplainFileSyncStateInput {
   /** vscode.workspace.isTrusted */
   trusted: boolean;
   /** Resolved `vscodesync.autoSyncMode`. */
-  autoSyncMode: "off" | "check-only" | "full";
+  autoSyncMode: "off" | "check-only";
   /** Session pause active. */
   sessionPaused: boolean;
   /** Auto-pause active (battery / metered). */
   autoPauseActive: boolean;
   /** Schedule gate blocking. */
-  scheduleBlocked: boolean;
   /** Provider rate-limit cooldown active. */
   rateLimited: boolean;
   /** Workspace exists in active set + state. */
@@ -87,14 +86,12 @@ export function explainFileSyncState(input: ExplainFileSyncStateInput): ExplainF
   // 3. autoSyncMode
   if (input.autoSyncMode === "off") {
     items.push(itemBlock("auto_mode", "Авто-режим: off", "Push/Pull только вручную"));
-  } else if (input.autoSyncMode === "check-only") {
+  } else {
     items.push(itemInfo(
       "auto_mode",
       "Авто-режим: check-only",
       "Авто-триггеры обновляют статус, но не двигают файлы. Push/Pull вручную.",
     ));
-  } else {
-    items.push(itemOk("auto_mode", "Авто-режим: full"));
   }
 
   // 4. Pause / autopause / schedule / rate-limit
@@ -108,13 +105,6 @@ export function explainFileSyncState(input: ExplainFileSyncStateInput): ExplainF
       "auto_pause",
       "Авто-пауза активна",
       "Низкий заряд батареи или лимитированное соединение",
-    ));
-  }
-  if (input.scheduleBlocked) {
-    items.push(itemBlock(
-      "schedule",
-      "Окно расписания закрыто",
-      "Операции уйдут в schedule-deferred очередь и выполнятся при открытии окна",
     ));
   }
   if (input.rateLimited) {
@@ -158,10 +148,10 @@ export function explainFileSyncState(input: ExplainFileSyncStateInput): ExplainF
       ));
       break;
     case "pending_push":
-      items.push(itemInfo("status", "Локальная версия новее облачной", "Push сейчас или ждите next автосинка (в full режиме)"));
+      items.push(itemInfo("status", "Локальная версия новее облачной", "Отправьте через панель «Расхождения» или Push"));
       break;
     case "cloud_newer":
-      items.push(itemInfo("status", "Облачная версия новее локальной", "Pull сейчас или ждите next автосинка (в full режиме)"));
+      items.push(itemInfo("status", "Облачная версия новее локальной", "Скачайте через панель «Расхождения» или Pull"));
       break;
     case "ok":
       items.push(itemOk("status", "Файл синхронизирован"));

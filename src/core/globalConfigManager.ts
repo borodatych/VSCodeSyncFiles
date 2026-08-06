@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { writeTextFileAtomic } from "./writeTextFileAtomic.js";
 import * as os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { GlobalConfig, ProviderType, SecretStore } from "./types.js";
+import type { GlobalConfig, SecretStore } from "./types.js";
 
 const CONFIG_FILE = "config.json";
 
@@ -23,7 +23,12 @@ export class GlobalConfigManager {
 
   constructor(
     private readonly configDir: string,
-    private readonly secrets: SecretStore | undefined,
+    /**
+     * Kept for call-site compatibility. Token storage moved to
+     * `providers/_shared/tokenStore.ts`; the abandoned `vscodesync.token.<type>`
+     * accessors that used this were removed in stage 4.2 (E14).
+     */
+    _secrets: SecretStore | undefined,
   ) {}
 
   static resolveDefaultConfigDir(homedir: string = os.homedir()): string {
@@ -117,29 +122,6 @@ export class GlobalConfigManager {
     this.cache = next;
   }
 
-  async getProviderSecret(type: ProviderType): Promise<string | undefined> {
-    if (!this.secrets) {
-      return undefined;
-    }
-    const key = `vscodesync.token.${type}`;
-    return this.secrets.get(key);
-  }
-
-  async setProviderSecret(type: ProviderType, value: string): Promise<void> {
-    if (!this.secrets) {
-      return;
-    }
-    const key = `vscodesync.token.${type}`;
-    await this.secrets.store(key, value);
-  }
-
-  async deleteProviderSecret(type: ProviderType): Promise<void> {
-    if (!this.secrets) {
-      return;
-    }
-    const key = `vscodesync.token.${type}`;
-    await this.secrets.delete(key);
-  }
 
   invalidateCache(): void {
     this.cache = null;

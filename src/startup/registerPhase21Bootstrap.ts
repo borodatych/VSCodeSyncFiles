@@ -15,7 +15,9 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { RunWithEngineFn } from "../commands/registerWorkspaceLifecycle.js";
+import type { SyncProfileBuffer } from "../core/syncProfileBuffer.js";
 import { registerPhase21Commands } from "../commands/registerPhase21Commands.js";
 import { registerContextualHintsScheduler } from "../ui/contextualHintsScheduler.js";
 import { registerVscodeSyncUriHandler } from "../ui/vscodeSyncUriHandler.js";
@@ -35,7 +37,10 @@ export interface Phase21BootstrapDeps {
     provider: ICloudProvider,
     machineId: string,
     machineName: string,
+    trigger: SyncTrigger,
   ) => SyncEngine;
+  /** Sync profiler samples — forwarded to the support bundle export. */
+  profileBuffer: SyncProfileBuffer;
 }
 
 export function registerPhase21Bootstrap(deps: Phase21BootstrapDeps): void {
@@ -46,6 +51,7 @@ export function registerPhase21Bootstrap(deps: Phase21BootstrapDeps): void {
     tryAuthenticatedProvider: deps.tryAuthenticatedProvider,
     runWithEngine: deps.runWithEngine,
     makeEngine: deps.makeEngine,
+    profileBuffer: deps.profileBuffer,
   }));
   context.subscriptions.push(registerContextualHintsScheduler({
     context,

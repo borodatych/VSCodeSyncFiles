@@ -3,19 +3,36 @@
  * Настройки разбиты по разделам; изменения применяются сразу через VS Code API.
  */
 import * as vscode from "vscode";
+import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
+import { secretKeyForProvider } from "../providers/_shared/tokenStore.js";
+import { SETTINGS_KEYS, SETTINGS_SCHEMA } from "./settingsSchema.generated.js";
+import type { ProviderType } from "../core/types.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 
 const CFG = "vscodesync";
 
 export function registerSettingsPanel(context: vscode.ExtensionContext): void {
+  // One panel per window (F8). Every invocation used to build another webview
+  // and register another config listener into `context.subscriptions`, which is
+  // only released when the extension deactivates — so N openings meant N live
+  // listeners re-rendering N panels for the rest of the session.
+  let current: vscode.WebviewPanel | undefined;
+
   context.subscriptions.push(
     vscode.commands.registerCommand("vscodesync.showSettingsPanel", () => {
+      if (current) {
+        current.reveal(vscode.ViewColumn.One);
+        return;
+      }
       const panel = vscode.window.createWebviewPanel(
         "vscodesyncSettings",
         "VSCodeSync: Настройки",
         vscode.ViewColumn.One,
         { enableScripts: true, retainContextWhenHidden: true },
       );
+      current = panel;
+      /** Released together with the panel, not with the extension. */
+      const panelSubscriptions: vscode.Disposable[] = [];
 
       const sendSettings = (): void => {
         const cfg = vscode.workspace.getConfiguration(CFG);
@@ -26,6 +43,9 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
         void panel.webview.postMessage({ type: "init", values });
       };
 
+      const isProviderType = (k: string): k is ProviderType =>
+        k === "onedrive" || k === "gdrive" || k === "yandex" || k === "dropbox";
+
       const hasToken = (raw: string | undefined | null): boolean => {
         if (!raw) return false;
         try { return !!(JSON.parse(raw) as { accessToken?: string }).accessToken; } catch { return false; }
@@ -34,10 +54,10 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
       const sendAuthStatus = async (): Promise<void> => {
         try {
           const [onedriveRaw, gdriveRaw, yandexRaw, dropboxRaw] = await Promise.all([
-            context.secrets.get("vscodesync.onedrive.oauth"),
-            context.secrets.get("vscodesync.gdrive.oauth"),
-            context.secrets.get("vscodesync.yandex.oauth"),
-            context.secrets.get("vscodesync.dropbox.oauth"),
+            context.secrets.get(secretKeyForProvider("onedrive")),
+            context.secrets.get(secretKeyForProvider("gdrive")),
+            context.secrets.get(secretKeyForProvider("yandex")),
+            context.secrets.get(secretKeyForProvider("dropbox")),
           ]);
           let activeProvider: string | null = null;
           try {
@@ -74,7 +94,7 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           if (msg.type === "openNative") {
             await vscode.commands.executeCommand(
               "workbench.action.openSettings",
-              `@ext:vscodesync.vscodesync`,
+              EXTENSION_SETTINGS_QUERY,
             );
           }
           if (msg.type === "runCommand" && msg.key) {
@@ -91,11 +111,7 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           }
           if (msg.type === "signOut" && msg.key) {
             const providerKey = msg.key;
-            const secretKey =
-              providerKey === "onedrive" ? "vscodesync.onedrive.oauth" :
-              providerKey === "gdrive" ? "vscodesync.gdrive.oauth" :
-              providerKey === "yandex" ? "vscodesync.yandex.oauth" :
-              providerKey === "dropbox" ? "vscodesync.dropbox.oauth" : null;
+            const secretKey = isProviderType(providerKey) ? secretKeyForProvider(providerKey) : null;
             if (secretKey) {
               await context.secrets.delete(secretKey);
               void vscode.window.showInformationMessage(`VSCodeSync: ${providerKey} — токен удалён.`);
@@ -104,54 +120,37 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           }
         },
         undefined,
-        context.subscriptions,
+        panelSubscriptions,
       );
 
       // Re-send on external settings change
-      const disposable = vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration(CFG)) {
-          sendSettings();
-        }
-      });
+      panelSubscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+          if (e.affectsConfiguration(CFG)) {
+            sendSettings();
+          }
+        }),
+      );
       panel.onDidDispose(() => {
-        disposable.dispose();
+        for (const d of panelSubscriptions.splice(0)) {
+          d.dispose();
+        }
+        current = undefined;
       });
     }),
   );
 }
 
-const ALL_KEYS = [
-  "onedriveClientId", "googleDriveClientId", "dropboxAppKey",
-  "yandexOAuthClientId", "yandexUseAppFolder",
-  "notificationLevel", "showFileDecorations", "digestIntervalMinutes",
-  "maxFileSizeMB", "warnOnBinaryFiles", "showPreview", "syncSummaryOnStartup",
-  "lineEnding",
-  "localBackupEnabled", "localBackupRetentionDays",
-  "syncOnOpen", "syncOnFocusDelayMs", "pushOnCommit",
-  "smartSuggestions", "requireMachineApproval",
-  "pauseOnMeteredConnection", "pauseBatteryThreshold",
-  "watchMode", "watchIntervalSeconds", "watchMaxIntervalSeconds", "watchAdaptive",
-  "compressUploads", "encryption", "aiMerge.enabled",
-  "deltaSync", "deltaThresholdKB",
-  "webhooks.enabled", "webhooks.url", "webhooks.fallbackAfterMinutes", "webhooks.tunnelEnabled",
-  "gitBranchAutoSync",
-  "snapshotRetentionDays", "maxSnapshotsPerWorkspace",
-  "activityRetentionDays", "monthlyBandwidthLimitMB",
-  "workspaceInactiveDays", "batchAddWarnThreshold", "longAbsenceThresholdDays",
-  "quickTransferTtlDays",
-  "telemetry", "telemetryIngestUrl",
-  // v0.7 — performance / auto-sync mode tunables.
-  "autoSyncMode",
-  "sync.concurrency", "sync.workspaceConcurrency",
-  "verifyUploadHash", "historyVersions", "historyMode", "historyLazyDrainMinutes",
-  "metaWriteRetries", "verifyRetries", "softLockStaleHours",
-  "tokenRefreshSkewMinutes", "saveDebounceSecDefault",
-  "watchIdleCyclesBeforeBackoff", "localBackupDir",
-  "gdrive.folderCacheTtlSec",
-  "onedrive.uploadSessionThresholdMB", "onedrive.uploadChunkMB",
-  "yandex.apiTimeoutMs", "yandex.dataTimeoutMs", "yandex.lockedRetryDelayMs",
-  "diagnostics.profileSync",
-];
+/**
+ * Every declared setting, generated from `contributes.configuration`
+ * (`settingsSchema.generated.ts`).
+ *
+ * This used to be a hand-maintained list. It drifted to 67 of 92 keys, and two
+ * of the keys it still rendered had been removed from the schema — VS Code
+ * rejects a write to an unregistered key, so the panel said "saved" and the
+ * value went nowhere (F11).
+ */
+const ALL_KEYS: readonly string[] = SETTINGS_KEYS;
 
 function getSettingsHtml(): string {
   return `<!DOCTYPE html>
@@ -317,6 +316,7 @@ function getSettingsHtml(): string {
   <div class="sidebar-item" onclick="nav('snapshots',this)">📸 Снапшоты</div>
   <div class="sidebar-item" onclick="nav('advanced',this)">⚙ Расширенные</div>
   <div class="sidebar-item" onclick="nav('telemetry',this)">📊 Телеметрия</div>
+  <div class="sidebar-item" onclick="nav('other',this)">🧩 Прочие</div>
 </nav>
 
 <div class="content">
@@ -392,14 +392,13 @@ function getSettingsHtml(): string {
   <!-- ── СИНХРОНИЗАЦИЯ ───────────────────────────────────────── -->
   <div id="sync" class="section">
     <h2>☁ Синхронизация</h2>
-    ${select("lineEnding","Окончания строк","Нормализация при хэше: lf (рекомендуется), crlf, preserve (без нормализации).",["lf","crlf","preserve"])}
     ${number("maxFileSizeMB","Макс. размер файла (МБ)","0 — без лимита. Файлы больше лимита не синхронизируются.",0,1000)}
     ${toggle("showPreview","Предпросмотр перед sync","Показывать план синхронизации перед Push/Pull/Sync из панели.")}
-    ${toggle("syncSummaryOnStartup","Pull при старте VS Code","Тихий Pull при запуске и сводка изменений.")}
-    ${toggle("syncOnOpen","Pull при открытии файла","Тихий conditional GET при открытии отслеживаемого файла.")}
-    ${number("syncOnFocusDelayMs","Задержка sync при фокусе (мс)","Sync через N мс после получения фокуса окном VS Code.",0,60000)}
-    ${toggle("pushOnCommit","Push при Git коммите","Автоматически пушить отслеживаемые файлы после git commit.")}
-    ${toggle("gitBranchAutoSync","Git branch auto-sync","Suspend/Resume workspace при смене git-ветки.")}
+    ${toggle("syncSummaryOnStartup","Сводка при старте VS Code","Пересчитать статусы при запуске и показать сводку расхождений.")}
+    ${toggle("syncOnOpen","Проверка при открытии файла","Пересчитать статусы воркспейса файла (тихий conditional GET). Скачивание — по вашей команде.")}
+    ${number("syncOnFocusDelayMs","Задержка проверки при фокусе (мс)","Пересчёт статусов через N мс после получения фокуса окном VS Code.",0,60000)}
+    ${toggle("pushOnCommit","Проверка после Git-коммита","Пересчитать статусы затронутых воркспейсов после git commit. Отправка — по вашей команде.")}
+    ${toggle("gitBranchAutoSync","Git branch auto-suspend","Suspend/Resume воркспейсов по привязанной git-ветке; накопившиеся расхождения предлагаются, не выполняются.")}
     ${toggle("warnOnBinaryFiles","Предупреждать о бинарных файлах","Спрашивать подтверждение перед добавлением бинарного файла.")}
     ${toggle("smartSuggestions","Умные подсказки","Предлагать группировку часто редактируемых файлов в workspace.")}
     ${number("workspaceInactiveDays","Дней до архивирования","Предлагать архивировать workspace если нет активности (0 — не проверять).",0,3650)}
@@ -411,7 +410,7 @@ function getSettingsHtml(): string {
   <div id="performance" class="section">
     <h2>🚀 Производительность и авто-режим</h2>
 
-    ${select("autoSyncMode","Режим автосинхронизации","Что делают автоматические триггеры (save / open / focus / watch / commit). off — ничего, check-only — только статусы, full — историческое поведение.",["off","check-only","full"])}
+    ${select("autoSyncMode","Режим авто-проверки","Что делают автоматические триггеры (save / open / focus / watch / commit). off — ничего, check-only — пересчёт статусов; отправка и скачивание всегда по команде.",["off","check-only"])}
     ${number("sync.concurrency","Параллелизм файлов","Сколько файлов синхронизировать параллельно в одном workspace. 1 = последовательно (старое).",1,32)}
     ${number("sync.workspaceConcurrency","Параллелизм workspace'ов","Сколько workspace'ов синкать параллельно при pushAll. Учитывайте rate-limit провайдера.",1,16)}
     ${select("verifyUploadHash","Проверка хэша после upload","plaintext-only — проверять только для незашифрованных файлов (старое). never — не проверять, экономия 1 GET на push.",["plaintext-only","never"])}
@@ -422,8 +421,6 @@ function getSettingsHtml(): string {
     ${number("verifyRetries","Retry для verify-hash","Сколько раз перепроверять хэш blob'а после upload.",1,10)}
     ${number("softLockStaleHours","Soft-lock TTL (часы)","Через сколько часов editingSince считается устаревшим.",1,168)}
     ${number("tokenRefreshSkewMinutes","Обновление токена за (мин)","За сколько минут до истечения обновлять OAuth-токен.",1,60)}
-    ${number("saveDebounceSecDefault","Save-debounce по умолчанию (сек)","Дефолтная задержка push после save (если workspace не задал свою).",0,300)}
-    ${number("watchIdleCyclesBeforeBackoff","Циклов watch до backoff","Сколько пустых watch-циклов ждать до удвоения интервала.",1,100)}
     ${text("localBackupDir","Папка локальных бэкапов","Относительно корня workspace. Дефолт: .vscode/vscodesync-local-backup")}
     ${number("gdrive.folderCacheTtlSec","TTL кэша Google Drive folder-id (сек)","Кэш ускоряет деревообход путей. 0 = отключить.",0,86400)}
     ${number("onedrive.uploadSessionThresholdMB","OneDrive: порог session upload (МБ)","Выше — multipart session.",1,250)}
@@ -453,7 +450,7 @@ function getSettingsHtml(): string {
   <!-- ── WATCH MODE ──────────────────────────────────────────── -->
   <div id="watchmode" class="section">
     <h2>👁 Watch Mode</h2>
-    ${toggle("watchMode","Включить Watch Mode","Фоновый периодический sync всех активных workspace.")}
+    ${toggle("watchMode","Включить Watch Mode","Фоновый периодический пересчёт статусов всех активных воркспейсов.")}
     ${number("watchIntervalSeconds","Интервал опроса (сек)","Базовый интервал проверки изменений. Минимум 5 сек.",5,3600)}
     ${number("watchMaxIntervalSeconds","Макс. интервал backoff (сек)","При отсутствии изменений интервал растёт до этого значения.",30,86400)}
     ${toggle("watchAdaptive","Адаптивный интервал","При обнаружении изменений сбросить интервал к минимуму.")}
@@ -479,7 +476,6 @@ function getSettingsHtml(): string {
     ${toggle("encryption","E2E шифрование (AES-256-GCM)","Шифровать файлы перед загрузкой на облако. Требует настройки ключа. Несовместимо с compression.")}
     ${toggle("aiMerge.enabled","AI Merge конфликтов","Кнопка «✨ Merge with AI» в диалоге конфликтов. Требует GitHub Copilot.")}
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-secondary" onclick="runCmd('vscodesync.setupEncryptionKey')">Настроить ключ шифрования</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.exportEncryptionKey')">Экспортировать ключ</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.importEncryptionKey')">Импортировать ключ</button>
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.rotateEncryptionKey')">Сменить ключ</button>
@@ -501,8 +497,6 @@ function getSettingsHtml(): string {
   <div id="advanced" class="section">
     <h2>⚙ Расширенные</h2>
     ${toggle("compressUploads","Gzip сжатие загрузок","Сжимать текстовые файлы перед загрузкой. Несовместимо с шифрованием.")}
-    ${toggle("deltaSync","Delta Sync (экспериментально)","Загружать только изменённые части файлов (rolling-hash CDC).")}
-    ${number("deltaThresholdKB","Порог delta sync (КБ)","Delta sync применяется только для файлов крупнее N КБ.",1,102400)}
   </div>
 
   <!-- ── ТЕЛЕМЕТРИЯ ──────────────────────────────────────────── -->
@@ -513,6 +507,14 @@ function getSettingsHtml(): string {
     <div style="margin-top:16px">
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.toggleTelemetry')">Переключить телеметрию</button>
     </div>
+  </div>
+
+  <!-- ── ПРОЧИЕ (генерируется из схемы) ───────────────────────── -->
+  <div id="other" class="section">
+    <h2>🧩 Прочие</h2>
+    <p class="hint">Настройки, у которых нет отдельного места в этой панели. Раздел строится
+    из <code>contributes.configuration</code>, поэтому новая настройка появляется здесь сама.</p>
+    ${renderUncoveredSettings()}
   </div>
 </div><!-- /content -->
 
@@ -704,6 +706,103 @@ function setting(key: string, label: string, desc: string, control: string): str
     </div>
     <div class="setting-control">${control}</div>
   </div>`;
+}
+
+/**
+ * Renders every declared setting the hand-written sections above do not cover.
+ *
+ * Without it the panel silently lagged the schema — 25 of 92 settings had no
+ * входа at all (F11). Now a setting can be *placed* badly, but never missing.
+ */
+/**
+ * Keys that already have a hand-placed control in a themed section above.
+ * Generated-section rendering skips them; anything not here shows up under
+ * «Прочие», so the panel cannot silently lag the schema.
+ */
+const HAND_PLACED_KEYS: readonly string[] = [
+  "activityRetentionDays",
+  "aiMerge.enabled",
+  "autoSyncMode",
+  "batchAddWarnThreshold",
+  "compressUploads",
+  "diagnostics.profileSync",
+  "digestIntervalMinutes",
+  "dropboxAppKey",
+  "encryption",
+  "gdrive.folderCacheTtlSec",
+  "gitBranchAutoSync",
+  "googleDriveClientId",
+  "historyLazyDrainMinutes",
+  "historyMode",
+  "historyVersions",
+  "localBackupDir",
+  "localBackupEnabled",
+  "localBackupRetentionDays",
+  "longAbsenceThresholdDays",
+  "maxFileSizeMB",
+  "maxSnapshotsPerWorkspace",
+  "metaWriteRetries",
+  "monthlyBandwidthLimitMB",
+  "notificationLevel",
+  "onedrive.uploadChunkMB",
+  "onedrive.uploadSessionThresholdMB",
+  "onedriveClientId",
+  "pauseBatteryThreshold",
+  "pauseOnMeteredConnection",
+  "pushOnCommit",
+  "quickTransferTtlDays",
+  "requireMachineApproval",
+  "showFileDecorations",
+  "showPreview",
+  "smartSuggestions",
+  "snapshotRetentionDays",
+  "softLockStaleHours",
+  "sync.concurrency",
+  "sync.workspaceConcurrency",
+  "syncOnFocusDelayMs",
+  "syncOnOpen",
+  "syncSummaryOnStartup",
+  "telemetry",
+  "telemetryIngestUrl",
+  "tokenRefreshSkewMinutes",
+  "verifyRetries",
+  "verifyUploadHash",
+  "warnOnBinaryFiles",
+  "watchAdaptive",
+  "watchIntervalSeconds",
+  "watchMaxIntervalSeconds",
+  "watchMode",
+  "webhooks.enabled",
+  "webhooks.fallbackAfterMinutes",
+  "webhooks.tunnelEnabled",
+  "webhooks.url",
+  "workspaceInactiveDays",
+  "yandex.apiTimeoutMs",
+  "yandex.dataTimeoutMs",
+  "yandex.lockedRetryDelayMs",
+  "yandexOAuthClientId",
+  "yandexUseAppFolder",
+];
+
+function renderUncoveredSettings(): string {
+  const covered = new Set(HAND_PLACED_KEYS);
+  const rows = SETTINGS_SCHEMA.filter((s) => !covered.has(s.key)).map((s) => {
+    const label = s.key;
+    const desc = s.description;
+    if (Array.isArray(s.enum) && s.enum.length > 0) {
+      return select(s.key, label, desc, s.enum.map((o) => String(o)));
+    }
+    if (s.type === "boolean") {
+      return toggle(s.key, label, desc);
+    }
+    if (s.type === "number") {
+      return number(s.key, label, desc, s.minimum ?? 0, s.maximum ?? 99999);
+    }
+    return text(s.key, label, desc);
+  });
+  return rows.length === 0
+    ? `<p class="hint">Все настройки размещены по разделам.</p>`
+    : rows.join("\n");
 }
 
 function toggle(key: string, label: string, desc: string): string {

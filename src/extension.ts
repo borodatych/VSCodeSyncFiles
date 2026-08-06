@@ -12,9 +12,8 @@ import { WorkspacesTreeProvider, type SyncTreeElement } from "./ui/workspacesTre
 import { SyncFileDecorationController } from "./ui/fileDecorations.js";
 import { registerActiveEditorSyncContext, refreshActiveEditorSyncContext } from "./ui/editorSyncContext.js";
 import { registerQuickTransferFeatures } from "./ui/quickTransferUi.js";
-import { registerPlannedPaletteCommands } from "./ui/plannedPaletteCommands.js";
+import { registerPaletteCommands } from "./commands/palette/index.js";
 import { registerVscodeSyncTaskProvider } from "./ui/vscodeSyncTaskProvider.js";
-import { SyncScheduleDeferredStore } from "./core/syncScheduleDeferredStore.js";
 import { SyncOfflineQueueStore } from "./core/syncOfflineQueueStore.js";
 import { startDigestTimer } from "./ui/notificationService.js";
 import { registerGitBranchWorkspaceActivation } from "./ui/gitBranchWorkspaceActivation.js";
@@ -37,6 +36,7 @@ import { createWorkspaceInstanceLockRefresher } from "./startup/createWorkspaceI
 import { createSyncOutputChannels } from "./startup/createSyncOutputChannels.js";
 import { unpausePersistedSync } from "./startup/unpausePersistedSync.js";
 import { migrateAiMergeFlag } from "./startup/migrateAiMergeFlag.js";
+import { migrateSettingsTo100 } from "./startup/migrateSettingsTo100.js";
 import { registerPanelCommands } from "./commands/registerPanels.js";
 import { registerActivitySearchCommands } from "./commands/registerActivitySearches.js";
 import { registerProviderSignInCommands } from "./commands/registerProviderSignIn.js";
@@ -48,6 +48,7 @@ import { registerFileTreeContextCommands } from "./commands/registerFileTreeCont
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
+import { registerDivergenceNotice, registerDivergencesCommands, type DivergencesCommandsDeps } from "./commands/registerDivergences.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
 import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
 import { registerDiagnosticsCommands } from "./commands/registerDiagnostics.js";
@@ -55,10 +56,12 @@ import { registerWorkspaceCreateCommands } from "./commands/registerWorkspaceCre
 import { ensureProvider, tryAuthenticatedProvider } from "./commands/_providerFactory.js";
 import { resolveFileTargetLoose } from "./commands/_fileTargetHelpers.js";
 import { createEngineFactory } from "./startup/_engineFactory.js";
+import { registerCoreServices } from "./startup/registerCoreServices.js";
 import { createRunWithEngine } from "./startup/_runWithEngine.js";
 import { createRunAfterSessionResume } from "./startup/createRunAfterSessionResume.js";
 import { registerScheduledSnapshotsWiring } from "./startup/registerScheduledSnapshotsWiring.js";
 import { createEngineLogRefs } from "./startup/createEngineLogRefs.js";
+import { wireEngineFactoryRefs } from "./startup/wireEngineFactoryRefs.js";
 import { registerObservers } from "./startup/registerObservers.js";
 import { registerProviderAuthBundle } from "./startup/registerProviderAuthBundle.js";
 import { registerSyncMonitors } from "./startup/registerSyncMonitors.js";
@@ -75,7 +78,6 @@ import { registerPasskeyCommands } from "./ui/passkeyCommands.js";
 import { registerSarifExportCommand } from "./commands/registerSarifExport.js";
 import { registerReadmeAutoRender } from "./commands/registerReadmeAutoRender.js";
 import { registerEncryptedBundleExport } from "./commands/registerEncryptedBundleExport.js";
-import { registerAnalyticsPanel } from "./commands/registerAnalyticsPanel.js";
 import { ActivityAlertMonitor } from "./ui/activityAlertMonitor.js";
 import { registerPhase21Bootstrap } from "./startup/registerPhase21Bootstrap.js";
 
@@ -116,7 +118,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const globalDir = GlobalConfigManager.resolveDefaultConfigDir();
   const globalConfig = new GlobalConfigManager(globalDir, context.secrets);
-  const scheduleDeferredStore = new SyncScheduleDeferredStore(globalConfig.getStorageDir());
   const offlineQueueStore = new SyncOfflineQueueStore(globalConfig.getStorageDir());
 
   const p2pSessionRegistry = createP2PSessionRegistry(); const p2pMirrorRegistry = createMirrorRegistry();
@@ -126,7 +127,6 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerSarifExportCommand({ storageDir: globalConfig.getStorageDir() }),
     ...registerReadmeAutoRender({ context }),
     ...registerEncryptedBundleExport(),
-    ...registerAnalyticsPanel({ context }),
   );
 
   registerVsCodeSyncTelemetry(context, globalConfig, CFG_SECTION);
@@ -137,7 +137,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const activityAlertMonitor = new ActivityAlertMonitor(context);
   context.subscriptions.push(activityAlertMonitor);
 
-  const engineFactory = createEngineFactory();
+  const getEncKey = async (): Promise<Buffer | null> => {
+    const encOn = vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false);
+    if (!encOn) return null;
+    return readEncryptionKey(context.secrets);
+  };
+
+  const engineFactory = createEngineFactory({ getEncKey });
+
+  registerCoreServices(context, engineFactory, globalConfig);
   const { makeEngine, notifiedConflictKeys, profileBuffer } = engineFactory;
 
   const { logSyncActivity, logSyncStatsTransfer, logSyncCompression } = createEngineLogRefs({
@@ -174,7 +182,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const statusBar = new SyncStatusBarController({
     globalConfig,
-    scheduleDeferredStore,
     offlineQueue: offlineQueueStore,
     onSyncingChange: (syncing) => {
       fileDecorations.setSyncInProgress(syncing);
@@ -205,46 +212,26 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
 
-  const getEncKey = async (): Promise<Buffer | null> => {
-    const encOn = vscode.workspace.getConfiguration(CFG_SECTION).get<boolean>("encryption", false);
-    if (!encOn) return null;
-    return readEncryptionKey(context.secrets);
-  };
-
   const runWithEngine = createRunWithEngine({
     registry,
     globalConfig,
-    getEncKey,
     statusBar,
     workspacesTree,
     fileDecorations,
     makeEngine,
   });
 
-  const repushDeletedWorkspace: NonNullable<
-    Parameters<typeof engineFactory.setRefs>[0]["repushDeletedWorkspace"]
-  > = async (workspaceId, localRoot, savedEntry, savedFiles) => {
-    await runWithEngine(async (engine) => {
-      await engine.repushWorkspaceToCloud(workspaceId, savedEntry, savedFiles);
-      void vscode.window.showInformationMessage(
-        `VSCodeSync: workspace «${savedEntry.workspaceNote || workspaceId}» восстановлен на облаке.`,
-      );
-    }, localRoot);
-    workspacesTree.invalidateRemoteCache();
-    workspacesTree.refresh();
-    await statusBar.refresh();
-  };
-
-  engineFactory.setRefs({
-    logSyncActivity,
-    logSyncStatsTransfer,
-    logSyncCompression,
-    treeRefresh: () => { workspacesTree.refresh(); },
-    repushDeletedWorkspace,
+  wireEngineFactoryRefs({
+    engineFactory,
+    logRefs: { logSyncActivity, logSyncStatsTransfer, logSyncCompression },
+    runWithEngine,
+    statusBar,
+    workspacesTree,
     mirrorPushedFile: (wId, rel, pt) => { mirrorPushedFile(p2pMirrorRegistry, wId, rel, pt); },
   });
 
   registerVscodeSyncTaskProvider(context, {
+    secrets: context.secrets,
     runWithEngine,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
@@ -264,9 +251,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const gitBranchActivationDeps = {
     globalConfig,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-    getEncKey,
     makeEngine,
-    offlineQueue: offlineQueueStore,
     refreshUi: async () => {
       workspacesTree.refresh();
       fileDecorations.refresh();
@@ -277,6 +262,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerGitBranchWorkspaceActivation(context, gitBranchActivationDeps);
 
+  const divergencesDeps: DivergencesCommandsDeps = {
+    runWithEngine,
+    workspaceFolders: roots,
+    refreshUi: gitBranchActivationDeps.refreshUi,
+  };
+
+  registerDivergenceNotice(context, divergencesDeps);
+
   registerSyncMonitors({
     context,
     globalConfig,
@@ -284,7 +277,6 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     workspacesTree,
     fileDecorations,
-    scheduleDeferredStore,
     offlineQueueStore,
     makeEngine,
   });
@@ -352,16 +344,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    ...registerConflictsCommands({
-      globalConfig,
-      workspacesTree,
-      statusBar,
-      fileDecorations,
-      refreshActiveEditor: () => { void refreshActiveEditorSyncContext(); },
-      runWithEngine,
-      logSyncActivity,
-      notifiedConflictKeys,
-    }),
+    ...registerConflictsCommands({ globalConfig, runWithEngine, notifiedConflictKeys }),
   );
 
   context.subscriptions.push(
@@ -369,15 +352,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
     ...registerSyncOpsCommands({ runWithEngine }),
 
+    ...registerDivergencesCommands(divergencesDeps),
+
     ...registerDiagnosticsCommands({
       globalConfig,
       registry,
       offlineQueueStore,
-      scheduleDeferredStore,
       healthCheckChannel,
       refreshWorkspaceInstanceLock,
       tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
-      getEncKey,
       makeEngine,
       roots, profileBuffer,
     }),
@@ -408,10 +391,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerFileLifecycleEvents({ context, runWithEngine });
   const tap = () => tryAuthenticatedProvider(registry);
-  const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName); };
+  const makeEngineForRoot = async (root: string, provider: ICloudProvider) => { const gc = await globalConfig.load(); return makeEngine(root, provider, gc.machineId, gc.machineName, "user"); };
   context.subscriptions.push(...registerSmartFeaturesEngineCommands({ context, globalConfig, tryAuthenticatedProvider: tap }), ...registerHashMigrationCommands({ context, tryAuthenticatedProvider: tap, makeEngineForRoot }), ...registerP2PSessionCommands({ context, registry: p2pSessionRegistry, tryAuthenticatedProvider: tap, globalConfig, mirrorRegistry: p2pMirrorRegistry, logSyncActivity }), ...registerOAuthDeviceCodeCommand({ context, resolveProviders: () => resolveDeviceCodeProviders(context) }), ...registerTemplateMarketplace(), ...registerPrefetchCommand());
 
-  registerPlannedPaletteCommands(context, {
+  registerPaletteCommands(context, {
     globalConfig,
     makeEngine,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
@@ -448,16 +431,20 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  registerScheduledHelpers({
+  const { startupChannel } = registerScheduledHelpers({
     context,
     globalConfig,
     registry,
     statusBar,
     workspacesTree,
     fileDecorations,
-    scheduleDeferredStore,
     makeEngine,
-    getEncKey,
+  });
+
+  migrateSettingsTo100({
+    context,
+    log: (line) => { startupChannel.appendLine(line); },
+    countPendingOfflineOps: () => offlineQueueStore.totalPending(),
   });
 
   startDigestTimer(context);
@@ -469,7 +456,6 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     workspacesTree,
     offlineQueueStore,
-    scheduleDeferredStore,
     makeEngine,
     workspaceFolders: roots,
   });
@@ -494,7 +480,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // v0.15 Phase 21 — wire pure helpers added in v0.8–v0.14 to user-visible commands.
   registerPhase21Bootstrap({
-    context, globalConfig, registry, runWithEngine, makeEngine,
+    context, globalConfig, registry, runWithEngine, makeEngine, profileBuffer,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
 }

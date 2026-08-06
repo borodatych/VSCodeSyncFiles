@@ -50,44 +50,26 @@ export function buildWelcomeMessage(
       ctaLabel: "Сменить авто-режим",
     };
   }
-  if (mode === "check-only") {
-    if (pendingCount > 0) {
-      return {
-        headline: `${String(pendingCount)} файл${plural(pendingCount, "", "а", "ов")} готов${plural(pendingCount, "", "ы", "ы")} к Push`,
-        body: "Авто-режим: только проверка. Нажмите Push All когда захотите отправить.",
-        ctaCommandId: "vscodesync.pushAll",
-        ctaLabel: "Push All",
-      };
-    }
-    if (cloudNewerCount > 0) {
-      return {
-        headline: `${String(cloudNewerCount)} файл${plural(cloudNewerCount, "", "а", "ов")} новее в облаке`,
-        body: "Авто-режим: только проверка. Нажмите Pull All чтобы скачать.",
-        ctaCommandId: "vscodesync.pullAll",
-        ctaLabel: "Pull All",
-      };
-    }
-    return {
-      headline: "Всё актуально",
-      body: "Авто-режим: только проверка. Push/Pull выполняются вручную.",
-    };
-  }
-  // full
+  // check-only — the only remaining mode with automatic activity (stage 3.4).
   if (pendingCount > 0) {
     return {
-      headline: `${String(pendingCount)} файл${plural(pendingCount, "", "а", "ов")} ждут push`,
-      body: "Push выполнится автоматически на следующем триггере (save / focus).",
+      headline: `${String(pendingCount)} файл${plural(pendingCount, "", "а", "ов")} готов${plural(pendingCount, "", "ы", "ы")} к Push`,
+      body: "Авто-режим: только проверка. Нажмите Push All когда захотите отправить.",
+      ctaCommandId: "vscodesync.pushAll",
+      ctaLabel: "Push All",
     };
   }
   if (cloudNewerCount > 0) {
     return {
       headline: `${String(cloudNewerCount)} файл${plural(cloudNewerCount, "", "а", "ов")} новее в облаке`,
-      body: "Pull выполнится при следующем открытии файла или focus.",
+      body: "Авто-режим: только проверка. Нажмите Pull All чтобы скачать.",
+      ctaCommandId: "vscodesync.pullAll",
+      ctaLabel: "Pull All",
     };
   }
   return {
     headline: "Всё актуально",
-    body: "Все файлы синхронизированы.",
+    body: "Авто-режим: только проверка. Push/Pull выполняются вручную.",
   };
 }
 

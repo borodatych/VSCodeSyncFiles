@@ -27,6 +27,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-a",
         machineName: "A",
+        trigger: "user",
       });
       const wid = await engineA.createWorkspace("attach-test", "onedrive");
       const rel = "doc.txt";
@@ -39,6 +40,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-b",
         machineName: "B",
+        trigger: "user",
       });
       const list = await engineB.listRemoteWorkspaceSummaries();
       expect(list.some((x) => x.workspaceId === wid)).toBe(true);
@@ -64,6 +66,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-a",
         machineName: "A",
+        trigger: "user",
       });
       const wid = await engineA.createWorkspace("two-machine", "onedrive");
       const rel = "shared.txt";
@@ -79,6 +82,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-b",
         machineName: "B",
+        trigger: "user",
       });
       await engineB.pullAll(wid);
 
@@ -104,6 +108,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("t", "onedrive");
     const f = path.join(localRoot, "a.txt");
@@ -122,6 +127,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("w", "onedrive");
     const f = path.join(localRoot, "a.txt");
@@ -141,6 +147,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("old-note", "onedrive");
     await engine.renameWorkspaceNote(wid, "new-note");
@@ -159,6 +166,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("pv", "onedrive");
     const f = path.join(localRoot, "x.txt");
@@ -185,6 +193,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
       maxFileSizeBytes: 4,
     });
     const wid = await engine.createWorkspace("t", "onedrive");
@@ -201,6 +210,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("t", "onedrive");
     const f = path.join(localRoot, "a.txt");
@@ -224,6 +234,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("w", "onedrive");
     await engine.setWorkspaceSyncState(wid, "frozen");
@@ -238,6 +249,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m1",
       machineName: "test",
+      trigger: "user",
     });
     const wid = await engine.createWorkspace("del-me", "onedrive");
     const f = path.join(localRoot, "a.txt");
@@ -263,6 +275,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-a",
         machineName: "A",
+        trigger: "user",
       });
       const wid = await engineA.createWorkspace("approval-flow", "onedrive");
       const rel = "doc.txt";
@@ -277,6 +290,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-b",
         machineName: "B-new",
+        trigger: "user",
         requireMachineApproval: () => true,
       });
       await engineB.attachCloudWorkspace(wid);
@@ -306,6 +320,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-a",
         machineName: "A",
+        trigger: "user",
       });
       const wid = await engineA.createWorkspace("stale-push-guard", "onedrive");
       const rel = "stale.txt";
@@ -321,6 +336,7 @@ describe("SyncEngine (mock)", () => {
         provider,
         machineId: "machine-b",
         machineName: "B",
+        trigger: "user",
       });
       await engineB.pullAll(wid);
       const absB = path.join(rootB, rel);
@@ -355,6 +371,7 @@ describe("SyncEngine (mock)", () => {
       provider,
       machineId: "m-merge",
       machineName: "test",
+      trigger: "user",
     });
     const wsSrc = await engine.createWorkspace("src-merge", "onedrive");
     const wsTgt = await engine.createWorkspace("tgt-merge", "onedrive");

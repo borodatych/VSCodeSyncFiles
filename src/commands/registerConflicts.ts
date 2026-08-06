@@ -8,8 +8,13 @@
  *   - keepMineWithRange / takeTheirsWithRange (CodeLens variants that
  *     record the conflict block range to the heatmap before delegating)
  *   - openConflictDiff3way (3-way diff view)
- *   - resolveTakeTheirs (palette: pull cloud version, log activity)
- *   - resolveKeepMine (palette: clear conflict flag locally)
+ *
+ * `resolveKeepMine` / `resolveTakeTheirs` used to live here as a second,
+ * command-layer implementation of the same two actions (C19). They are gone:
+ * the first only cleared the conflict flag and told the user to push "if
+ * needed" — users picked it over `keepMine` and the file never reached the
+ * cloud — and the second persisted `syncStatus = "ok"` to disk *before* the
+ * pull, so any pull failure erased the conflict for good (C18).
  *   - resolveConflicts (one-by-one queue UI with bulk + AI-merge options)
  *
  * Same contract as the prior bundles. Heavier deps surface because this
@@ -20,24 +25,16 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
-import type { ActivityEventInput } from "../core/activityLog.js";
-import { isAiMergeAvailable } from "../core/aiMerge.js";
-import type { SyncStatusBarController } from "../ui/statusBar.js";
-import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
-import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
+import { isAiMergeAvailable } from "../ui/ai/aiMerge.js";
 import { pickRoot } from "./_shared.js";
 import { resolveFileTarget } from "./_fileTargetHelpers.js";
 import { runAiMergeForConflict, runConflict3WayDiff } from "./_engineFlows.js";
+import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 export interface ConflictsCommandsDeps {
   globalConfig: GlobalConfigManager;
-  workspacesTree: WorkspacesTreeProvider;
-  statusBar: SyncStatusBarController;
-  fileDecorations: SyncFileDecorationController;
-  refreshActiveEditor: () => void;
   runWithEngine: RunWithEngineFn;
-  logSyncActivity: (ev: ActivityEventInput) => void;
   /** Shared instance of the soft-lock / conflict-notification dedupe set —
    * the engine adds keys via `notifyConflict`, palette commands clear them
    * once the user has resolved the file. */
@@ -47,16 +44,7 @@ export interface ConflictsCommandsDeps {
 export function registerConflictsCommands(
   deps: ConflictsCommandsDeps,
 ): vscode.Disposable[] {
-  const {
-    globalConfig,
-    workspacesTree,
-    statusBar,
-    fileDecorations,
-    refreshActiveEditor,
-    runWithEngine,
-    logSyncActivity,
-    notifiedConflictKeys,
-  } = deps;
+  const { globalConfig, runWithEngine, notifiedConflictKeys } = deps;
   const runConflict3WayDiffAt = (target: { root: string; fsPath: string }): Promise<void> =>
     runConflict3WayDiff(runWithEngine, target);
   const runAiMergeForConflictAt = (
@@ -96,7 +84,14 @@ export function registerConflictsCommands(
         return;
       }
       await runWithEngine(async (engine) => {
-        await engine.resolveConflictKeepMine(fileEntry.workspaceId, rel);
+        const pushed = await keepMineWithCloudMovedPrompt(
+          (opts) => engine.resolveConflictKeepMine(fileEntry.workspaceId, rel, opts),
+          rel,
+          () => runConflict3WayDiffAt(target),
+        );
+        if (!pushed) {
+          return;
+        }
         void vscode.window.showInformationMessage(
           `Конфликт разрешён: оставлена локальная версия «${path.basename(target.fsPath)}».`,
         );
@@ -150,69 +145,6 @@ export function registerConflictsCommands(
       await runConflict3WayDiffAt(target);
     }),
 
-    vscode.commands.registerCommand("vscodesync.resolveTakeTheirs", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      await runWithEngine(async (engine, root) => {
-        let cfg = await WorkspaceConfigManager.load(root);
-        const row = cfg.files.find((f) => f.localPath === rel);
-        if (row?.syncStatus !== "conflict") {
-          await vscode.window.showWarningMessage("VSCodeSync: нет конфликта для этого файла.");
-          return;
-        }
-        row.syncStatus = "ok";
-        await WorkspaceConfigManager.save(cfg, root);
-        cfg = await WorkspaceConfigManager.load(root);
-        const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === row.workspaceId);
-        if (!entry) {
-          await vscode.window.showErrorMessage("VSCodeSync: workspace не найден.");
-          return;
-        }
-        await engine.pullFile(cfg, row.workspaceId, rel, entry);
-        const gconf = await globalConfig.load();
-        const wnote =
-          cfg.activeWorkspaces.find((w) => w.workspaceId === row.workspaceId)?.workspaceNote ?? row.workspaceId;
-        logSyncActivity({
-          kind: "resolve_take_theirs",
-          workspaceId: row.workspaceId,
-          workspaceNote: wnote,
-          relPath: rel,
-          machineName: gconf.machineName,
-          provider: gconf.activeProvider ?? "onedrive",
-        });
-        void vscode.window.showInformationMessage(`Принята облачная версия: ${rel}`);
-      }, target.root);
-    }),
-
-    vscode.commands.registerCommand("vscodesync.resolveKeepMine", async (uri?: vscode.Uri) => {
-      const target = await resolveFileTarget(uri);
-      if (!target) {
-        return;
-      }
-      const cfg = await WorkspaceConfigManager.load(target.root);
-      const rel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
-      let touched = false;
-      for (const f of cfg.files) {
-        if (f.localPath === rel) {
-          f.syncStatus = "ok";
-          touched = true;
-        }
-      }
-      if (!touched) {
-        await vscode.window.showWarningMessage("VSCodeSync: файл не в синхронизации.");
-        return;
-      }
-      await WorkspaceConfigManager.save(cfg, target.root);
-      void vscode.window.showInformationMessage("Флаг конфликта снят; при необходимости выполните Push.");
-      await statusBar.refresh();
-      workspacesTree.refresh();
-      fileDecorations.refresh();
-      refreshActiveEditor();
-    }),
-
     vscode.commands.registerCommand("vscodesync.resolveConflicts", async () => {
       const root = pickRoot();
       if (!root) {
@@ -247,21 +179,45 @@ export function registerConflictsCommands(
 
       if (batchMode !== "manual") {
         await runWithEngine(async (engine) => {
+          let done = 0;
+          const skipped: string[] = [];
+          const failed: string[] = [];
           for (const f of conflicts) {
             try {
               if (batchMode === "keepMineAll") {
-                await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+                // Batch mode answers for files the user never looked at, so a
+                // cloud copy that moved on is left alone instead of buried.
+                const r = await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+                if (r === "cloud_moved") {
+                  skipped.push(f.localPath);
+                  continue;
+                }
               } else {
                 await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
               }
+              done += 1;
               notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
-            } catch {
-              /* individual errors are non-fatal in batch */
+            } catch (e) {
+              // An empty catch here used to be followed by an unconditional
+              // "resolved N conflicts" — the user was told the batch succeeded
+              // while some files were untouched (C19).
+              failed.push(`${f.localPath}: ${e instanceof Error ? e.message : String(e)}`);
             }
           }
-          void vscode.window.showInformationMessage(
-            `VSCodeSync: разрешено ${String(conflicts.length)} конфликтов (${batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs"}).`,
-          );
+          const label = batchMode === "keepMineAll" ? "Keep Mine" : "Take Theirs";
+          const parts = [`VSCodeSync: разрешено ${String(done)} из ${String(conflicts.length)} конфликтов (${label}).`];
+          if (skipped.length > 0) {
+            parts.push(`Пропущено (облако ушло вперёд): ${skipped.join(", ")} — разрешите вручную.`);
+          }
+          if (failed.length > 0) {
+            parts.push(`Не удалось: ${failed.join("; ")}`);
+          }
+          const text = parts.join(" ");
+          if (failed.length > 0) {
+            void vscode.window.showWarningMessage(text);
+          } else {
+            void vscode.window.showInformationMessage(text);
+          }
         });
         return;
       }
@@ -300,15 +256,24 @@ export function registerConflictsCommands(
             }
             continue;
           }
+          let ok = true;
           await runWithEngine(async (engine) => {
             if (choice === "Keep Mine") {
-              await engine.resolveConflictKeepMine(f.workspaceId, f.localPath);
+              const fsPath = path.join(root, ...f.localPath.split("/"));
+              ok = await keepMineWithCloudMovedPrompt(
+                (opts) => engine.resolveConflictKeepMine(f.workspaceId, f.localPath, opts),
+                f.localPath,
+                () => runConflict3WayDiffAt({ root, fsPath }),
+              );
             } else {
               await engine.resolveConflictTakeTheirs(f.workspaceId, f.localPath);
             }
-            notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
+            if (ok) {
+              notifiedConflictKeys.delete(`${f.workspaceId}:${f.localPath}`);
+            }
           });
-          resolved = true;
+          // Not resolved → the same file comes round again in this loop.
+          resolved = ok;
         }
       }
     }),

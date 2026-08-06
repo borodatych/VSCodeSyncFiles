@@ -82,22 +82,22 @@ export interface ScheduledSnapshotsDeps {
   snapshotFolder: (folderRoot: string) => Promise<void>;
 }
 
+/**
+ * The schedule is a reminder, not an actor (B13). The tick used to walk every
+ * tracked file of every workspace, upload snapshot blobs and *delete* cloud
+ * objects by retention — all from a 5-minute timer, and the snapshot bytes
+ * went up without the E2E encryption applied to regular pushes. Now the due
+ * moment produces one notification; creating runs from its button.
+ *
+ * Both "Создать" and "Пропустить" advance the fired marker: the user answered
+ * for this occurrence either way, and the next reminder is the next due
+ * moment, not the next poll.
+ */
 export function registerScheduledSnapshots(
   context: vscode.ExtensionContext,
   deps: ScheduledSnapshotsDeps,
 ): void {
-  const tick = async (): Promise<void> => {
-    const raw = vscode.workspace
-      .getConfiguration("vscodesync")
-      .get<string>("snapshotSchedule", "");
-    const schedule = parseSnapshotSchedule(raw);
-    if (!schedule) return;
-
-    const due = lastDueInstant(schedule);
-    const lastFired = context.globalState.get<number>(STATE_KEY) ?? 0;
-    if (lastFired >= due) return; // already snapshotted past this moment
-
-    verboseLog("snapshotSchedule", `firing for due=${new Date(due).toISOString()}`);
+  const runSnapshots = async (label: string): Promise<void> => {
     const folders = deps.getCandidateFolders();
     let any = false;
     for (const f of folders) {
@@ -111,12 +111,35 @@ export function registerScheduledSnapshots(
         );
       }
     }
-    await context.globalState.update(STATE_KEY, due);
     if (any) {
-      void vscode.window.showInformationMessage(
-        `VSCodeSync: запланированные снапшоты созданы (${schedule.kind} ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}).`,
-      );
+      void vscode.window.showInformationMessage(`VSCodeSync: снапшоты по расписанию созданы (${label}).`);
     }
+  };
+
+  const tick = async (): Promise<void> => {
+    const raw = vscode.workspace
+      .getConfiguration("vscodesync")
+      .get<string>("snapshotSchedule", "");
+    const schedule = parseSnapshotSchedule(raw);
+    if (!schedule) return;
+
+    const due = lastDueInstant(schedule);
+    const lastFired = context.globalState.get<number>(STATE_KEY) ?? 0;
+    if (lastFired >= due) return; // already offered for this moment
+
+    verboseLog("snapshotSchedule", `due=${new Date(due).toISOString()} — offering`);
+    await context.globalState.update(STATE_KEY, due);
+    const label = `${schedule.kind} ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
+    void (async () => {
+      const picked = await vscode.window.showInformationMessage(
+        `VSCodeSync: пора создать снапшоты по расписанию (${label}).`,
+        "Создать",
+        "Пропустить",
+      );
+      if (picked === "Создать") {
+        await runSnapshots(label);
+      }
+    })();
   };
 
   // Initial tick once after startup, then every 5 minutes.

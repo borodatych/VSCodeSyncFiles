@@ -15,12 +15,17 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { listWorkspaceSnapshots } from "../core/snapshotsEngine.js";
 import { snapshotFilePath } from "../core/cloudLayout.js";
 import { planSnapshotDiff, unionSnapshotFiles } from "../core/snapshotDiffViewer.js";
+import { decodeCloudBlob } from "../core/cloudBlobCodec.js";
+import { readSnapshotCrypto } from "./snapshotCrypto.js";
+import type { SecretStore } from "../core/types.js";
 
 export interface SnapshotDiffDeps {
   /** Resolve the cloud provider for the current active workspace folder. */
   getProvider(): Promise<ICloudProvider | null>;
   /** Pick which workspaceId to diff against (undefined → ask the user). */
   pickWorkspaceId(): Promise<string | undefined>;
+  /** Needed to decrypt encrypted snapshots before diffing them. */
+  secrets: SecretStore;
 }
 
 export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
@@ -45,6 +50,7 @@ export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
     detail: `${String(s.meta.files.length)} file(s) · ${s.meta.machineName}`,
     name: s.name,
     files: s.meta.files,
+    encrypted: s.meta.encryption === "aes-256-gcm",
     createdAtMs: Date.parse(s.meta.createdAt) || 0,
   }));
   const left = await vscode.window.showQuickPick(items, {
@@ -69,8 +75,26 @@ export async function runSnapshotDiff(deps: SnapshotDiffDeps): Promise<void> {
   });
   if (!filePick) return;
 
-  const leftBuf = await tryDownload(provider, snapshotFilePath(workspaceId, left.name, filePick));
-  const rightBuf = await tryDownload(provider, snapshotFilePath(workspaceId, right.name, filePick));
+  // Encrypted snapshots must be decoded before the diff, otherwise both panes
+  // show ciphertext and every file looks "changed".
+  const crypto = await readSnapshotCrypto(deps.secrets);
+  if ((left.encrypted || right.encrypted) && crypto.decrypt === undefined) {
+    void vscode.window.showWarningMessage(
+      "VSCodeSync: снапшот зашифрован, а ключ недоступен — сравнение невозможно.",
+    );
+    return;
+  }
+  const decode = (buf: Buffer | null, isEncrypted: boolean): Buffer | null =>
+    buf === null ? null : decodeCloudBlob(buf, false, { decrypt: isEncrypted ? crypto.decrypt : undefined });
+
+  const leftBuf = decode(
+    await tryDownload(provider, snapshotFilePath(workspaceId, left.name, filePick)),
+    left.encrypted,
+  );
+  const rightBuf = decode(
+    await tryDownload(provider, snapshotFilePath(workspaceId, right.name, filePick)),
+    right.encrypted,
+  );
 
   const plan = planSnapshotDiff({
     relPath: filePick,

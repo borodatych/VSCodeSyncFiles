@@ -31,6 +31,7 @@ describe("Pull rollback regression — softlock + check-only must not flip statu
       provider,
       machineId: "machine-a",
       machineName: "work-laptop",
+      trigger: "user",
     });
     const wid = await engineA.createWorkspace("rollback-repro", "onedrive");
     const rel = "shared.txt";
@@ -44,6 +45,7 @@ describe("Pull rollback regression — softlock + check-only must not flip statu
       provider,
       machineId: "machine-b",
       machineName: "home",
+      trigger: "user",
     });
     await engineB.attachCloudWorkspace(wid);
     const absB = path.join(rootB, rel);
@@ -99,6 +101,7 @@ describe("Pull rollback regression — softlock + check-only must not flip statu
       provider,
       machineId: "machine-a",
       machineName: "A",
+      trigger: "user",
     });
     const wid = await engineA.createWorkspace("post-pull-stable", "onedrive");
     const rel = "doc.txt";
@@ -111,6 +114,7 @@ describe("Pull rollback regression — softlock + check-only must not flip statu
       provider,
       machineId: "machine-b",
       machineName: "B",
+      trigger: "user",
     });
     await engineB.attachCloudWorkspace(wid);
 

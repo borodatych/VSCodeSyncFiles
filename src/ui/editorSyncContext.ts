@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { trackedPosixRelFor } from "../core/trackedPathResolver.js";
 
 const CTX_TRACKED = "vscodeSync.activeFileTracked";
 const CTX_CONFLICT = "vscodeSync.activeFileConflict";
@@ -28,8 +28,8 @@ export function registerActiveEditorSyncContext(context: vscode.ExtensionContext
     }
     try {
       const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
-      const rel = path.relative(folder.uri.fsPath, u.fsPath).split(path.sep).join("/");
-      const tf = wc.files.find((f) => f.localPath === rel);
+      const rel = await trackedPosixRelFor(folder.uri.fsPath, u.fsPath);
+      const tf = rel === undefined ? undefined : wc.files.find((f) => f.localPath === rel);
       await vscode.commands.executeCommand("setContext", CTX_TRACKED, tf !== undefined);
       await vscode.commands.executeCommand("setContext", CTX_CONFLICT, tf?.syncStatus === "conflict");
     } catch {

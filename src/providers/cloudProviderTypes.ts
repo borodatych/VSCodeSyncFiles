@@ -33,14 +33,48 @@ export interface FileMetadata {
   size?: number;
   etag?: string;
   modifiedIso?: string;
+  /**
+   * Whether the entry is a folder, when the provider says so in the listing.
+   *
+   * All four APIs carry this (`.tag`, `type`, `mimeType`, the Graph `folder`
+   * facet), but the field did not exist, so `deleteCloudFolderRecursive` had to
+   * probe every single entry with an extra `listFolder` — including plain
+   * files, which can never have children. `undefined` means "provider did not
+   * say", and callers must fall back to probing.
+   */
+  isFolder?: boolean;
+  /**
+   * Digest of the stored bytes as the provider itself computed it (E10).
+   *
+   * `etag` must not be used for this: on OneDrive it is a Graph token of the
+   * form `{GUID},N` and on Dropbox it is `rev` — neither is a hash of anything.
+   * The integrity check compared them against a content hash, so with
+   * `vscodesync.providerHashVerify` on, every OneDrive push failed with
+   * INTEGRITY_FAILED after a *successful* upload.
+   *
+   * Absent when the provider's metadata carries no digest — the check then
+   * skips rather than guessing.
+   */
+  contentDigest?: {
+    kind: "md5" | "sha1" | "sha256" | "dropbox-content-hash";
+    /** Lowercase hex. */
+    value: string;
+  };
 }
 
 export interface UploadOptions {
   ifMatch?: string;
+  /**
+   * Cancellation for this transfer (A5). Data-plane calls are the ones worth
+   * interrupting: they carry the bytes and hold the longest timeout.
+   */
+  signal?: AbortSignal;
 }
 
 export interface DownloadOptions {
   ifNoneMatch?: string;
+  /** Cancellation for this transfer (A5). */
+  signal?: AbortSignal;
 }
 
 export interface UploadResult {
@@ -63,7 +97,20 @@ export interface ICloudProvider {
   uploadFile(cloudPath: string, content: Buffer, options?: UploadOptions): Promise<UploadResult>;
   downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult>;
   getMetadata(cloudPath: string): Promise<FileMetadata | null>;
+  /**
+   * Move the file to the provider's trash — recoverable by the user (D11).
+   *
+   * Yandex passed `permanently=true` and Drive used `files.delete`, so half the
+   * providers destroyed data that the other half merely trashed, with nothing
+   * in this contract saying which you would get. Irreversible removal is
+   * `purgeFilePermanently`, and only a direct user command may call it.
+   */
   deleteFile(cloudPath: string): Promise<void>;
+  /**
+   * Irreversible removal. Optional: providers that cannot express it fall back
+   * to {@link deleteFile}. Never call from an automatic path.
+   */
+  purgeFilePermanently?(cloudPath: string): Promise<void>;
   listFolder(cloudPath: string): Promise<FileMetadata[]>;
   createFolder(cloudPath: string): Promise<void>;
   /**

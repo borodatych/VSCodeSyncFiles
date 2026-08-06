@@ -22,6 +22,7 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import type { SyncEngine } from "../core/syncEngine.js";
+import type { SyncTrigger } from "../core/syncPolicy.js";
 import { hasArchivedTag } from "../utils/workspaceLastActivity.js";
 import { applyArchivedTagAndSuspend, stripArchivedTagAndActivate } from "../ui/workspaceArchiveOps.js";
 import { confirmTreeWorkspaceBulkSyncIfNeeded } from "../ui/syncPreviewUi.js";
@@ -38,7 +39,26 @@ import {
 export type RunWithEngineFn = (
   fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
   workspaceRoot?: string,
-  options?: { showErrorDialog?: boolean },
+  options?: {
+    showErrorDialog?: boolean;
+    /**
+     * Run inside a cancellable progress notification with this title (A5).
+     * The Cancel button aborts the engine's loops and the in-flight request;
+     * omitted means the operation is not cancellable, as before.
+     */
+    cancellable?: string;
+    /**
+     * Mutation trigger for the engine this wrapper builds (F2). Omitted means
+     * `"user"`, which is the wrapper's contract: it exists to serve palette
+     * commands and menu items, all of which are a human acting.
+     *
+     * Entry points that are *not* commands must say so. The one today is the
+     * `vscodesync` task provider — a task with `runOn: folderOpen` runs itself,
+     * and VS Code gives the provider no way to tell that apart from a manual
+     * run.
+     */
+    trigger?: SyncTrigger;
+  },
 ) => Promise<void>;
 
 export interface WorkspaceLifecycleCommandsDeps {

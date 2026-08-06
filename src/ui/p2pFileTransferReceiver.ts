@@ -7,20 +7,17 @@
  *
  * On finalize:
  *   - hash check (manifest.hash vs recomputed sha256 over assembled bytes).
- *   - resolve workspace root + relPath → write atomically through
- *     `writeTextFileAtomic` semantics (binary-safe via `fs.writeFile` after
- *     a temp-file rename).
+ *   - resolve workspace root + relPath (`planP2PStaging`) → write the bytes
+ *     atomically into the **staging** folder and hand the delivery to the host.
  *
- * Conflict-vs-cloud-pull: this layer treats P2P deliveries as advisory.
- * The cloud manifest stays authoritative. If a P2P delivery arrives BEFORE
- * the matching cloud meta entry, the file is written and the next cloud
- * sync will validate / reconcile / mark conflict via the regular pipeline.
+ * A peer never writes into the working tree (B15): the delivery waits in
+ * staging until the user applies it. The cloud manifest stays authoritative —
+ * once applied, the next cloud sync validates / reconciles / marks conflict
+ * through the regular pipeline.
  *
  * Errors are logged via `warnLog` and never bubble to the caller — the
  * session must stay alive even when individual transfers fail.
  */
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import {
   createChunkAssembler,
   decodeFileChunkPayload,
@@ -29,6 +26,8 @@ import {
   type P2PFileManifest,
 } from "../core/p2pFileTransfer.js";
 import type { AuthenticatedP2PChannel } from "../core/p2pDataChannel.js";
+import { planP2PStaging } from "../core/p2pStagingPlan.js";
+import { writeFileAtomic } from "../core/writeTextFileAtomic.js";
 import { warnLog, verboseLog } from "../utils/log.js";
 
 export interface FileReceiverDeps {
@@ -37,8 +36,19 @@ export interface FileReceiverDeps {
    * the file is dropped — caller may also choose to mirror to a staging
    * directory. Returning `null` skips the write. */
   resolveWorkspaceRoot: (workspaceId: string | null) => string | null;
-  /** Optional sink for telemetry / activity log on every successful write. */
-  onFileWritten?: (info: { relPath: string; workspaceId: string | null; bytes: number }) => void;
+  /**
+   * Called once a delivery is on disk **in staging**. The host decides what to
+   * offer the user (apply / compare / reject) — the receiver never touches the
+   * working tree itself.
+   */
+  onFileStaged: (info: {
+    relPath: string;
+    workspaceId: string | null;
+    workspaceRoot: string;
+    stagingAbs: string;
+    targetAbs: string;
+    bytes: number;
+  }) => void;
 }
 
 export interface FileReceiverHandle {
@@ -67,7 +77,7 @@ export function attachFileReceiver(
     }
   };
 
-  const writeFile = async (
+  const stageFile = async (
     workspaceId: string | null,
     manifest: P2PFileManifest,
     content: Uint8Array,
@@ -77,20 +87,23 @@ export function attachFileReceiver(
       verboseLog("p2p-receive", `dropped ${manifest.relPath} — workspace not resolved`);
       return;
     }
-    const abs = path.join(root, manifest.relPath);
-    const tmp = `${abs}.p2p-tmp-${manifest.transferId.slice(0, 8)}`;
+    const plan = planP2PStaging(root, manifest.relPath, manifest.transferId);
+    if (!plan.ok) {
+      warnLog("p2p-receive", `dropped ${manifest.relPath} — ${plan.reason}`);
+      return;
+    }
     try {
-      await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(tmp, content);
-      await fs.rename(tmp, abs);
-      deps.onFileWritten?.({
-        relPath: manifest.relPath,
+      await writeFileAtomic(plan.stagingAbs, Buffer.from(content));
+      deps.onFileStaged({
+        relPath: plan.relPath,
         workspaceId,
+        workspaceRoot: root,
+        stagingAbs: plan.stagingAbs,
+        targetAbs: plan.targetAbs,
         bytes: content.byteLength,
       });
     } catch (e) {
-      warnLog("p2p-receive", `write ${manifest.relPath} failed: ${e instanceof Error ? e.message : String(e)}`);
-      try { await fs.unlink(tmp); } catch { /* ignore tmp cleanup */ }
+      warnLog("p2p-receive", `stage ${manifest.relPath} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -140,7 +153,7 @@ export function attachFileReceiver(
             // currently); rely on a single-workspace receiver heuristic — the
             // resolveWorkspaceRoot dep is called with `null` and the dep
             // chooses (e.g. first active workspace).
-            void writeFile(null, t.manifest, final.content);
+            void stageFile(null, t.manifest, final.content);
             return;
           }
           return;

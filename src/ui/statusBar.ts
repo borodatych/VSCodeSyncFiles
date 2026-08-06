@@ -1,12 +1,11 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import type { ProviderType, WorkspaceConfig } from "../core/types.js";
+import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
-import { describeScheduleActiveHint } from "../core/syncSchedule.js";
-import { getWorkspaceSyncScheduleNormalized, isAutoSyncBlockedBySchedule } from "./syncScheduleGate.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
 import {
   getRateLimitRemainingMs,
@@ -19,6 +18,16 @@ import { readPassiveOnlineHint } from "../utils/readNavigatorOnline.js";
 import { loadActivityFile } from "../core/activityLog.js";
 import { sparkline, bucketHourly } from "../utils/sparkline.js";
 import { parseAutoSyncMode } from "../core/autoSyncMode.js";
+import { warnLog } from "../utils/log.js";
+
+/**
+ * If the "syncing" depth stays positive this long, some caller incremented it
+ * and never decremented. Sitting on a permanent spinner is exactly what the
+ * extension looked like when it hung, so the depth is force-reset and logged.
+ * Comfortably above the file-lock hold deadline, so a legitimately slow
+ * operation is never cut short by this.
+ */
+const SYNCING_WATCHDOG_MS = 10 * 60_000;
 
 function autoSyncModeBadge(mode: ReturnType<typeof parseAutoSyncMode>): string {
   switch (mode) {
@@ -26,8 +35,6 @@ function autoSyncModeBadge(mode: ReturnType<typeof parseAutoSyncMode>): string {
       return "$(eye-closed) auto:off";
     case "check-only":
       return "$(eye) auto:check";
-    case "full":
-      return "$(sync) auto:full";
   }
 }
 
@@ -96,8 +103,6 @@ export interface SyncStatusBarDeps {
   globalConfig: GlobalConfigManager;
   /** Вызывается при смене флага синхронизации (декорации «🔄»). */
   onSyncingChange?: (syncing: boolean) => void;
-  /** Deferred ops while outside `syncSchedule` window (pending count in status bar). */
-  scheduleDeferredStore?: import("../core/syncScheduleDeferredStore.js").SyncScheduleDeferredStore;
   /** Transport-failed sync ops persisted for flush when online. */
   offlineQueue?: SyncOfflineQueueStore;
 }
@@ -113,12 +118,24 @@ export class SyncStatusBarController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   /** Watchers for `.vscode/vscodesync.json` per folder — rebound on workspace folder changes. */
   private workspaceJsonWatchDisposables: vscode.Disposable[] = [];
-  private syncing = false;
+  /**
+   * Nesting depth of "sync in progress", not a flag.
+   *
+   * Seven independent call sites toggle this — commands, save triggers, offline
+   * flush, schedule flush, quiet full sync, scheduled helpers — and with a plain
+   * boolean whichever finished first switched the spinner off for everyone else
+   * (and, symmetrically, could leave it on after everything had finished).
+   */
+  private syncingDepth = 0;
+  /** Fires when the depth stays positive implausibly long — see `armSyncingWatchdog`. */
+  private syncingWatchdog: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: SyncStatusBarDeps) {
     this.item = vscode.window.createStatusBarItem("vscodesync.syncStatus", vscode.StatusBarAlignment.Left, 100);
-    this.item.command = "vscodesync.focusWorkspacesView";
-    this.item.tooltip = "VSCodeSync · клик — открыть панель Workspaces";
+    // §624 — the status bar is the entry point to the divergences panel: it
+    // shows the counts, the panel shows what they are and lets the user act.
+    this.item.command = "vscodesync.openDivergences";
+    this.item.tooltip = "VSCodeSync · клик — показать расхождения";
 
     this.rebindWorkspaceJsonWatchers();
 
@@ -217,9 +234,37 @@ export class SyncStatusBarController implements vscode.Disposable {
   }
 
   setSyncing(on: boolean): void {
-    this.syncing = on;
-    this.deps.onSyncingChange?.(on);
+    const was = this.syncingDepth > 0;
+    this.syncingDepth = on ? this.syncingDepth + 1 : Math.max(0, this.syncingDepth - 1);
+    const now = this.syncingDepth > 0;
+    this.armSyncingWatchdog(now);
+    if (was !== now) {
+      this.deps.onSyncingChange?.(now);
+    }
     void this.refresh();
+  }
+
+  /**
+   * Backstop against a caller that increments and never decrements — a `finally`
+   * that never runs leaves the status bar claiming "Синхронизация…" forever,
+   * which is exactly what the extension looked like when it hung.
+   */
+  private armSyncingWatchdog(active: boolean): void {
+    if (this.syncingWatchdog !== undefined) {
+      clearTimeout(this.syncingWatchdog);
+      this.syncingWatchdog = undefined;
+    }
+    if (!active) return;
+    this.syncingWatchdog = setTimeout(() => {
+      warnLog(
+        "statusBar",
+        `spinner stuck for ${String(SYNCING_WATCHDOG_MS)}ms with depth=${String(this.syncingDepth)} — forcing reset`,
+      );
+      this.syncingDepth = 0;
+      this.syncingWatchdog = undefined;
+      this.deps.onSyncingChange?.(false);
+      void this.refresh();
+    }, SYNCING_WATCHDOG_MS);
   }
 
   private async loadAllFolderStates(): Promise<FolderWorkspaceState[]> {
@@ -253,7 +298,7 @@ export class SyncStatusBarController implements vscode.Disposable {
     const offlineBadge =
       offlinePending > 0 || (hasStickyUnreachableHint() && !passiveOn);
 
-    if (this.syncing) {
+    if (this.syncingDepth > 0) {
       this.item.text = `$(loading~spin) ${plabel}`;
       this.item.tooltip = "VSCodeSync · синхронизация…";
       this.item.backgroundColor = undefined;
@@ -281,7 +326,7 @@ export class SyncStatusBarController implements vscode.Disposable {
       this.item.show();
       return;
     }
-    this.item.command = "vscodesync.focusWorkspacesView";
+    this.item.command = "vscodesync.openDivergences";
 
     const loaded = await this.loadAllFolderStates();
     let wsCount = 0;
@@ -308,23 +353,16 @@ export class SyncStatusBarController implements vscode.Disposable {
       cloudNewer > 0 ? `  $(arrow-down) ${String(cloudNewer)}` : "";
 
     const autoPaused = !sessionPaused && syncAutoPause.isActive();
-    const scheduleBlocked = !sessionPaused && !autoPaused && isAutoSyncBlockedBySchedule();
     const rateLimited = isAutoSyncBlockedByRateLimit();
     const rateSec = rateLimited ? Math.max(1, Math.ceil(getRateLimitRemainingMs() / 1000)) : 0;
-    let deferredPending = 0;
-    if (scheduleBlocked && this.deps.scheduleDeferredStore) {
-      deferredPending = await this.deps.scheduleDeferredStore.totalPending();
-    }
 
     const pausePrefix = sessionPaused
       ? "$(debug-pause) "
       : autoPaused
         ? "$(warning) "
-        : scheduleBlocked
-          ? "$(calendar) "
-          : rateLimited
-            ? "$(hourglass) "
-            : "$(cloud) ";
+        : rateLimited
+          ? "$(hourglass) "
+          : "$(cloud) ";
     const pendingSuffix =
       sessionPaused && pendingDuringPause > 0
         ? `  · $(git-pull-request-pending) ${String(pendingDuringPause)} pending`
@@ -339,15 +377,6 @@ export class SyncStatusBarController implements vscode.Disposable {
           : ar === "battery"
             ? `  · $(zap) авто-пауза · battery`
             : `  · авто-пауза`;
-    }
-
-    const scheduleHint = describeScheduleActiveHint(getWorkspaceSyncScheduleNormalized());
-    let scheduleSuffix = "";
-    if (scheduleBlocked) {
-      scheduleSuffix = `  · $(clock) Scheduled pause · ${scheduleHint}`;
-      if (deferredPending > 0) {
-        scheduleSuffix += `  · $(git-pull-request-pending) ${String(deferredPending)} queued`;
-      }
     }
 
     let rateSuffix = "";
@@ -387,7 +416,7 @@ export class SyncStatusBarController implements vscode.Disposable {
     );
     const autoModeBadge = `  · ${autoSyncModeBadge(autoModeParsed)}`;
 
-    this.item.text = `${pausePrefix}${plabel}${autoModeBadge}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${scheduleSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
+    this.item.text = `${pausePrefix}${plabel}${autoModeBadge}  $(pass) ${String(wsCount)} ws · ${String(fileCount)} files${conflictSuffix}${cloudNewerSuffix}${pendingSuffix}${autoPauseSuffix}${rateSuffix}${watchSuffix}${offlineSuffix}${sparkSuffix}  $(clock) ${lastFmt}`;
     let tooltip =
       loaded.length === 1 && loaded[0]
         ? this.buildTooltip(loaded[0].wc, plabel, gc.activeProvider, sessionPaused)
@@ -395,9 +424,6 @@ export class SyncStatusBarController implements vscode.Disposable {
     if (autoPaused) {
       const ar = syncAutoPause.getReason();
       tooltip += `\n\n⚡ Авто-пауза: ${ar === "metered" ? "лимитированное соединение" : "низкий заряд батареи"}. Ручные команды доступны.`;
-    }
-    if (scheduleBlocked) {
-      tooltip += `\n\n⏰ Scheduled pause — активное окно ${scheduleHint}. Автотриггеры отключены; очередь отложенных: ${String(deferredPending)}.`;
     }
     if (rateLimited) {
       tooltip += `\n\n⏳ Ответ провайдера 429/503 (throttle). Автосинк отложен ~${String(rateSec)} с. Ручные команды не блокируются.`;
@@ -525,12 +551,16 @@ export class SyncStatusBarController implements vscode.Disposable {
 
     await vscode.window.showInformationMessage(lines.join("\n"), "Открыть настройки").then((choice) => {
       if (choice === "Открыть настройки") {
-        void vscode.commands.executeCommand("workbench.action.openSettings", "@ext:vscodesync.vscodesync");
+        void vscode.commands.executeCommand("workbench.action.openSettings", EXTENSION_SETTINGS_QUERY);
       }
     });
   }
 
   dispose(): void {
+    if (this.syncingWatchdog !== undefined) {
+      clearTimeout(this.syncingWatchdog);
+      this.syncingWatchdog = undefined;
+    }
     this.item.dispose();
     for (const d of this.workspaceJsonWatchDisposables) {
       d.dispose();

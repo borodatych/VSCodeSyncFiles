@@ -6,6 +6,10 @@
 import type { SecretStore } from "../../core/types.js";
 import { storeOneDriveTokens } from "./onedriveProvider.js";
 import { runPkceLoopbackOAuth } from "../_shared/pkceLoopbackOAuth.js";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "../_shared/fetchWithTimeout.js";
 
 export const ONEDRIVE_PKCE_REDIRECT_PORT = 8736;
 export const ONEDRIVE_PKCE_REDIRECT_PATH = "/oauth-callback";
@@ -35,11 +39,11 @@ async function exchangeCode(
     code_verifier: codeVerifier,
     scope: SCOPE,
   });
-  const r = await fetch(TOKEN_URL, {
+  const r = await fetchWithTimeout(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
-  });
+  }, { channel: "onedrive.oauth", timeoutMs: DEFAULT_API_TIMEOUT_MS });
   if (!r.ok) {
     throw new Error(`OneDrive PKCE token exchange failed: ${await r.text()}`);
   }

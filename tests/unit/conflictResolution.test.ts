@@ -1,7 +1,6 @@
 /**
  * Tests for conflict resolution:
  *  - resolveConflictKeepMine / resolveConflictTakeTheirs (manual resolution)
- *  - conflictRules auto-resolution (keep-mine, take-theirs, first-rule-wins, no-match)
  *  - tombstone purge on putManifest
  */
 import * as fs from "node:fs/promises";
@@ -14,7 +13,6 @@ import { WorkspaceConfigManager } from "../../src/core/workspaceConfigManager.js
 import { metaCloudPath, manifestCloudPath, trackedFileCloudPath } from "../../src/core/cloudLayout.js";
 import type { MetaJson, CloudManifest } from "../../src/core/cloudLayout.js";
 import { computeHash } from "../../src/utils/hash.js";
-import type { ConflictRule } from "../../src/core/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,7 +21,7 @@ import type { ConflictRule } from "../../src/core/types.js";
 async function setupBase() {
   const provider = new MockCloudProvider("onedrive");
   const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-a-"));
-  const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A" });
+  const engineA = new SyncEngine({ workspaceRoot: rootA, provider, machineId: "A", machineName: "A", trigger: "user" });
   const wid = await engineA.createWorkspace("conflict-test", "onedrive");
   const rel = "src/config.ts";
   const absA = path.join(rootA, "src", "config.ts");
@@ -107,7 +105,7 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
     rootA = rA;
     rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
 
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
     await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
 
     // Trigger syncWorkspace so conflict is detected
@@ -125,12 +123,44 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
     expect(cloudDl.body.toString("utf8")).toBe("// version-B\n");
   });
 
+  it("resolveConflictKeepMine: облако ушло вперёд после отметки конфликта → cloud_moved без записи", async () => {
+    const { provider, rootA: rA, engineA, wid, rel, absA } = await setupBase();
+    rootA = rA;
+    rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
+
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
+    await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
+    await engineB.syncWorkspace(wid);
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("conflict");
+
+    // Machine A pushes a third version the user of B has never seen.
+    const cloudPath = trackedFileCloudPath(wid, rel);
+    await fs.writeFile(absA, "// version-C\n", "utf8");
+    // The seeded stale `_meta` makes A see a conflict too; A resolves it in
+    // favour of its own version, which is exactly the "cloud moved" case for B.
+    await engineA.pushAll(wid);
+    await engineA.resolveConflictKeepMine(wid, rel, { force: true });
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-C\n");
+
+    expect(await engineB.resolveConflictKeepMine(wid, rel)).toBe("cloud_moved");
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-C\n");
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("conflict");
+
+    // force: the user was told and chose their own version anyway.
+    expect(await engineB.resolveConflictKeepMine(wid, rel, { force: true })).toBe("pushed");
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-B\n");
+  });
+
   it("resolveConflictTakeTheirs: pulls cloud content, clears conflict", async () => {
     const { provider, rootA: rA, wid, rel } = await setupBase();
     rootA = rA;
     rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
 
-    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B" });
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
     await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
 
     await engineB.syncWorkspace(wid);
@@ -148,84 +178,6 @@ describe("conflict resolution — resolveConflictKeepMine / resolveConflictTakeT
   });
 });
 
-// ---------------------------------------------------------------------------
-// conflictRules auto-resolution
-// ---------------------------------------------------------------------------
-
-async function setupWithRules(conflictRules: ConflictRule[]) {
-  const { provider, rootA, wid, rel } = await setupBase();
-  const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-conf-b-"));
-  const engineB = new SyncEngine({
-    workspaceRoot: rootB,
-    provider,
-    machineId: "B",
-    machineName: "B",
-    conflictRules,
-  });
-  await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
-  return { provider, rootA, rootB, wid, rel, engineB };
-}
-
-describe("conflictRules — auto-resolution", () => {
-  const roots: string[] = [];
-
-  afterEach(async () => {
-    for (const r of roots.splice(0)) {
-      await fs.rm(r, { recursive: true, force: true });
-    }
-  });
-
-  it("keep-mine rule: local version wins automatically, no conflict status", async () => {
-    const ctx = await setupWithRules([{ pattern: "src/**", strategy: "keep-mine" }]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).not.toBe("conflict");
-
-    // Cloud should now have B's (local mine) content
-    const dl = await ctx.provider.downloadFile(trackedFileCloudPath(ctx.wid, ctx.rel));
-    expect(dl.body.toString("utf8")).toBe("// version-B\n");
-  });
-
-  it("take-theirs rule: cloud version wins automatically", async () => {
-    const ctx = await setupWithRules([
-      { pattern: "*.lock", strategy: "keep-mine" },
-      { pattern: "src/**", strategy: "take-theirs" },
-    ]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).not.toBe("conflict");
-
-    const absB = path.join(ctx.rootB, ...ctx.rel.split("/"));
-    expect(await fs.readFile(absB, "utf8")).toBe("// version-A\n");
-  });
-
-  it("first matching rule wins: ** take-theirs overrides nothing-before", async () => {
-    const ctx = await setupWithRules([
-      { pattern: "*.lock", strategy: "keep-mine" },
-      { pattern: "**", strategy: "take-theirs" },
-    ]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    // src/config.ts doesn't match *.lock → falls through to ** → take-theirs
-    const absB = path.join(ctx.rootB, ...ctx.rel.split("/"));
-    expect(await fs.readFile(absB, "utf8")).toBe("// version-A\n");
-  });
-
-  it("no matching rule: conflict surfaces normally", async () => {
-    const ctx = await setupWithRules([{ pattern: "*.lock", strategy: "keep-mine" }]);
-    roots.push(ctx.rootA, ctx.rootB);
-
-    await ctx.engineB.syncWorkspace(ctx.wid);
-    // src/config.ts doesn't match *.lock → conflict stays
-    const cfg = await WorkspaceConfigManager.load(ctx.rootB);
-    expect(cfg.files.find((f) => f.localPath === ctx.rel)?.syncStatus).toBe("conflict");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Tombstone purge
@@ -247,6 +199,7 @@ describe("tombstone purge", () => {
       provider,
       machineId: "A",
       machineName: "A",
+      trigger: "user",
       tombstonePurgeDays: 1,
     });
 
@@ -286,6 +239,7 @@ describe("tombstone purge", () => {
       provider,
       machineId: "A",
       machineName: "A",
+      trigger: "user",
       tombstonePurgeDays: 30,
     });
 

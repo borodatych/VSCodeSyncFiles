@@ -83,6 +83,16 @@ export interface TrackedFile {
   editingBy?: string;
   /** Human-readable machine name for the soft lock owner (for tooltip). */
   editingByName?: string;
+  /**
+   * Canonical hash of the cloud version at the moment the conflict was flagged.
+   *
+   * "Keep Mine" overwrites the cloud copy; without this the engine could not
+   * tell apart "the cloud version the user chose to discard" from "a newer
+   * version another machine pushed after the conflict was raised". Undefined
+   * when the conflict came from a 412 during upload — the cloud side was never
+   * read there.
+   */
+  conflictCloudHash?: string;
 }
 
 export interface WorkspaceConfig {
@@ -95,16 +105,6 @@ export interface WorkspaceConfig {
   pathMapping?: Record<string, string>;
 }
 
-/** Strategy for auto-resolving a conflict without user interaction. */
-export type ConflictStrategy = "keep-mine" | "take-theirs" | "newer";
-
-/** Auto-conflict-resolution rule: if the tracked file path matches `pattern` (minimatch glob), apply `strategy`. */
-export interface ConflictRule {
-  /** Minimatch glob relative to workspace root (e.g. "*.lock", "config/shared/**"). */
-  pattern: string;
-  strategy: ConflictStrategy;
-}
-
 /** Хранилище секретов (VS Code SecretStorage или мок в тестах). */
 export interface SecretStore {
   get(key: string): Thenable<string | undefined>;
@@ -112,8 +112,3 @@ export interface SecretStore {
   delete(key: string): Thenable<void>;
 }
 
-export const SECRET_KEY_PREFIX = "vscodesync.token.";
-
-export function secretKeyForProvider(type: ProviderType): string {
-  return `${SECRET_KEY_PREFIX}${type}`;
-}
