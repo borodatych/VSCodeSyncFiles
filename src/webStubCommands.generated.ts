@@ -31,6 +31,8 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.openConflictDiff3way",
   "vscodesync.setActiveProvider",
   "vscodesync.migrateToAnotherProvider",
+  "vscodesync.signIn",
+  "vscodesync.openDashboard",
   "vscodesync.onedriveSignIn",
   "vscodesync.onedriveSignInHeadless",
   "vscodesync.googleDriveSignIn",

@@ -73,6 +73,55 @@ export function registerProviderSignInCommands(
       });
     }),
 
+    /**
+     * One palette entry for signing in (F12). Nine separate commands —
+     * four providers × browser/headless plus device code — filled the palette
+     * with variants the user has to know the difference between before they can
+     * choose. The per-provider commands stay registered (Command Center,
+     * keybindings, `executeCommand`), just hidden from the palette.
+     */
+    vscode.commands.registerCommand("vscodesync.signIn", async () => {
+      type Pick = vscode.QuickPickItem & { run: () => Promise<void> };
+      const items: Pick[] = [
+        { label: "$(cloud) OneDrive", description: "браузер", run: () => signIn.oneDrive(true) },
+        { label: "$(cloud) Google Drive", description: "браузер", run: () => signIn.googleDrive(true) },
+        { label: "$(cloud) Dropbox", description: "браузер", run: () => signIn.dropbox(true) },
+        { label: "$(cloud) Яндекс Диск", description: "браузер", run: () => signIn.yandexDisk(true) },
+        {
+          label: "$(terminal) OneDrive — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.oneDrive(false),
+        },
+        {
+          label: "$(terminal) Google Drive — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.googleDrive(false),
+        },
+        {
+          label: "$(terminal) Dropbox — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.dropbox(false),
+        },
+        {
+          label: "$(terminal) Яндекс Диск — без браузера",
+          description: "URL в панели Output",
+          run: () => signIn.yandexDisk(false),
+        },
+        {
+          label: "$(key) Device Code",
+          description: "вход с другого устройства",
+          run: async () => {
+            await vscode.commands.executeCommand("vscodesync.signInDeviceCode");
+          },
+        },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        title: "VSCodeSync: вход в облако",
+        placeHolder: "Выберите провайдера",
+      });
+      await picked?.run();
+    }),
+
     vscode.commands.registerCommand("vscodesync.onedriveSignIn", async () => {
       await signIn.oneDrive(true);
     }),

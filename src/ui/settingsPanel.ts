@@ -5,20 +5,34 @@
 import * as vscode from "vscode";
 import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
 import { secretKeyForProvider } from "../providers/_shared/tokenStore.js";
+import { SETTINGS_KEYS, SETTINGS_SCHEMA } from "./settingsSchema.generated.js";
 import type { ProviderType } from "../core/types.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
 
 const CFG = "vscodesync";
 
 export function registerSettingsPanel(context: vscode.ExtensionContext): void {
+  // One panel per window (F8). Every invocation used to build another webview
+  // and register another config listener into `context.subscriptions`, which is
+  // only released when the extension deactivates — so N openings meant N live
+  // listeners re-rendering N panels for the rest of the session.
+  let current: vscode.WebviewPanel | undefined;
+
   context.subscriptions.push(
     vscode.commands.registerCommand("vscodesync.showSettingsPanel", () => {
+      if (current) {
+        current.reveal(vscode.ViewColumn.One);
+        return;
+      }
       const panel = vscode.window.createWebviewPanel(
         "vscodesyncSettings",
         "VSCodeSync: Настройки",
         vscode.ViewColumn.One,
         { enableScripts: true, retainContextWhenHidden: true },
       );
+      current = panel;
+      /** Released together with the panel, not with the extension. */
+      const panelSubscriptions: vscode.Disposable[] = [];
 
       const sendSettings = (): void => {
         const cfg = vscode.workspace.getConfiguration(CFG);
@@ -106,51 +120,37 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
           }
         },
         undefined,
-        context.subscriptions,
+        panelSubscriptions,
       );
 
       // Re-send on external settings change
-      const disposable = vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration(CFG)) {
-          sendSettings();
-        }
-      });
+      panelSubscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+          if (e.affectsConfiguration(CFG)) {
+            sendSettings();
+          }
+        }),
+      );
       panel.onDidDispose(() => {
-        disposable.dispose();
+        for (const d of panelSubscriptions.splice(0)) {
+          d.dispose();
+        }
+        current = undefined;
       });
     }),
   );
 }
 
-const ALL_KEYS = [
-  "onedriveClientId", "googleDriveClientId", "dropboxAppKey",
-  "yandexOAuthClientId", "yandexUseAppFolder",
-  "notificationLevel", "showFileDecorations", "digestIntervalMinutes",
-  "maxFileSizeMB", "warnOnBinaryFiles", "showPreview", "syncSummaryOnStartup",
-  "localBackupEnabled", "localBackupRetentionDays",
-  "syncOnOpen", "syncOnFocusDelayMs", "pushOnCommit",
-  "smartSuggestions", "requireMachineApproval",
-  "pauseOnMeteredConnection", "pauseBatteryThreshold",
-  "watchMode", "watchIntervalSeconds", "watchMaxIntervalSeconds", "watchAdaptive",
-  "compressUploads", "encryption", "aiMerge.enabled",
-  "webhooks.enabled", "webhooks.url", "webhooks.fallbackAfterMinutes", "webhooks.tunnelEnabled",
-  "gitBranchAutoSync",
-  "snapshotRetentionDays", "maxSnapshotsPerWorkspace",
-  "activityRetentionDays", "monthlyBandwidthLimitMB",
-  "workspaceInactiveDays", "batchAddWarnThreshold", "longAbsenceThresholdDays",
-  "quickTransferTtlDays",
-  "telemetry", "telemetryIngestUrl",
-  // v0.7 — performance / auto-sync mode tunables.
-  "autoSyncMode",
-  "sync.concurrency", "sync.workspaceConcurrency",
-  "verifyUploadHash", "historyVersions", "historyMode", "historyLazyDrainMinutes",
-  "metaWriteRetries", "verifyRetries", "softLockStaleHours",
-  "tokenRefreshSkewMinutes", "localBackupDir",
-  "gdrive.folderCacheTtlSec",
-  "onedrive.uploadSessionThresholdMB", "onedrive.uploadChunkMB",
-  "yandex.apiTimeoutMs", "yandex.dataTimeoutMs", "yandex.lockedRetryDelayMs",
-  "diagnostics.profileSync",
-];
+/**
+ * Every declared setting, generated from `contributes.configuration`
+ * (`settingsSchema.generated.ts`).
+ *
+ * This used to be a hand-maintained list. It drifted to 67 of 92 keys, and two
+ * of the keys it still rendered had been removed from the schema — VS Code
+ * rejects a write to an unregistered key, so the panel said "saved" and the
+ * value went nowhere (F11).
+ */
+const ALL_KEYS: readonly string[] = SETTINGS_KEYS;
 
 function getSettingsHtml(): string {
   return `<!DOCTYPE html>
@@ -316,6 +316,7 @@ function getSettingsHtml(): string {
   <div class="sidebar-item" onclick="nav('snapshots',this)">📸 Снапшоты</div>
   <div class="sidebar-item" onclick="nav('advanced',this)">⚙ Расширенные</div>
   <div class="sidebar-item" onclick="nav('telemetry',this)">📊 Телеметрия</div>
+  <div class="sidebar-item" onclick="nav('other',this)">🧩 Прочие</div>
 </nav>
 
 <div class="content">
@@ -507,6 +508,14 @@ function getSettingsHtml(): string {
       <button class="btn btn-secondary" onclick="runCmd('vscodesync.toggleTelemetry')">Переключить телеметрию</button>
     </div>
   </div>
+
+  <!-- ── ПРОЧИЕ (генерируется из схемы) ───────────────────────── -->
+  <div id="other" class="section">
+    <h2>🧩 Прочие</h2>
+    <p class="hint">Настройки, у которых нет отдельного места в этой панели. Раздел строится
+    из <code>contributes.configuration</code>, поэтому новая настройка появляется здесь сама.</p>
+    ${renderUncoveredSettings()}
+  </div>
 </div><!-- /content -->
 
 <script>
@@ -697,6 +706,103 @@ function setting(key: string, label: string, desc: string, control: string): str
     </div>
     <div class="setting-control">${control}</div>
   </div>`;
+}
+
+/**
+ * Renders every declared setting the hand-written sections above do not cover.
+ *
+ * Without it the panel silently lagged the schema — 25 of 92 settings had no
+ * входа at all (F11). Now a setting can be *placed* badly, but never missing.
+ */
+/**
+ * Keys that already have a hand-placed control in a themed section above.
+ * Generated-section rendering skips them; anything not here shows up under
+ * «Прочие», so the panel cannot silently lag the schema.
+ */
+const HAND_PLACED_KEYS: readonly string[] = [
+  "activityRetentionDays",
+  "aiMerge.enabled",
+  "autoSyncMode",
+  "batchAddWarnThreshold",
+  "compressUploads",
+  "diagnostics.profileSync",
+  "digestIntervalMinutes",
+  "dropboxAppKey",
+  "encryption",
+  "gdrive.folderCacheTtlSec",
+  "gitBranchAutoSync",
+  "googleDriveClientId",
+  "historyLazyDrainMinutes",
+  "historyMode",
+  "historyVersions",
+  "localBackupDir",
+  "localBackupEnabled",
+  "localBackupRetentionDays",
+  "longAbsenceThresholdDays",
+  "maxFileSizeMB",
+  "maxSnapshotsPerWorkspace",
+  "metaWriteRetries",
+  "monthlyBandwidthLimitMB",
+  "notificationLevel",
+  "onedrive.uploadChunkMB",
+  "onedrive.uploadSessionThresholdMB",
+  "onedriveClientId",
+  "pauseBatteryThreshold",
+  "pauseOnMeteredConnection",
+  "pushOnCommit",
+  "quickTransferTtlDays",
+  "requireMachineApproval",
+  "showFileDecorations",
+  "showPreview",
+  "smartSuggestions",
+  "snapshotRetentionDays",
+  "softLockStaleHours",
+  "sync.concurrency",
+  "sync.workspaceConcurrency",
+  "syncOnFocusDelayMs",
+  "syncOnOpen",
+  "syncSummaryOnStartup",
+  "telemetry",
+  "telemetryIngestUrl",
+  "tokenRefreshSkewMinutes",
+  "verifyRetries",
+  "verifyUploadHash",
+  "warnOnBinaryFiles",
+  "watchAdaptive",
+  "watchIntervalSeconds",
+  "watchMaxIntervalSeconds",
+  "watchMode",
+  "webhooks.enabled",
+  "webhooks.fallbackAfterMinutes",
+  "webhooks.tunnelEnabled",
+  "webhooks.url",
+  "workspaceInactiveDays",
+  "yandex.apiTimeoutMs",
+  "yandex.dataTimeoutMs",
+  "yandex.lockedRetryDelayMs",
+  "yandexOAuthClientId",
+  "yandexUseAppFolder",
+];
+
+function renderUncoveredSettings(): string {
+  const covered = new Set(HAND_PLACED_KEYS);
+  const rows = SETTINGS_SCHEMA.filter((s) => !covered.has(s.key)).map((s) => {
+    const label = s.key;
+    const desc = s.description;
+    if (Array.isArray(s.enum) && s.enum.length > 0) {
+      return select(s.key, label, desc, s.enum.map((o) => String(o)));
+    }
+    if (s.type === "boolean") {
+      return toggle(s.key, label, desc);
+    }
+    if (s.type === "number") {
+      return number(s.key, label, desc, s.minimum ?? 0, s.maximum ?? 99999);
+    }
+    return text(s.key, label, desc);
+  });
+  return rows.length === 0
+    ? `<p class="hint">Все настройки размещены по разделам.</p>`
+    : rows.join("\n");
 }
 
 function toggle(key: string, label: string, desc: string): string {

@@ -43,6 +43,30 @@ export function registerViewManagementCommands(
       void v.collapseAll?.();
     }),
 
+    /**
+     * One palette entry for the visual panels (F12). Six separate "show…" /
+     * "open…" commands are six things to remember; the panels themselves are
+     * unchanged and still reachable by id from the Command Center.
+     */
+    vscode.commands.registerCommand("vscodesync.openDashboard", async () => {
+      type Pick = vscode.QuickPickItem & { cmd: string };
+      const items: Pick[] = [
+        { label: "$(dashboard) Дашборд синхронизации", cmd: "vscodesync.showSyncDashboard" },
+        { label: "$(pulse) Лента активности", cmd: "vscodesync.openActivityFeed" },
+        { label: "$(flame) Тепловая карта конфликтов", cmd: "vscodesync.showConflictHeatmap" },
+        { label: "$(circuit-board) Граф машин", cmd: "vscodesync.openMachinesGraph" },
+        { label: "$(graph) Аналитика", cmd: "vscodesync.openAnalyticsPanel" },
+        { label: "$(gear) Настройки", cmd: "vscodesync.showSettingsPanel" },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        title: "VSCodeSync: панели",
+        placeHolder: "Что открыть",
+      });
+      if (picked) {
+        await vscode.commands.executeCommand(picked.cmd);
+      }
+    }),
+
     vscode.commands.registerCommand("vscodesync.showSyncDashboard", async () => {
       await statusBar.showDashboard();
     }),

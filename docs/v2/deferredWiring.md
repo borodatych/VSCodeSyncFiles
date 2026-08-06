@@ -144,3 +144,30 @@ SecretStorage.
 **Что нужно для подключения:** чтение/запись `accounts[]` в
 `globalConfigManager`, команда выбора слота на `multiAccountPickerFormatter`,
 переключение `registry.ts` на «инстанс на слот», миграция при первом запуске.
+
+## Скелеты фазы 24 (11 модулей, ни один не подключён)
+
+**Что есть в коде** (`src/core/`, единственные потребители — юнит-тесты):
+`contentDefinedChunking`, `githubReleasesProviderPlanner`, `passkeyOnlyMode`,
+`remotePresencePlanner`, `s3ProviderPlanner`, `syncRewindPlanner`,
+`trustedTeammatesInvitePlanner`, `undoableActionRegistry`, `perGlobScheduler`,
+`backupVerifyScheduler`, `autoPauseTickPlanner`. Историю см. в коммитах
+`8beb347` («wiring deferred»), `84f6764`, `27bde77`.
+
+**Проверенный факт (этап 6):** утверждение плана «~13 незавершённых модулей
+попадают в бандл» **опровергнуто**. esbuild собирает от `src/extension.ts` с
+`bundle: true` и вытрясает всё, что никто не импортирует: `grep` по
+`dist/extension.js` не находит ни одного из этих имён. Переносить их из `src/`
+ради размера бандла нечего — на пользователя они не влияют.
+
+**Почему тогда не удалить:** каждый из них — записанный замысел с тестами
+(дедупликация по content-defined chunking, провайдер поверх GitHub Releases,
+режим «только passkey», presence без облака, S3-совместимый провайдер, откат
+серии операций, приглашение доверенного соавтора, undo-реестр, расписание по
+glob-маскам, проверка бэкапов, планировщик авто-паузы). Код в git остаётся,
+замысел — нет; поэтому список живёт здесь.
+
+**Что нужно для подключения:** у каждого модуля есть чистое ядро и нет ни
+одной точки вызова — нужны команда/настройка, место в UI и решение, входит ли
+фича в продукт. Гейт `phase24Skeletons.test.ts` держит их компилируемыми,
+`bundleSkeletons.test.ts` — вне поставки.

@@ -973,6 +973,14 @@
         "title": "%cmd.migrateToAnotherProvider.title%"
       },
       {
+        "command": "vscodesync.signIn",
+        "title": "%cmd.signIn.title%"
+      },
+      {
+        "command": "vscodesync.openDashboard",
+        "title": "%cmd.openDashboard.title%"
+      },
+      {
         "command": "vscodesync.onedriveSignIn",
         "title": "%cmd.onedriveSignIn.title%"
       },
@@ -1594,6 +1602,62 @@
         {
           "command": "vscodesync.addFolderToSync",
           "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.onedriveSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.googleDriveSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.dropboxSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.dropboxSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.yandexDiskSignIn",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.yandexDiskSignInHeadless",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.signInDeviceCode",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.showSyncDashboard",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.showConflictHeatmap",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.openActivityFeed",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.openMachinesGraph",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.openAnalyticsPanel",
+          "when": "false"
         }
       ],
       "statusBar/item/context": [
@@ -1800,12 +1864,12 @@
       "vscodesync.submenu": [
         {
           "command": "vscodesync.addCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
           "group": "1_sync@1"
         },
         {
           "command": "vscodesync.addToNewWorkspace",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
           "group": "1_sync@2"
         },
         {
@@ -1815,47 +1879,47 @@
         },
         {
           "command": "vscodesync.pushCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@1"
         },
         {
           "command": "vscodesync.pullCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@2"
         },
         {
           "command": "vscodesync.diffWithCloud",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@3"
         },
         {
           "command": "vscodesync.showFileHistory",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@4"
         },
         {
           "command": "vscodesync.openInCloudStorage",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "2_ops@5"
         },
         {
           "command": "vscodesync.moveCurrentFileToWorkspace",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "3_manage@1"
         },
         {
           "command": "vscodesync.removeFromSync",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileTracked",
           "group": "3_manage@2"
         },
         {
           "command": "vscodesync.keepMine",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileConflict",
           "group": "4_conflict@1"
         },
         {
           "command": "vscodesync.takeTheirs",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && vscodeSync.activeFileConflict",
           "group": "4_conflict@2"
         }
       ],
@@ -1958,7 +2022,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "compile": "node scripts/generate-web-stub-commands.mjs && node esbuild.mjs",
+    "compile": "node scripts/generate-web-stub-commands.mjs && node scripts/generate-settings-schema.mjs && node esbuild.mjs",
     "verify:web": "node scripts/verify-web-bundle.mjs",
     "watch": "node esbuild.mjs --watch",
     "lint": "eslint ./src ./tests ./cli/src",
