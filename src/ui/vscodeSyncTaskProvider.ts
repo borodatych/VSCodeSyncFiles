@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
+import { readSnapshotCrypto } from "./snapshotCrypto.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
@@ -53,6 +54,8 @@ export interface VscodeSyncTaskProviderDeps {
     options?: { showErrorDialog?: boolean; trigger?: SyncTrigger },
   ) => Promise<void>;
   tryAuthenticatedProvider: () => Promise<ICloudProvider | null>;
+  /** Needed to build the snapshot encryption context for `create-snapshot`. */
+  secrets: vscode.SecretStorage;
 }
 
 function posixRelFromTask(rel: string | undefined): string | undefined {
@@ -220,7 +223,15 @@ async function runVscodeSyncTask(
           if (!provider) {
             throw new TaskExit(2, "No authenticated cloud provider.");
           }
-          await createWorkspaceSnapshot(provider, r, wsId, name, (await gc.load()).machineName);
+          const snapCrypto = await readSnapshotCrypto(deps.secrets);
+          await createWorkspaceSnapshot(
+            provider,
+            r,
+            wsId,
+            name,
+            (await gc.load()).machineName,
+            snapCrypto,
+          );
         },
         root,
         { showErrorDialog: false, trigger: "user" },

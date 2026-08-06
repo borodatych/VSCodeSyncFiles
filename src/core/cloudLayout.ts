@@ -166,6 +166,15 @@ export interface SnapshotMeta {
    * can only download; push from them is rejected by the engine.
    */
   sharedTo?: SnapshotShareACL;
+  /**
+   * Wire encryption of the snapshot's file blobs.
+   *
+   * Absent means the blobs are plaintext — the only thing snapshots ever were
+   * before this field existed, including on workspaces with `vscodesync.encryption`
+   * turned on. Restore reads this to decide whether a key is needed, so old
+   * snapshots keep restoring and new ones cannot be read without the key.
+   */
+  encryption?: "aes-256-gcm";
 }
 
 export interface SnapshotShareACL {

@@ -197,6 +197,7 @@ export function registerSmartFeaturesEngineCommands(
       await runSnapshotDiff({
         getProvider: () => Promise.resolve(provider),
         pickWorkspaceId: () => Promise.resolve(wsPick.workspaceId),
+        secrets: deps.context.secrets,
       });
     }),
   ];

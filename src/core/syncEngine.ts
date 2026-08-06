@@ -25,7 +25,7 @@ import {
 } from "./cloudLayout.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
-import { createWorkspaceSnapshot } from "./snapshotsEngine.js";
+import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
 import { backupLocalWithPrune, LOCAL_BACKUP_DIR_DEFAULT } from "./localFileBackup.js";
 import { mergeMetaEntries } from "./metaMerge.js";
 import { detectChange, type ChangeAction } from "./changeDetection.js";
@@ -618,6 +618,15 @@ export class SyncEngine {
   }
   private resolveLocalBackupDir(): string {
     return this.deps.localBackupDir?.() ?? LOCAL_BACKUP_DIR_DEFAULT;
+  }
+
+  /** Snapshot blobs use the engine's own encryption context. */
+  private snapshotCrypto(): SnapshotCrypto {
+    return {
+      required: this.deps.encryptionRequired === true,
+      encrypt: this.deps.encrypt,
+      decrypt: this.deps.decrypt,
+    };
   }
   private resolveHistoryMode(): "inline" | "lazy" | "off" {
     return this.deps.historyMode?.() ?? "inline";
@@ -1450,12 +1459,14 @@ export class SyncEngine {
     }
 
     const snapHint = `auto-pre-merge-${new Date().toISOString().slice(0, 10)}`;
+    const snapCrypto = this.snapshotCrypto();
     await createWorkspaceSnapshot(
       this.deps.provider,
       this.deps.workspaceRoot,
       sourceWorkspaceId,
       snapHint,
       this.deps.machineName,
+      snapCrypto,
     );
     await createWorkspaceSnapshot(
       this.deps.provider,
@@ -1463,6 +1474,7 @@ export class SyncEngine {
       targetWorkspaceId,
       snapHint,
       this.deps.machineName,
+      snapCrypto,
     );
 
     // Both sides of the copy must respect the wire encoding recorded in the

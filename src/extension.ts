@@ -233,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   registerVscodeSyncTaskProvider(context, {
+    secrets: context.secrets,
     runWithEngine,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });

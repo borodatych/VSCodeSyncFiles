@@ -18,6 +18,32 @@ import {
 import { planSnapshotRetention } from "../core/snapshotRetentionPlan.js";
 import { exportKeyWithPassword, importKeyWithPassword, generateEncryptionKey, encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { readEncryptionKey, storeEncryptionKey } from "../core/encryptionKey.js";
+import { readSnapshotCrypto } from "./snapshotCrypto.js";
+import type { SnapshotCrypto } from "../core/snapshotsEngine.js";
+
+/**
+ * Snapshot encryption context for palette commands, or `null` when the command
+ * must not proceed (encryption on, key locked) — the user is told why.
+ */
+async function requireSnapshotCrypto(
+  secrets: import("vscode").SecretStorage | undefined,
+): Promise<SnapshotCrypto | null> {
+  if (!secrets) {
+    await vscode.window.showErrorMessage(
+      "VSCodeSync: нет доступа к хранилищу секретов — снапшот не создан.",
+    );
+    return null;
+  }
+  const crypto = await readSnapshotCrypto(secrets);
+  if (crypto.required && crypto.encrypt === undefined) {
+    await vscode.window.showErrorMessage(
+      "VSCodeSync: шифрование включено, но ключ недоступен — снапшот не создан. " +
+        "Разблокируйте ключ и повторите.",
+    );
+    return null;
+  }
+  return crypto;
+}
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
@@ -164,6 +190,8 @@ export function registerPlannedPaletteCommands(
         return;
       }
 
+      const snapCrypto = await requireSnapshotCrypto(extras.secrets);
+      if (snapCrypto === null) return;
       const wsId = workspaceId;
       const conf = configuration();
       const retentionDays = conf.get<number>("snapshotRetentionDays", 180);
@@ -171,7 +199,14 @@ export function registerPlannedPaletteCommands(
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: создание снапшота…", cancellable: false },
         async () => {
-          const finalName = await createWorkspaceSnapshot(provider, root, wsId, nameInput, gc.machineName);
+          const finalName = await createWorkspaceSnapshot(
+            provider,
+            root,
+            wsId,
+            nameInput,
+            gc.machineName,
+            snapCrypto,
+          );
           void vscode.window.showInformationMessage(`VSCodeSync: снапшот «${finalName}» создан.`);
           try {
             const snapshots = await listWorkspaceSnapshots(provider, wsId);
@@ -249,6 +284,8 @@ export function registerPlannedPaletteCommands(
         return;
       }
 
+      const restoreCrypto = await requireSnapshotCrypto(extras.secrets);
+      if (restoreCrypto === null) return;
       const wsIdRestore = workspaceId;
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: восстановление снапшота…", cancellable: false },
@@ -260,9 +297,17 @@ export function registerPlannedPaletteCommands(
             wsIdRestore,
             `auto-pre-restore-${new Date().toISOString().replace(/[:.]/g, "-")}`,
             gc.machineName,
+            restoreCrypto,
           );
           progress.report({ message: "Восстановление файлов…" });
-          const result = await restoreWorkspaceSnapshot(provider, root, wsIdRestore, picked.name, gc.machineName);
+          const result = await restoreWorkspaceSnapshot(
+            provider,
+            root,
+            wsIdRestore,
+            picked.name,
+            gc.machineName,
+            restoreCrypto,
+          );
           void vscode.window.showInformationMessage(
             `VSCodeSync: восстановлено ${String(result.restoredCount)} файлов из снапшота «${picked.label}».`,
           );
@@ -570,7 +615,20 @@ export function registerPlannedPaletteCommands(
             for (const ws of wc.activeWorkspaces) {
               progress.report({ message: `Снапшот workspace ${ws.workspaceNote || ws.workspaceId}…` });
               try {
-                await createWorkspaceSnapshot(provider, folder.uri.fsPath, ws.workspaceId, `auto-pre-key-rotation-${snapshotDate}`, gc.machineName);
+                // Encrypted with the *old* key on purpose: the new one is not
+                // generated until step 2, and this snapshot is the rollback.
+                await createWorkspaceSnapshot(
+                  provider,
+                  folder.uri.fsPath,
+                  ws.workspaceId,
+                  `auto-pre-key-rotation-${snapshotDate}`,
+                  gc.machineName,
+                  {
+                    required: true,
+                    encrypt: (buf: Buffer) => encryptBuffer(oldKey, buf),
+                    decrypt: (buf: Buffer) => decryptBuffer(oldKey, buf),
+                  },
+                );
               } catch (e) {
                 snapshotFailures.push(
                   `${ws.workspaceNote || ws.workspaceId}: ${e instanceof Error ? e.message : String(e)}`,

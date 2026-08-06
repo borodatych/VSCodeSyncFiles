@@ -509,12 +509,21 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
         // user "explicitly opted to proceed". They opted to proceed *with a
         // snapshot*; that button exists for the safety net, not the wording.
         try {
+          const encryptionOn = vscode.workspace
+            .getConfiguration(CFG_SECTION)
+            .get<boolean>("encryption", false);
+          const key = encryptionOn ? cachedEncKey : null;
           await createWorkspaceSnapshot(
             provider,
             workspaceRoot,
             workspaceId,
             `auto-pre-mass-change-${new Date().toISOString().replace(/[:.]/g, "-")}`,
             machineName,
+            {
+              required: encryptionOn,
+              encrypt: key ? (buf: Buffer) => encryptBuffer(key, buf) : undefined,
+              decrypt: key ? (buf: Buffer) => decryptBuffer(key, buf) : undefined,
+            },
           );
           return true;
         } catch (e: unknown) {
