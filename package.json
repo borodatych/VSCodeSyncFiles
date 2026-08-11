@@ -764,21 +764,9 @@
             ]
           },
           {
-            "id": "videoAddFirstFile",
-            "title": "Добавьте первый файл",
-            "description": "ПКМ на файле → VSCodeSync → Add file.",
-            "media": {
-              "image": "media/vscodesync.png",
-              "altText": "VSCodeSync logo"
-            },
-            "completionEvents": [
-              "onCommand:vscodesync.addCurrentFile"
-            ]
-          },
-          {
-            "id": "videoResolveConflict",
-            "title": "Разрешение конфликта",
-            "description": "3-way diff: keep mine / take theirs.",
+            "id": "resolveConflict",
+            "title": "Разрешите конфликт",
+            "description": "Если файл изменился и здесь, и на другой машине, расширение не выбирает за вас: оно показывает трёхстороннее сравнение, где для каждого фрагмента можно оставить свою версию, взять чужую или собрать общую.\n\n[Разрешить конфликты](command:vscodesync.resolveConflicts)",
             "media": {
               "image": "media/vscodesync.png",
               "altText": "VSCodeSync logo"
@@ -788,9 +776,9 @@
             ]
           },
           {
-            "id": "videoTimeTravel",
-            "title": "Time-travel scrubber",
-            "description": "Scrubber по версиям файла + restore.",
+            "id": "timeTravel",
+            "title": "Вернитесь к прошлой версии файла",
+            "description": "Time-Travel слайдер прокручивает историю текущего файла: перетаскиваете ползунок по версиям, видите содержимое каждой и восстанавливаете нужную.\n\n[Открыть слайдер](command:vscodesync.openTimeTravelScrubber)",
             "media": {
               "image": "media/vscodesync.png",
               "altText": "VSCodeSync logo"
