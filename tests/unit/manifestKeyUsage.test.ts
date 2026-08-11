@@ -30,7 +30,10 @@ const BYPASSES: readonly { name: string; re: RegExp }[] = [
  * entry names why. Additions require the same justification.
  */
 const ALLOWED = new Set<string>([
-  // planWorkspaceMergeCfg passes manifestKeyOf(f) — the regexes don't match it.
+  // Bindings VALUES are local placements by definition — comparing
+  // `bindings[me].path` against `localPath` is the self-heal's whole job,
+  // not a manifest-row match.
+  "src/core/plan/planBindingSelfHeal.ts",
 ]);
 
 function sourceFiles(): string[] {

@@ -21,7 +21,7 @@ import {
   workspaceRootPath,
 } from "./cloudLayout.js";
 import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
-import { defaultLinkName, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
+import { defaultLinkName, findDuplicateLinkIds, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
 import { touchManifestMachine } from "./machineRegistry.js";
 import { manifestKeyOf } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
@@ -41,6 +41,9 @@ import { planCloudScanRepair } from "./plan/planCloudScanRepair.js";
 import { applyWorkspaceMergeToCfg } from "./plan/planWorkspaceMergeCfg.js";
 import { entryPatchFromManifest, manifestMachineCache } from "./manifestCacheFields.js";
 import { runBlake3BackfillTasks } from "./plan/planBlake3Backfill.js";
+import { planBindingSelfHeal } from "./plan/planBindingSelfHeal.js";
+import { shouldAttemptBindingSelfHeal } from "./bindingSelfHealState.js";
+import { buildSyncPreview } from "./syncPreview.js";
 import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
@@ -904,20 +907,36 @@ export class SyncEngine {
       );
       if (oldIdx < 0) continue;
       const prev = cfg.files[oldIdx];
-      const bound = prev.manifestPath !== undefined && prev.manifestPath !== prev.localPath;
-      // A canonical rename replayed on a bound machine moves only the key —
-      // the local placement (and the bytes on disk) stay put. An unbound row
-      // follows the rename, through a folder rule when one covers the target.
-      const renamedPlacement = placementOf(r.to);
-      cfg.files[oldIdx] = bound
-        ? { ...prev, manifestPath: r.to, cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip) }
-        : {
-            ...prev,
-            localPath: renamedPlacement,
-            manifestPath: renamedPlacement === r.to ? undefined : r.to,
-            cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
-            localHash: r.localHash,
-          };
+      // A canonical rename replayed here moves only the KEY when bytes exist
+      // at this machine's placement (stage 3 — no silent disk moves): the row
+      // stays where it is, the UI offers "переместить у меня" as an explicit
+      // action. A row with no local bytes has nothing to preserve — it follows
+      // the rename to its (folder-rule-mapped) placement.
+      const bytesAtPlacement = await fileExists(this.localAbs(cfg, prev.localPath));
+      if (bytesAtPlacement) {
+        cfg.files[oldIdx] = {
+          ...prev,
+          manifestPath: prev.localPath === r.to ? undefined : r.to,
+          cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
+        };
+        if (prev.localPath !== r.to) {
+          this.deps.onCanonicalRenameReplayed?.({
+            workspaceId,
+            from: r.from,
+            to: r.to,
+            localPlacement: prev.localPath,
+          });
+        }
+      } else {
+        const renamedPlacement = placementOf(r.to);
+        cfg.files[oldIdx] = {
+          ...prev,
+          localPath: renamedPlacement,
+          manifestPath: renamedPlacement === r.to ? undefined : r.to,
+          cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
+          localHash: r.localHash,
+        };
+      }
       changed = true;
     }
     for (const a of diff.adopt) {
@@ -1547,6 +1566,15 @@ export class SyncEngine {
       if (!m) {
         return { ok: false, message: "манифест недоступен" };
       }
+      // Link Bindings: a bind racing a canonical rename can leave one linkId
+      // on two live rows — surfaced here, repaired via repairDuplicateLinkIds.
+      const dupes = findDuplicateLinkIds(m.files);
+      if (dupes.length > 0) {
+        return {
+          ok: false,
+          message: `дубликат идентичности (linkId) у: ${dupes.map((d) => d.paths.join(" ↔ ")).join("; ")}`,
+        };
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
@@ -1976,6 +2004,42 @@ export class SyncEngine {
       provider: this.deps.provider.type,
     });
     return { localPosixRel, contentMatches: plan.contentMatches };
+  }
+
+  /** Link Bindings: rename the human label of a cloud entry (not a key — collisions allowed). */
+  async renameLinkName(workspaceId: string, manifestKey: string, linkName: string): Promise<void> {
+    this.assertMayMutate("renameLinkName");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const remoteManifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!remoteManifest) {
+      throw new Error("manifest missing on cloud");
+    }
+    const row = remoteManifest.files.find((f) => f.path === manifestKey && !f.removedAt);
+    if (!row) {
+      throw new Error(`manifest row not found: ${manifestKey}`);
+    }
+    const now = new Date().toISOString();
+    const updated: ManifestFile = {
+      ...row,
+      linkName,
+      // A user edit fights real edits in 412-merges — Lamport bump required.
+      version: Math.max(this.nextManifestVersion(remoteManifest.files), row.version + 1),
+    };
+    await this.putManifest(
+      workspaceId,
+      {
+        ...remoteManifest,
+        updatedAt: now,
+        machines: this.touchMachine(remoteManifest.machines, now),
+        files: remoteManifest.files.map((f) => (f === row ? updated : f)),
+      },
+      entry.manifestEtag,
+    );
   }
 
   /**
@@ -2872,6 +2936,31 @@ export class SyncEngine {
     }
     const meta = await this.pullMeta(workspaceId, entInit.metaEtag);
 
+    // Link Bindings self-heal: re-assert this machine's bindings a v1 merge
+    // may have dropped. User passes only, at most once per workspace per
+    // session (planBindingSelfHeal / bindingSelfHealState).
+    if (this.mayMutate("putManifest") && shouldAttemptBindingSelfHeal(this.deps.workspaceRoot, workspaceId)) {
+      const { healedRows } = planBindingSelfHeal({
+        machineId: this.deps.machineId,
+        trackedFiles,
+        manifestFiles: manifest.files,
+        folderRules: manifest.folderBindings?.[this.deps.machineId],
+        nextVersion: this.nextManifestVersion(manifest.files),
+        nowIso: new Date().toISOString(),
+      });
+      if (healedRows.size > 0) {
+        try {
+          await this.putManifest(
+            workspaceId,
+            { ...manifest, files: manifest.files.map((m) => healedRows.get(m.path) ?? m) },
+            entInit.manifestEtag,
+          );
+        } catch (e) {
+          warnLog("syncEngine", `binding self-heal failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
     return { cfg: cfgSync, manifest, trackedFiles, meta };
   }
 
@@ -3185,114 +3274,18 @@ export class SyncEngine {
    * План синхронизации без записи `vscodesync.json` и без обновления ETag в проекте
    * (только GET из облака + локальный хэш). Логика совпадает с `syncOneFile` до push/pull.
    */
+  /** Delegates to `buildSyncPreview` (syncPreview.ts). */
   async previewSyncPlan(workspaceId?: string): Promise<SyncPreviewWorkspace[]> {
     const cfg = await this.loadCfg();
-    const ids = workspaceId
-      ? [workspaceId]
-      : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces);
-    const results: SyncPreviewWorkspace[] = [];
-
-    for (const wsId of ids) {
-      const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === wsId);
-      if (!entry) {
-        continue;
-      }
-
-      let manifest: CloudManifest;
-      try {
-        const manifestDl = await this.deps.provider.downloadFile(manifestCloudPath(wsId));
-        const bodyStr = manifestDl.body.toString("utf8");
-        const parsed = JSON.parse(bodyStr) as {
-          schemaVersion?: unknown;
-          workspaceId?: unknown;
-          files?: CloudManifest["files"];
-        };
-        if (parsed.schemaVersion !== SUPPORTED_MANIFEST_SCHEMA || parsed.workspaceId !== wsId) {
-          throw new Error(`некорректный манифест workspace ${wsId}`);
-        }
-        manifest = parsed as CloudManifest;
-      } catch (e) {
-        if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-          // Cloud manifest missing — treat all locally tracked files as pending push
-          const localRows: SyncPreviewFileRow[] = cfg.files
-            .filter((f) => f.workspaceId === wsId)
-            .map((f) => ({ localPath: f.localPath, action: "push" }));
-          localRows.sort((a, b) => a.localPath.localeCompare(b.localPath, undefined, { sensitivity: "base" }));
-          results.push({ workspaceId: wsId, workspaceNote: entry.workspaceNote, files: localRows });
-          continue;
-        }
-        throw e;
-      }
-
-      let meta: MetaJson;
-      try {
-        const metaDl = await this.deps.provider.downloadFile(metaCloudPath(wsId));
-        meta = JSON.parse(metaDl.body.toString("utf8")) as MetaJson;
-      } catch (e) {
-        if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-          meta = { files: {} };
-        } else {
-          throw e;
-        }
-      }
-
-      const activeManifestPaths = new Set(
-        manifest.files.filter((f) => !f.removedAt).map((f) => f.path),
-      );
-      const trackedFiles = cfg.files.filter(
-        (f) => f.workspaceId === wsId && activeManifestPaths.has(manifestKeyOf(f)),
-      );
-
-      const rows: SyncPreviewFileRow[] = [];
-      for (const file of trackedFiles) {
-        if (file.syncStatus === "conflict") {
-          rows.push({ localPath: file.localPath, action: "conflict_pending" });
-          continue;
-        }
-        const metaRow = meta.files[manifestKeyOf(file)];
-        const base = metaRow === undefined ? undefined : metaRow.hash;
-        const localCurrent = await this.hashTrackedFile(this.localAbs(cfg, file.localPath), manifestKeyOf(file)).catch(() => "");
-        let cloudCurrent = "";
-        try {
-          // Conditional GET (этап 5.2): the preview used to download the full
-          // body of every tracked file on every run — the one pass that reads
-          // the whole workspace, doing it the most expensive way possible.
-          // A 304 means the blob still hashes to `_meta.hash`, which is exactly
-          // what we were about to compute.
-          const dl = await this.deps.provider.downloadFile(file.cloudPath, {
-            ifNoneMatch: metaRow?.etag !== undefined && metaRow.etag !== "" ? metaRow.etag : undefined,
-          });
-          if (dl.notModified) {
-            cloudCurrent = base ?? "";
-          } else {
-            const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-            cloudCurrent = hashCanonicalBuffer(plain, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
-          }
-        } catch (e) {
-          if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
-            throw e;
-          }
-          cloudCurrent = "";
-        }
-
-        const action: PreviewSyncFileAction = planFileAction({
-          baseHash: base,
-          cachedLocalHash: file.localHash,
-          localHash: localCurrent,
-          cloudHash: cloudCurrent,
-        }).action;
-        rows.push({ localPath: file.localPath, action });
-      }
-
-      rows.sort((a, b) => a.localPath.localeCompare(b.localPath, undefined, { sensitivity: "base" }));
-      results.push({
-        workspaceId: wsId,
-        workspaceNote: entry.workspaceNote,
-        files: rows,
-      });
-    }
-
-    return results;
+    return buildSyncPreview({
+      cfg,
+      workspaceIds: workspaceId ? [workspaceId] : this.workspaceIdsForCurrentProvider(cfg.activeWorkspaces),
+      provider: this.deps.provider,
+      decodeCloudBlob: (body, wireGzip) => this.decodeCloudBlob(body, wireGzip),
+      hashLocalTracked: (localPath, key) =>
+        this.hashTrackedFile(this.localAbs(cfg, localPath), key).catch(() => ""),
+      hashCloudBuffer: (buf, key) => hashCanonicalBuffer(buf, key, this.hashCfg(key)),
+    });
   }
 
   /**

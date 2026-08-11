@@ -152,6 +152,42 @@ export function registerLinkBindingsCommands(deps: LinkBindingsCommandsDeps): vs
       }
     }),
 
+    vscode.commands.registerCommand("vscodesync.renameLinkName", async () => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (root === undefined) {
+        return;
+      }
+      const ws = await pickWorkspaceId(root);
+      if (!ws) {
+        return;
+      }
+      const index = await readCloudFileIndex(registry, ws);
+      if (index.length === 0) {
+        void vscode.window.showWarningMessage("VSCodeSync: в этом воркспейсе нет облачных файлов.");
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        index.map((r) => ({ label: r.linkName ?? r.path, description: r.path, value: r.path })),
+        { title: "VSCodeSync — линковочное имя", placeHolder: "Какой записи сменить метку?", matchOnDescription: true },
+      );
+      if (!picked) {
+        return;
+      }
+      const current = index.find((r) => r.path === picked.value);
+      const name = await vscode.window.showInputBox({
+        title: "Новое линковочное имя",
+        prompt: "Метка облачной записи (не влияет на пути)",
+        value: current?.linkName ?? picked.label,
+      });
+      if (name === undefined || name === "") {
+        return;
+      }
+      await runWithEngine(async (engine) => {
+        await engine.renameLinkName(ws, picked.value, name);
+        void vscode.window.showInformationMessage(`Метка обновлена: «${name}» (${picked.value}).`);
+      }, root);
+    }),
+
     vscode.commands.registerCommand("vscodesync.bindLocalFolder", async (uri?: vscode.Uri) => {
       const target = await resolveFileTarget(uri);
       if (!target) {

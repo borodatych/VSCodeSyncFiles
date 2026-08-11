@@ -83,7 +83,7 @@ describe("adoptManifestFilesFromCloud with renamedFrom via syncWorkspace", () =>
     roots.length = 0;
   });
 
-  it("syncWorkspace adopts renamedFrom: updates localPath and does not create duplicate", async () => {
+  it("syncWorkspace реплеит renamedFrom: локальные байты остаются на месте, ключ переезжает (Link Bindings, этап 3)", async () => {
     const provider = new MockCloudProvider("onedrive");
     const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-rename-a-"));
     const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-rename-b-"));
@@ -112,10 +112,13 @@ describe("adoptManifestFilesFromCloud with renamedFrom via syncWorkspace", () =>
     await engineB.syncWorkspace(wsId);
 
     const wcBAfter = await WorkspaceConfigManager.load(rootB);
-    // new.ts should now be tracked
-    expect(wcBAfter.files.some((f) => f.localPath === "new.ts")).toBe(true);
-    // old.ts should be gone (pruned by manifest)
-    expect(wcBAfter.files.some((f) => f.localPath === "old.ts")).toBe(false);
+    // B pulled old.ts to disk at attach — a canonical rename must not move
+    // bytes silently: the row keeps its placement and re-keys via binding.
+    const row = wcBAfter.files.find((f) => f.localPath === "old.ts");
+    expect(row?.manifestPath).toBe("new.ts");
+    // No duplicate row appears under the canonical name.
+    expect(wcBAfter.files.some((f) => f.localPath === "new.ts")).toBe(false);
+    expect(wcBAfter.files.filter((f) => f.workspaceId === wsId)).toHaveLength(1);
   });
 });
 

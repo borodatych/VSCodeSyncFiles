@@ -566,6 +566,32 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
           }
         })();
       },
+      // Link Bindings (stage 3): a canonical rename replayed from another
+      // machine keeps this machine's placement; moving the bytes to the new
+      // structure is an explicit click, never automatic.
+      onCanonicalRenameReplayed: ({ from, to, localPlacement }) => {
+        void (async () => {
+          const choice = await vscode.window.showInformationMessage(
+            `VSCodeSync: на другой машине файл переименован «${from}» → «${to}». У вас он остаётся «${localPlacement}».`,
+            "Переместить у меня",
+            "Оставить мою структуру",
+          );
+          if (choice !== "Переместить у меня") {
+            return;
+          }
+          try {
+            const oldUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...localPlacement.split("/"));
+            const newUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...to.split("/"));
+            await vscode.workspace.fs.rename(oldUri, newUri, { overwrite: false });
+            // onDidRenameFiles picks the move up; the file is bound, so the
+            // engine's rebind branch re-keys it without further questions.
+          } catch (e) {
+            void vscode.window.showErrorMessage(
+              `VSCodeSync: не удалось переместить файл — ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        })();
+      },
       onRemoteWorkspaceDeleted: (
         workspaceId: string,
         workspaceNote: string,

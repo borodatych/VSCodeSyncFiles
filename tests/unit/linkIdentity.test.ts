@@ -10,7 +10,9 @@ import {
   LINK_ID_HEX_LENGTH,
   defaultLinkName,
   deterministicLinkId,
+  findDuplicateLinkIds,
   newLinkId,
+  repairDuplicateLinkIds,
   withBackfilledLinkIds,
   withPrunedStaleBindings,
 } from "../../src/core/linkIdentity.js";
@@ -110,5 +112,44 @@ describe("withPrunedStaleBindings", () => {
   it("no-op без потерянных ключей — тот же объект", () => {
     const m = manifest([row({ bindings: { M1: { path: "a/b.ts", boundAt: "t1" } } })], ["M1"]);
     expect(withPrunedStaleBindings(m)).toBe(m);
+  });
+});
+
+describe("findDuplicateLinkIds / repairDuplicateLinkIds", () => {
+  const dupA = row({ path: "old/spot.php", addedAt: "t1", version: 3, linkId: "dddddddddddddddd",
+    bindings: { M1: { path: "m1/spot.php", boundAt: "t2" } } });
+  const dupB = row({ path: "new/spot.php", addedAt: "t5", version: 4, linkId: "dddddddddddddddd",
+    bindings: { M2: { path: "m2/spot.php", boundAt: "t3" } } });
+  const solo = row({ path: "solo.php", linkId: "eeeeeeeeeeeeeeee" });
+  const tomb = row({ path: "tomb.php", removedAt: "t9", linkId: "dddddddddddddddd" });
+
+  it("находит только ЖИВЫЕ дубликаты; tombstone-носитель — норма (передача идентичности)", () => {
+    expect(findDuplicateLinkIds([dupA, dupB, solo, tomb])).toEqual([
+      { linkId: "dddddddddddddddd", paths: ["old/spot.php", "new/spot.php"] },
+    ]);
+    expect(findDuplicateLinkIds([solo, tomb])).toEqual([]);
+  });
+
+  it("repair: выживает самый молодой, старый tombstone-ится, bindings сливаются, версии бампаются", () => {
+    const m = manifest([dupA, dupB, solo]);
+    const out = repairDuplicateLinkIds(m, "t9");
+    const oldRow = out.files.find((f) => f.path === "old/spot.php");
+    const newRow = out.files.find((f) => f.path === "new/spot.php");
+    expect(oldRow?.removedAt).toBe("t9");
+    expect(oldRow?.version).toBeGreaterThan(dupA.version);
+    expect(newRow?.removedAt).toBeUndefined();
+    expect(newRow?.version).toBeGreaterThan(dupB.version);
+    expect(newRow?.bindings).toEqual({
+      M1: { path: "m1/spot.php", boundAt: "t2" },
+      M2: { path: "m2/spot.php", boundAt: "t3" },
+    });
+    // Untouched rows and the source manifest stay as they were.
+    expect(out.files.find((f) => f.path === "solo.php")).toBe(solo);
+    expect(m.files.find((f) => f.path === "old/spot.php")?.removedAt).toBeUndefined();
+  });
+
+  it("без дубликатов — тот же объект", () => {
+    const m = manifest([solo]);
+    expect(repairDuplicateLinkIds(m, "t9")).toBe(m);
   });
 });

@@ -19,6 +19,7 @@
   "cmd.addToNewWorkspace.title": "VSCodeSync: Add to new workspace…",
   "cmd.bindLocalFile.title": "VSCodeSync: Bind local file to cloud entry…",
   "cmd.bindLocalFolder.title": "VSCodeSync: Bind local folder to cloud folder…",
+  "cmd.renameLinkName.title": "VSCodeSync: Rename cloud entry label…",
   "cmd.removeFromSync.title": "VSCodeSync: Remove from sync",
   "cmd.moveCurrentFileToWorkspace.title": "VSCodeSync: Move current file to another workspace",
   "cmd.diffWithCloud.title": "VSCodeSync: Diff with cloud",

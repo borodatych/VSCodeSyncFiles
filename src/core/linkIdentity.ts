@@ -123,3 +123,65 @@ export function withPrunedStaleBindings(manifest: CloudManifest): CloudManifest 
   }
   return next;
 }
+
+export interface DuplicateLinkIdGroup {
+  linkId: string;
+  /** Live carrier paths, oldest `addedAt` first. */
+  paths: string[];
+}
+
+/** Live rows sharing one linkId — the artefact of a bind/canonical-rename race. */
+export function findDuplicateLinkIds(files: readonly ManifestFile[]): DuplicateLinkIdGroup[] {
+  const byId = new Map<string, ManifestFile[]>();
+  for (const f of files) {
+    if (f.removedAt !== undefined || f.linkId === undefined) continue;
+    const rows = byId.get(f.linkId);
+    if (rows) rows.push(f);
+    else byId.set(f.linkId, [f]);
+  }
+  const out: DuplicateLinkIdGroup[] = [];
+  for (const [linkId, rows] of byId) {
+    if (rows.length < 2) continue;
+    const sorted = [...rows].sort((a, b) => a.addedAt.localeCompare(b.addedAt) || a.path.localeCompare(b.path));
+    out.push({ linkId, paths: sorted.map((r) => r.path) });
+  }
+  return out.sort((a, b) => a.linkId.localeCompare(b.linkId));
+}
+
+/**
+ * One-click repair for {@link findDuplicateLinkIds}: the NEWEST carrier keeps
+ * the identity (a rename target is younger than the row it replaced), the
+ * older ones are tombstoned with their bindings folded into the survivor
+ * (per-key `boundAt` LWW, survivor precedence). Lamport bumps on every touched
+ * row keep the repair from losing 412-merges. Pure, copy-on-write.
+ */
+export function repairDuplicateLinkIds(manifest: CloudManifest, nowIso: string): CloudManifest {
+  const groups = findDuplicateLinkIds(manifest.files);
+  if (groups.length === 0) {
+    return manifest;
+  }
+  let nextVersion = manifest.files.reduce((m, f) => Math.max(m, f.version), 0) + 1;
+  const files = [...manifest.files];
+  for (const g of groups) {
+    const keepPath = g.paths[g.paths.length - 1];
+    const keepIx = files.findIndex((f) => f.path === keepPath);
+    if (keepIx < 0) continue;
+    let survivor = files[keepIx];
+    for (const path of g.paths.slice(0, -1)) {
+      const ix = files.findIndex((f) => f.path === path);
+      if (ix < 0) continue;
+      const loser = files[ix];
+      const bindings = { ...loser.bindings, ...survivor.bindings };
+      survivor = {
+        ...survivor,
+        ...(Object.keys(bindings).length > 0 ? { bindings } : {}),
+      };
+      files[ix] = { ...loser, removedAt: nowIso, version: Math.max(nextVersion, loser.version + 1) };
+      nextVersion = Math.max(nextVersion, loser.version + 1) + 1;
+    }
+    survivor = { ...survivor, version: Math.max(nextVersion, survivor.version + 1) };
+    nextVersion = Math.max(nextVersion, survivor.version) + 1;
+    files[keepIx] = survivor;
+  }
+  return { ...manifest, files, updatedAt: nowIso };
+}

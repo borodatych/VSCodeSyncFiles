@@ -10,6 +10,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.addToNewWorkspace",
   "vscodesync.bindLocalFile",
   "vscodesync.bindLocalFolder",
+  "vscodesync.renameLinkName",
   "vscodesync.pushAll",
   "vscodesync.bulkPush",
   "vscodesync.pullAll",

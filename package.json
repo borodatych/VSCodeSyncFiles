@@ -878,6 +878,10 @@
         "title": "%cmd.bindLocalFolder.title%"
       },
       {
+        "command": "vscodesync.renameLinkName",
+        "title": "%cmd.renameLinkName.title%"
+      },
+      {
         "command": "vscodesync.pushAll",
         "title": "%cmd.pushAll.title%"
       },

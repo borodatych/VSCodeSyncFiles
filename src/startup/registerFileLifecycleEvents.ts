@@ -39,10 +39,30 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
           `VSCodeSync: «${path.basename(fsPath)}» удалён локально. Что сделать с синхронизацией?`,
           "Убрать из синхронизации",
           "Восстановить файл",
+          "Файл переехал — перепривязать…",
           "Ничего",
         );
         if (!choice || choice === "Ничего") continue;
-        if (choice === "Убрать из синхронизации") {
+        if (choice === "Файл переехал — перепривязать…") {
+          // Link Bindings (stage 3): the delete was really a move done outside
+          // VS Code — point the same cloud row at the file's new home.
+          const files = await vscode.window.showOpenDialog({
+            title: "Куда переехал файл?",
+            defaultUri: folder.uri,
+            canSelectMany: false,
+          });
+          const movedTo = files?.[0]?.fsPath;
+          if (movedTo === undefined) continue;
+          const manifestKey = fileEntry.manifestPath ?? fileEntry.localPath;
+          await runWithEngine(async (engine) => {
+            const res = await engine.bindLocalFile(fileEntry.workspaceId, manifestKey, movedTo, {
+              replaceExisting: true,
+            });
+            void vscode.window.showInformationMessage(
+              `VSCodeSync: перепривязано — ${res.localPosixRel} ⇄ ${manifestKey}.`,
+            );
+          }, root, { trigger: "user" });
+        } else if (choice === "Убрать из синхронизации") {
           // Both branches run only after the user answered the prompt above.
           await runWithEngine(async (engine) => {
             await engine.removeTrackedFiles(fileEntry.workspaceId, [fsPath]);
@@ -85,6 +105,44 @@ export function registerFileLifecycleEvents(deps: FileLifecycleEventsDeps): void
           // reporting it, not the extension deciding to move anything.
           await runWithEngine(async (engine) => {
             await engine.untrackFileLocal(fileEntry.workspaceId, [oldUri.fsPath]);
+          }, root, { trigger: "user" });
+          continue;
+        }
+        // Link Bindings (stage 3): a BOUND file's local move is a rebind by
+        // definition — the engine handles it without asking. An unbound file
+        // gets the choice: rename for everyone, keep it local (creates a
+        // binding), or stop syncing here.
+        const bound = fileEntry.manifestPath !== undefined && fileEntry.manifestPath !== fileEntry.localPath;
+        if (bound) {
+          await runWithEngine(async (engine) => {
+            await engine.renameTrackedFile(fileEntry.workspaceId, oldUri.fsPath, newUri.fsPath);
+          }, root, { trigger: "user" });
+          continue;
+        }
+        const newRel = path.relative(root, newUri.fsPath).split(path.sep).join("/");
+        const caseOnly = oldRel.toLowerCase() === newRel.toLowerCase();
+        const renameChoice = await vscode.window.showInformationMessage(
+          `VSCodeSync: «${oldRel}» → «${newRel}». Как применить переименование?` +
+            (caseOnly
+              ? "\n\nМеняется только регистр: часть облаков различает такие имена ненадёжно — рекомендуем «Только на этой машине»."
+              : ""),
+          { modal: true },
+          "Переименовать в облаке (для всех)",
+          "Только на этой машине",
+        );
+        if (renameChoice === undefined) {
+          // Esc decides nothing: the row goes missing_local and the panel
+          // offers rebind — no silent cloud write on a non-answer.
+          continue;
+        }
+        if (renameChoice === "Только на этой машине") {
+          await runWithEngine(async (engine) => {
+            const res = await engine.bindLocalFile(fileEntry.workspaceId, oldRel, newUri.fsPath, {
+              replaceExisting: true,
+            });
+            void vscode.window.showInformationMessage(
+              `VSCodeSync: локально «${res.localPosixRel}», в облаке остаётся «${oldRel}».`,
+            );
           }, root, { trigger: "user" });
           continue;
         }

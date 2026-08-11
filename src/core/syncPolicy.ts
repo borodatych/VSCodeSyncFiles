@@ -90,6 +90,7 @@ export const MUTATION_OPS = [
   "renameTrackedFile",
   "bindLocalFile",
   "bindLocalFolder",
+  "renameLinkName",
   // --- Conflict resolution ---------------------------------------------
   "resolveConflictKeepMine",
   "resolveConflictTakeTheirs",
