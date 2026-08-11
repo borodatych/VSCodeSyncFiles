@@ -1786,7 +1786,7 @@ export class SyncEngine {
     await this.saveCfg(cfg);
   }
 
-  async addFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
+  async addFiles(workspaceId: string, absolutePaths: string[], opts?: { linkName?: string }): Promise<void> {
     this.assertMayMutate("addFiles");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
@@ -1833,7 +1833,7 @@ export class SyncEngine {
           version: this.nextManifestVersion(localCopy.files),
           hasSyncignoreMarkers: markers,
           linkId: rowLinkId,
-          linkName: defaultLinkName(key),
+          linkName: (absolutePaths.length === 1 ? opts?.linkName : undefined) ?? defaultLinkName(key),
         });
       }
       // Same pipeline as `pushFile`. This used to call `pushBlobRaw`, which
@@ -1945,7 +1945,8 @@ export class SyncEngine {
       trackedFiles: cfg.files,
       manifestFiles: remoteManifest.files,
       metaEntry: meta.files[manifestKey],
-      localHash: await this.hashTrackedFile(localAbsPath, manifestKey),
+      // "" (absent bytes) → planner records missing_local; pull fills it in.
+      localHash: await this.hashTrackedFile(localAbsPath, manifestKey).catch(() => ""),
       nextVersion: this.nextManifestVersion(remoteManifest.files),
       nowIso: now,
       replaceExisting: opts?.replaceExisting === true,
@@ -3630,8 +3631,7 @@ export class SyncEngine {
     if (!file) {
       throw new Error("not tracked");
     }
-    // Link Bindings: manifest/_meta/blob/history are keyed canonically; disk
-    // access stays on the local path.
+    // Link Bindings: cloud state is keyed canonically; disk stays local.
     const key = manifestKeyOf(file);
     if (file.syncStatus === "conflict") {
       // Symmetric with `pullFile`: a conflicted file is never moved silently.

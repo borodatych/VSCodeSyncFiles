@@ -162,6 +162,7 @@ describe("нет обходных путей мимо политики", () => {
  */
 const COMMAND_MODULES = [
   "src/commands/_engineFlows.ts",
+  "src/commands/_placementFlow.ts",
   "src/commands/registerConflicts.ts",
   "src/commands/registerFileOperations.ts",
   "src/commands/registerFileTreeContext.ts",

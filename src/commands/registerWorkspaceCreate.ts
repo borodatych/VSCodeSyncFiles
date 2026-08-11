@@ -197,6 +197,12 @@ export function registerWorkspaceCreateCommands(
           try {
             await engine.attachCloudWorkspace(pick.workspaceId);
             connected++;
+            // Link Bindings: no silent placement decision — say where files
+            // land and that any of them can be re-bound afterwards.
+            void vscode.window.showInformationMessage(
+              `«${pick.label}»: файлы будут разложены по структуре отправителя (или по вашим папочным привязкам). ` +
+                "Отдельный файл можно перепривязать: ПКМ в дереве → Pull → «Выбрать папку и имя…».",
+            );
             void (async () => {
               const { maybePromptPathMapperAfterAttach } = await import("../ui/aiPathMapperCommand.js");
               await maybePromptPathMapperAfterAttach(context, pick.workspaceId);

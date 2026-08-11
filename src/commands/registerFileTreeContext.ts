@@ -18,6 +18,7 @@ import type { ActivityEventInput } from "../core/activityLog.js";
 import { trackedLocalAbsolutePath } from "../core/pathMapping.js";
 import { guardPathsBeforePush } from "../ui/syncGuards.js";
 import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
+import { chooseMissingFilePlacement } from "./_placementFlow.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { SyncFileDecorationController } from "../ui/fileDecorations.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
@@ -88,6 +89,25 @@ export function registerFileTreeContextCommands(
           return;
         }
         const rootPath = el.folderRoot.fsPath;
+
+        // Link Bindings (stage 2) — placement choice for a file that has no
+        // bytes on this machine yet: sender's structure, a custom spot (bind +
+        // pull), or bind to an existing local file (no download at all).
+        let pullRel = el.localPath;
+        if (el.syncStatus === "missing_local") {
+          const outcome = await chooseMissingFilePlacement(
+            runWithEngine,
+            el.folderRoot,
+            el.workspaceId,
+            el.localPath,
+            el.manifestPath ?? el.localPath,
+          );
+          if (outcome.kind !== "pull") {
+            return;
+          }
+          pullRel = outcome.pullRel;
+        }
+
         await runWithEngine(async (engine, root) => {
           const cfg = await WorkspaceConfigManager.load(root);
           const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId);
@@ -95,11 +115,11 @@ export function registerFileTreeContextCommands(
             await vscode.window.showErrorMessage("Workspace не найден в конфиге.");
             return;
           }
-          const result = await engine.pullFile(cfg, el.workspaceId, el.localPath, entry);
+          const result = await engine.pullFile(cfg, el.workspaceId, pullRel, entry);
           if (result === "already_current") {
-            void vscode.window.showInformationMessage(`${el.localPath}: уже актуален.`);
+            void vscode.window.showInformationMessage(`${pullRel}: уже актуален.`);
           } else {
-            void vscode.window.showInformationMessage(`Pull ${el.localPath}: готово.`);
+            void vscode.window.showInformationMessage(`Pull ${pullRel}: готово.`);
           }
         }, rootPath);
       },

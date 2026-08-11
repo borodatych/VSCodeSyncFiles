@@ -649,9 +649,14 @@
       planWorkspaceMergeCfg, manifestCacheFields, touchManifestMachine,
       verifyProviderContentDigest (DRY push/pull). Проверки: compile/typecheck/
       lint чисто, 282 файла / 2398 тестов.
-- [ ] **Этап 2 — размещение при pull и дедуп при добавлении** — pull-QuickPick
-      «как у отправителя / своё место / привязать», батч-вопрос, `planAddDuplicates`,
-      linkName InputBox, hash-подсказки в bind-пикере, row-actions панели, бейдж «⇄».
+- [x] **Этап 2 — размещение при pull и дедуп при добавлении** — ✅ (2026-08-11,
+      ветка `next`) Pull-QuickPick «Сюда / Выбрать папку и имя… / Привязать к
+      существующему…» в дереве и панели (общий `commands/_placementFlow.ts`),
+      батч-вопрос в Pull All, заметка о раскладке после attach,
+      `planAddDuplicates` + модалка/canPickMany в добавлении, linkName InputBox,
+      hash-подсказки в bind-пикере, row-action «Привязать…» в панели, бейдж
+      «⇄ канон» в дереве. Индекс подсказок — напрямую через провайдер
+      (`_cloudIndex.ts`), движок не растёт. 283 файла / 2404 теста.
 - [ ] **Этап 3 — rename/rebind-потоки** — модалка rename, case-only, «файл
       переехал», реплей чужого rename, самолечение + rate-limit, диагностика
       дубликата `linkId` + repair, metadata-only guard, `renameLinkName`.

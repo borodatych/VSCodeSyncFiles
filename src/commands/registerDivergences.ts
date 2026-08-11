@@ -20,6 +20,7 @@ import {
 import { openDivergencePanel, updateDivergencePanel } from "../ui/divergencePanel.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
+import { chooseMissingFilePlacement } from "./_placementFlow.js";
 
 export interface DivergencesCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -192,6 +193,35 @@ export function registerDivergencesCommands(deps: DivergencesCommandsDeps): vsco
         bulk: (direction, rows) => runBulk(deps, direction, rows),
         compare: (row) => openCompare(row),
         resolve: (row) => resolveConflict(deps, row),
+        // Link Bindings (stage 2): «Привязать…» on rows absent from disk —
+        // same placement chooser as the tree pull; a "pull" outcome downloads
+        // into the chosen spot right away.
+        bind: async (row) => {
+          const outcome = await chooseMissingFilePlacement(
+            deps.runWithEngine,
+            vscode.Uri.file(row.root),
+            row.workspaceId,
+            row.posixRel,
+            row.manifestPath ?? row.posixRel,
+          );
+          if (outcome.kind !== "pull") {
+            return;
+          }
+          await deps.runWithEngine(
+            async (engine, root) => {
+              const cfg = await WorkspaceConfigManager.load(root);
+              const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === row.workspaceId);
+              if (!entry) {
+                return;
+              }
+              await engine.pullFile(cfg, row.workspaceId, outcome.pullRel, entry);
+              void vscode.window.showInformationMessage(`Pull ${outcome.pullRel}: готово.`);
+            },
+            row.root,
+            // A panel button is a human acting — same contract as commands.
+            { trigger: "user" },
+          );
+        },
       });
     }),
   ];

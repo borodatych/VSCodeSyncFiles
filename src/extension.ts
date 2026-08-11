@@ -474,7 +474,7 @@ export function activate(context: vscode.ExtensionContext): void {
       registry,
       runWithEngine,
     }),
-    ...registerLinkBindingsCommands({ runWithEngine }),
+    ...registerLinkBindingsCommands({ runWithEngine, registry }),
   );
 
   registerObservers({ context, globalConfig, registry });

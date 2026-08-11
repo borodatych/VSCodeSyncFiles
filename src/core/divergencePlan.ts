@@ -26,6 +26,10 @@ export interface DivergenceRow {
   root: string;
   workspaceId: string;
   posixRel: string;
+  /** Link Bindings: canonical manifest key when bound elsewhere. */
+  manifestPath?: string;
+  /** Link Bindings: tracked but absent on disk — panel offers «Привязать…». */
+  missingLocal?: boolean;
   direction: DivergenceDirection;
   /** Short human-readable cause, shown in the row. */
   reason: string;
@@ -114,6 +118,8 @@ export function buildDivergencePlan(inputs: readonly DivergenceRootInput[]): Div
           posixRel: file.localPath,
           direction,
           reason: reasonOf(direction, file),
+          ...(file.manifestPath === undefined ? {} : { manifestPath: file.manifestPath }),
+          ...(file.syncStatus === "missing_local" ? { missingLocal: true } : {}),
           ...(file.editingByName === undefined ? {} : { editingByName: file.editingByName }),
         });
       }
@@ -231,7 +237,8 @@ export type DivergencePanelRequest =
   | { kind: "refresh" }
   | { kind: "bulk"; direction: "push" | "pull"; keys: string[] }
   | { kind: "compare"; key: string }
-  | { kind: "resolve"; key: string };
+  | { kind: "resolve"; key: string }
+  | { kind: "bind"; key: string };
 
 /**
  * Validate an incoming webview message into a typed request.
@@ -251,7 +258,7 @@ export function parseDivergenceRequest(raw: unknown): DivergencePanelRequest | n
     if (keys.length !== m.keys.length) return null;
     return { kind: "bulk", direction: m.direction, keys };
   }
-  if (m.kind === "compare" || m.kind === "resolve") {
+  if (m.kind === "compare" || m.kind === "resolve" || m.kind === "bind") {
     if (typeof m.key !== "string" || m.key.length === 0) return null;
     return { kind: m.kind, key: m.key };
   }

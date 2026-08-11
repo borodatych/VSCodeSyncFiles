@@ -42,6 +42,8 @@ export type SyncTreeElement =
       workspaceId: string;
       workspaceNote: string;
       localPath: string;
+      /** Link Bindings: canonical manifest key when it differs from localPath. */
+      manifestPath?: string;
       /** Resolved path with pathMapping (when known). */
       resolvedFsPath?: string;
       syncStatus?: string;
@@ -491,7 +493,15 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
     } else {
       item.contextValue = "vscodeSync.file";
     }
-    item.tooltip = `${element.workspaceNote}\n${element.localPath}`;
+    const bound = element.manifestPath !== undefined && element.manifestPath !== element.localPath;
+    if (bound) {
+      // Link Bindings badge: without it "rename in cloud" asking about every
+      // machine reads as a bug — the canonical name must be visible.
+      item.description = [item.description, `⇄ ${element.manifestPath ?? ""}`].filter(Boolean).join(" · ");
+    }
+    item.tooltip = bound
+      ? `${element.workspaceNote}\n${element.localPath}\n⇄ в облаке: ${element.manifestPath ?? ""}`
+      : `${element.workspaceNote}\n${element.localPath}`;
     item.command = {
       command: "vscode.open",
       title: "Open",
@@ -656,6 +666,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         workspaceId: ws.workspaceId,
         workspaceNote: note,
         localPath: f.localPath,
+        manifestPath: f.manifestPath,
         resolvedFsPath,
         syncStatus: f.syncStatus,
         editingBy: f.editingBy,

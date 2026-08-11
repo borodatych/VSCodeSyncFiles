@@ -14,6 +14,7 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { pickRoot, pickWorkspaceId } from "./_shared.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { summarisePushForToast } from "../core/bulkPushWizard.js";
+import { chooseMissingFilePlacement } from "./_placementFlow.js";
 
 export interface SyncOpsCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -281,6 +282,39 @@ export function registerSyncOpsCommands(deps: SyncOpsCommandsDeps): vscode.Dispo
     }),
 
     vscode.commands.registerCommand("vscodesync.pullAll", async () => {
+      // Link Bindings (stage 2) — one batch-level placement question instead
+      // of a silent mass materialization at recorded paths.
+      const rootPath = pickRoot();
+      if (rootPath !== undefined) {
+        const wc = await WorkspaceConfigManager.load(rootPath);
+        const missing = wc.files.filter((f) => f.syncStatus === "missing_local");
+        if (missing.length > 0) {
+          const choice = await vscode.window.showInformationMessage(
+            `${String(missing.length)} файл(ов) ещё нет на этой машине. Разложить их по записанным путям (структура отправителя или ваши привязки)?`,
+            { modal: true },
+            "Принять",
+            "Разобрать по одному",
+          );
+          if (choice === undefined) {
+            return;
+          }
+          if (choice === "Разобрать по одному") {
+            const rootUri = vscode.Uri.file(rootPath);
+            for (const f of missing) {
+              const outcome = await chooseMissingFilePlacement(
+                runWithEngine,
+                rootUri,
+                f.workspaceId,
+                f.localPath,
+                f.manifestPath ?? f.localPath,
+              );
+              if (outcome.kind === "cancelled") {
+                return;
+              }
+            }
+          }
+        }
+      }
       await runWithEngine(
         async (engine) => {
           await engine.pullAll();

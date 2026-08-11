@@ -11,15 +11,20 @@
  */
 import * as vscode from "vscode";
 import { BindRejectedError } from "../core/plan/planBindLocalFile.js";
+import type { ProviderRegistry } from "../providers/registry.js";
+import { computeHash } from "../utils/hash.js";
+import { readCloudFileIndex } from "./_cloudIndex.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { resolveFileTarget } from "./_fileTargetHelpers.js";
 import { pickWorkspaceId } from "./_shared.js";
 
 async function pickManifestRow(
   runWithEngine: RunWithEngineFn,
+  registry: ProviderRegistry,
   root: string,
   workspaceId: string,
   localName: string,
+  localAbsPath: string,
 ): Promise<string | undefined> {
   let paths: string[] = [];
   await runWithEngine(async (engine) => {
@@ -29,17 +34,22 @@ async function pickManifestRow(
     void vscode.window.showWarningMessage("VSCodeSync: в этом воркспейсе нет облачных файлов.");
     return undefined;
   }
-  // Same-basename candidates first — the likeliest bind targets.
+  // Content-hash matches rise to the top (stage 2), then same-basename
+  // candidates; both are best-effort hints — an empty index degrades cleanly.
+  const localHash = await computeHash(localAbsPath, { lineEnding: "lf" }).catch(() => "");
+  const index = await readCloudFileIndex(registry, workspaceId);
+  const hashOf = new Map(index.map((r) => [r.path, r.hash]));
   const base = localName.toLowerCase();
+  const rank = (p: string): number => {
+    if (localHash !== "" && hashOf.get(p) === localHash) return 0;
+    return p.toLowerCase().endsWith(`/${base}`) || p.toLowerCase() === base ? 1 : 2;
+  };
   const items = [...paths]
-    .sort((a, b) => {
-      const am = a.toLowerCase().endsWith(`/${base}`) || a.toLowerCase() === base ? 0 : 1;
-      const bm = b.toLowerCase().endsWith(`/${base}`) || b.toLowerCase() === base ? 0 : 1;
-      return am - bm || a.localeCompare(b);
-    })
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
     .map((p) => ({
       label: p.includes("/") ? p.slice(p.lastIndexOf("/") + 1) : p,
       description: p,
+      detail: rank(p) === 0 ? "совпадает содержимое" : undefined,
       value: p,
     }));
   const picked = await vscode.window.showQuickPick(items, {
@@ -79,10 +89,11 @@ export function manifestDirPrefixes(paths: readonly string[]): string[] {
 
 export interface LinkBindingsCommandsDeps {
   runWithEngine: RunWithEngineFn;
+  registry: ProviderRegistry;
 }
 
 export function registerLinkBindingsCommands(deps: LinkBindingsCommandsDeps): vscode.Disposable[] {
-  const { runWithEngine } = deps;
+  const { runWithEngine, registry } = deps;
 
   return [
     vscode.commands.registerCommand("vscodesync.bindLocalFile", async (uri?: vscode.Uri) => {
@@ -95,7 +106,7 @@ export function registerLinkBindingsCommands(deps: LinkBindingsCommandsDeps): vs
         return;
       }
       const localName = target.fsPath.split(/[\\/]/).pop() ?? target.fsPath;
-      const manifestKey = await pickManifestRow(runWithEngine, target.root, ws, localName);
+      const manifestKey = await pickManifestRow(runWithEngine, registry, target.root, ws, localName, target.fsPath);
       if (manifestKey === undefined) {
         return;
       }

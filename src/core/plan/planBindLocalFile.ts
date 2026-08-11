@@ -100,7 +100,9 @@ export function planBindLocalFile(input: BindPlanInput): BindPlan {
     cloudPath: blobCloudPath(input.workspaceId, input.manifestKey, input.metaEntry?.wireGzip === true),
     lastSync: input.nowIso,
     localHash: contentMatches ? input.localHash : "",
-    syncStatus: contentMatches ? "ok" : "cloud_newer",
+    // "" local hash means no readable bytes at the placement yet — the honest
+    // missing_local, not cloud_newer (pull-placement binds before pulling).
+    syncStatus: contentMatches ? "ok" : input.localHash === "" ? "missing_local" : "cloud_newer",
     ...(input.localPosixRel !== input.manifestKey ? { manifestPath: input.manifestKey } : {}),
     ...(updatedRow.linkId !== undefined ? { linkId: updatedRow.linkId } : {}),
   };
