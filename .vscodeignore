@@ -10,6 +10,7 @@ references/**
 .cursor/**
 *.plan.md
 CLAUDE.md
+AGENTS.md
 
 # Dev configs
 .husky/**
