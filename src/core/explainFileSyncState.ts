@@ -42,7 +42,7 @@ export interface ExplainFileSyncStateInput {
   /** File tracked in `vscodesync.json`. */
   tracked: boolean;
   /** Current `syncStatus` field. */
-  syncStatus?: "ok" | "conflict" | "pending_push" | "cloud_newer";
+  syncStatus?: "ok" | "conflict" | "pending_push" | "cloud_newer" | "missing_local";
   /** Soft-lock from another machine. */
   editingByOther?: { machineName: string };
   /** ISO of last successful sync — undefined if never. */
@@ -152,6 +152,13 @@ export function explainFileSyncState(input: ExplainFileSyncStateInput): ExplainF
       break;
     case "cloud_newer":
       items.push(itemInfo("status", "Облачная версия новее локальной", "Скачайте через панель «Расхождения» или Pull"));
+      break;
+    case "missing_local":
+      items.push(itemInfo(
+        "status",
+        "Файл отслеживается, но отсутствует на диске",
+        "Скачайте через панель «Расхождения» или привяжите к существующему файлу (VSCodeSync: Привязать локальный файл)",
+      ));
       break;
     case "ok":
       items.push(itemOk("status", "Файл синхронизирован"));

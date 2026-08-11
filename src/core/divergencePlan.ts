@@ -62,7 +62,9 @@ function directionOf(file: TrackedFile): DivergenceDirection | null {
   switch (file.syncStatus) {
     case "conflict":
       return "conflict";
+    // Link Bindings: absent on disk (`missing_local`) — restoring it IS a pull.
     case "cloud_newer":
+    case "missing_local":
       return "pull";
     case "pending_push":
       return "push";
@@ -77,7 +79,9 @@ function reasonOf(direction: DivergenceDirection, file: TrackedFile): string {
     case "conflict":
       return "изменён и здесь, и в облаке";
     case "pull":
-      return file.localHash === ""
+      // The explicit status replaces the old `localHash === ""` sentinel, which
+      // stays as a fallback for rows written before the status existed.
+      return file.syncStatus === "missing_local" || file.localHash === ""
         ? "есть в облаке, нет локально"
         : "в облаке новее";
     case "push":

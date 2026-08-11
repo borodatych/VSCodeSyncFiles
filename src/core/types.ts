@@ -69,7 +69,12 @@ export interface ActiveWorkspaceEntry {
   metaEtag?: string;
 }
 
-export type TrackedSyncStatus = "ok" | "conflict" | "pending_push" | "cloud_newer";
+/**
+ * `missing_local`: the file is tracked but absent on disk (bound file not yet
+ * pulled, or moved away without rebinding). Before Link Bindings this state hid
+ * as `localHash: ""` + `cloud_newer` and decorations showed it as synced.
+ */
+export type TrackedSyncStatus = "ok" | "conflict" | "pending_push" | "cloud_newer" | "missing_local";
 
 export interface TrackedFile {
   localPath: string;
@@ -93,6 +98,16 @@ export interface TrackedFile {
    * read there.
    */
   conflictCloudHash?: string;
+  /**
+   * Link Bindings (docs/v2/linkBindings.md): canonical manifest key — the
+   * `ManifestFile.path` / `_meta.files` key this row syncs against. Absent ⇒
+   * semantically equal to `localPath` (bound at the canonical path), which
+   * keeps every pre-bindings config valid without migration. Written only when
+   * a binding is created. Always read via `manifestKeyOf`.
+   */
+  manifestPath?: string;
+  /** Cache of the manifest row's `linkId` (re-association after canonical renames). */
+  linkId?: string;
 }
 
 export interface WorkspaceConfig {

@@ -32,6 +32,7 @@ function buildTooltip(tf: TrackedLike): string {
   const parts: string[] = [];
   if (tf.syncStatus === "conflict") parts.push("⚠ Конфликт — разрешите вручную");
   else if (tf.syncStatus === "cloud_newer") parts.push("↓ Облако новее — Pull");
+  else if (tf.syncStatus === "missing_local") parts.push("✕ Нет на диске — Pull или привяжите файл");
   else if (tf.syncStatus === "pending_push") parts.push("↑ Ожидает отправки");
   else parts.push("✓ Синхронизирован");
   parts.push(`Last sync: ${formatRelative(tf.lastSync)}`);
@@ -101,6 +102,13 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
           new vscode.ThemeColor("gitDecoration.untrackedResource"),
         );
       }
+      if (tf.syncStatus === "missing_local") {
+        return new vscode.FileDecoration(
+          "✕",
+          tooltip,
+          new vscode.ThemeColor("gitDecoration.deletedResource"),
+        );
+      }
       const curHash = await computeHash(uri.fsPath, decoHashConfig()).catch(() => "");
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- token.isCancellationRequested mutates during the await
       if (token.isCancellationRequested) return undefined;
@@ -109,6 +117,15 @@ export class SyncFileDecorationController implements vscode.FileDecorationProvid
           "↑",
           tooltip,
           new vscode.ThemeColor("gitDecoration.modifiedResource"),
+        );
+      }
+      // An unreadable/absent file must not read as synced (the pre-Link
+      // Bindings bug: hash "" skipped the modified branch → "✓").
+      if (curHash === "") {
+        return new vscode.FileDecoration(
+          "✕",
+          "✕ Нет на диске — Pull или привяжите файл · " + tooltip,
+          new vscode.ThemeColor("gitDecoration.deletedResource"),
         );
       }
       return new vscode.FileDecoration("✓", tooltip, undefined);

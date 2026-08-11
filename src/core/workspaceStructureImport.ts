@@ -10,7 +10,7 @@ const EXPORT_SCHEMA = 1 as const;
 /** Портативный экспорт: только id, заметка и относительные пути (см. docs/v1/07-ux-polish/roadmap §7.6). */
 export const WORKSPACE_STRUCTURE_LITE_SCHEMA = 2 as const;
 
-const SYNC_STATUSES: TrackedSyncStatus[] = ["ok", "conflict", "pending_push", "cloud_newer"];
+const SYNC_STATUSES: TrackedSyncStatus[] = ["ok", "conflict", "pending_push", "cloud_newer", "missing_local"];
 
 export interface WorkspaceStructureLite {
   schema: typeof WORKSPACE_STRUCTURE_LITE_SCHEMA;

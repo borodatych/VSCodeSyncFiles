@@ -88,6 +88,8 @@ export const MUTATION_OPS = [
   "untrackFileLocal",
   "untrackFileTombstoneOnly",
   "renameTrackedFile",
+  "bindLocalFile",
+  "bindLocalFolder",
   // --- Conflict resolution ---------------------------------------------
   "resolveConflictKeepMine",
   "resolveConflictTakeTheirs",

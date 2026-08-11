@@ -338,7 +338,7 @@ export class SyncStatusBarController implements vscode.Disposable {
       wsCount += wc.activeWorkspaces.length;
       fileCount += wc.files.length;
       conflicts += wc.files.filter((f) => f.syncStatus === "conflict").length;
-      cloudNewer += wc.files.filter((f) => f.syncStatus === "cloud_newer").length;
+      cloudNewer += wc.files.filter((f) => f.syncStatus === "cloud_newer" || f.syncStatus === "missing_local").length;
       for (const f of wc.files) {
         if (f.lastSync && (!last || f.lastSync > last)) {
           last = f.lastSync;

@@ -203,3 +203,32 @@ export async function syncMachinesRegistrySelf(
     }
   }
 }
+
+/**
+ * Refresh this machine's row in a manifest's `machines[]` (extracted verbatim
+ * from `syncEngine.touchMachine` — engine line-ceiling offset for Link
+ * Bindings). A newly joining machine starts `pending` when approval is
+ * required and others already exist; an existing row only bumps `lastSeen`.
+ */
+export function touchManifestMachine(
+  machines: MachineEntry[],
+  now: string,
+  self: { machineId: string; machineName: string; requireApproval: boolean },
+): MachineEntry[] {
+  const byId = new Map(machines.map((m) => [m.machineId, { ...m }]));
+  const cur = byId.get(self.machineId);
+  if (cur) {
+    cur.lastSeen = now;
+  } else {
+    const othersBeforeSelf = byId.size;
+    const initialStatus: "pending" | "active" =
+      self.requireApproval && othersBeforeSelf > 0 ? "pending" : "active";
+    byId.set(self.machineId, {
+      machineId: self.machineId,
+      machineName: self.machineName,
+      lastSeen: now,
+      status: initialStatus,
+    });
+  }
+  return [...byId.values()];
+}

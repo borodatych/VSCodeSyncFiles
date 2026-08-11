@@ -108,3 +108,39 @@ describe("validateManifestShape", () => {
     }
   });
 });
+
+describe("validateManifestShape — link bindings (docs/v2/linkBindings.md)", () => {
+  const withFile = (file: object) =>
+    validateManifestShape({ ...goodManifest, files: [{ ...goodManifest.files[0], ...file }] });
+
+  it("accepts linkId/linkName/bindings in valid shape", () => {
+    expect(
+      withFile({
+        linkId: "aabbccddeeff0011",
+        linkName: "метка",
+        bindings: { M1: { path: "custom/place.ts", boundAt: "2026-08-11T10:00:00.000Z" } },
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects empty linkId and non-string linkName", () => {
+    expect(withFile({ linkId: "" }).ok).toBe(false);
+    expect(withFile({ linkName: 42 }).ok).toBe(false);
+  });
+
+  it("rejects bindings that are not an object of entries", () => {
+    expect(withFile({ bindings: "M1" }).ok).toBe(false);
+    expect(withFile({ bindings: ["M1"] }).ok).toBe(false);
+    expect(withFile({ bindings: { M1: "custom/place.ts" } }).ok).toBe(false);
+  });
+
+  it("rejects unsafe binding paths: absolute, backslash, dot-dot, missing boundAt", () => {
+    const bad = (path: string) => withFile({ bindings: { M1: { path, boundAt: "t" } } }).ok;
+    expect(bad("/etc/passwd")).toBe(false);
+    expect(bad("a\\b.ts")).toBe(false);
+    expect(bad("../escape.ts")).toBe(false);
+    expect(bad("ok/../../escape.ts")).toBe(false);
+    expect(bad("")).toBe(false);
+    expect(withFile({ bindings: { M1: { path: "ok.ts" } } }).ok).toBe(false);
+  });
+});

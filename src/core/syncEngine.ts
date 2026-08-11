@@ -5,7 +5,6 @@ import type {
   WorkspaceConfig,
   TrackedFile,
   ActiveWorkspaceEntry,
-  ManifestMachineCacheEntry,
   WorkspaceSyncState,
 } from "./types.js";
 import { normalizeWorkspaceSyncState } from "./types.js";
@@ -13,16 +12,18 @@ import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
 import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./io/workspaceConfigStore.js";
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
-  CLOUD_ROOT_DIR,
   EMPTY_META_JSON,
   historyDirForFile,
   manifestCloudPath,
   metaCloudPath,
   SUPPORTED_MANIFEST_SCHEMA,
   sharedIgnorePatternsOrEmpty,
-  trackedFileCloudPath,
   workspaceRootPath,
 } from "./cloudLayout.js";
+import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
+import { defaultLinkName, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
+import { touchManifestMachine } from "./machineRegistry.js";
+import { manifestKeyOf } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
@@ -31,14 +32,20 @@ import { mergeMetaEntries } from "./metaMerge.js";
 import { createMetaStore, type MetaStore, type MetaWriteReason } from "./io/metaStore.js";
 import { createHistoryStore, type HistoryStore, type LazyHistoryEntry } from "./io/historyStore.js";
 import { createBlobTransfer, type BlobTransfer } from "./io/blobTransfer.js";
+import { listRemoteWorkspaceSummaries } from "./cloudWorkspaceLister.js";
+import { deleteCloudFolderRecursive } from "./io/deleteCloudFolder.js";
 import { createManifestStore, type ManifestStore } from "./io/manifestStore.js";
 import type { ChangeAction } from "./changeDetection.js";
+import { BindRejectedError, planBindLocalFile } from "./plan/planBindLocalFile.js";
+import { planCloudScanRepair } from "./plan/planCloudScanRepair.js";
+import { applyWorkspaceMergeToCfg } from "./plan/planWorkspaceMergeCfg.js";
+import { entryPatchFromManifest, manifestMachineCache } from "./manifestCacheFields.js";
+import { runBlake3BackfillTasks } from "./plan/planBlake3Backfill.js";
 import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
 import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import {
-  computeHash,
   hashCanonicalBuffer,
   hashCanonicalBufferDual,
   type HashConfig,
@@ -248,7 +255,7 @@ export class SyncEngine {
       onEtag: (workspaceId, etag, manifest) =>
         this.patchEntry(workspaceId, {
           manifestEtag: etag,
-          ...this.entryPatchFromManifest(manifest),
+          ...entryPatchFromManifest(manifest),
         }),
       currentEtag: async (workspaceId) =>
         (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId)
@@ -624,6 +631,16 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * Canonical hash of a tracked file's on-disk bytes, keyed by its MANIFEST
+   * key: binary-vs-text detection runs on the path, so a bound file renamed
+   * locally must still hash by the name every other machine agrees on.
+   */
+  private async hashTrackedFile(abs: string, manifestKey: string): Promise<string> {
+    const buf = await fs.readFile(abs);
+    return hashCanonicalBuffer(buf, manifestKey, this.hashCfg(manifestKey));
+  }
+
   private hashCfg(trackedPosix?: string): HashConfig {
     const lineEnding = this.deps.lineEnding ?? "lf";
     const encodingLint = this.deps.encodingLint !== false;
@@ -654,8 +671,8 @@ export class SyncEngine {
     }
     const abs = this.localAbs(cfg, file.localPath);
     const localBuf = await fs.readFile(abs);
-    const baseCfg = this.hashCfg(file.localPath);
-    if (!preserveConflictSharesLfCanonical(localBuf, cloudBuf, file.localPath, baseCfg)) {
+    const baseCfg = this.hashCfg(manifestKeyOf(file));
+    if (!preserveConflictSharesLfCanonical(localBuf, cloudBuf, manifestKeyOf(file), baseCfg)) {
       return;
     }
     this.deps.onPreserveLineEndingConflictHint?.(file.localPath);
@@ -681,7 +698,7 @@ export class SyncEngine {
     }
     const abs = this.localAbs(cfg, file.localPath);
     const localBuf = await fs.readFile(abs);
-    if (!preserveConflictSharesLfCanonical(localBuf, cloudBuf, file.localPath, this.hashCfg(file.localPath))) {
+    if (!preserveConflictSharesLfCanonical(localBuf, cloudBuf, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)))) {
       return false;
     }
     if (isSecondaryWorkspaceInstanceReadOnly()) {
@@ -695,32 +712,6 @@ export class SyncEngine {
   }
 
   /** Имена папок первого уровня под `VSCodeSyncFiles/` (mock провайдер отдаёт вложенные пути — тоже работает). */
-  private static directChildFolderIds(cloudRoot: string, items: FileMetadata[]): string[] {
-    const base = cloudRoot.endsWith("/") ? cloudRoot : `${cloudRoot}/`;
-    const ids = new Set<string>();
-    for (const it of items) {
-      let rest: string | undefined;
-      if (it.cloudPath.startsWith(base)) {
-        rest = it.cloudPath.slice(base.length);
-      } else {
-        // app folder: Yandex returns full disk path, e.g. "Приложения/App/VSCodeSyncFiles/id"
-        const markerIdx = it.cloudPath.indexOf(base);
-        if (markerIdx >= 0) {
-          rest = it.cloudPath.slice(markerIdx + base.length);
-        }
-      }
-      if (rest === undefined) {
-        continue;
-      }
-      const seg = rest.split("/")[0];
-      if (!seg || seg.includes(".")) {
-        continue;
-      }
-      ids.add(seg);
-    }
-    return [...ids];
-  }
-
   /**
    * Сканирует корень облака и возвращает манифесты workspace'ов с поддерживаемой схемой.
    */
@@ -747,51 +738,16 @@ export class SyncEngine {
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const root = workspaceRootPath(workspaceId);
     const listed = await this.deps.provider.listFolder(root);
-
-    // Filter to actual blob files (exclude manifest, meta, history, snapshots, gz variants tracked separately)
-    const SKIP_PREFIXES = [
-      `${root}/.history/`,
-      `${root}/.snapshots/`,
-    ];
-    const SKIP_NAMES = [
-      ".vscodesync-workspace.json",
-      "_meta.json",
-    ];
-
-    const blobs = listed.filter((item) => {
-      const name = item.cloudPath.slice(root.length + 1); // relative to workspace root
-      if (SKIP_NAMES.includes(name)) return false;
-      if (SKIP_PREFIXES.some((pfx) => item.cloudPath.startsWith(pfx))) return false;
-      return true;
-    });
-
-    // Strip .gz suffix for wire-compressed blobs
-    const paths = blobs.map((b) => {
-      let p = b.cloudPath.slice(root.length + 1);
-      if (p.endsWith(".gz")) {
-        p = p.slice(0, -3);
-      }
-      return p;
-    });
-
+    // Blob detection + placeholder meta live in `planCloudScanRepair` (pure).
+    const { paths, reconstructedMeta } = planCloudScanRepair(
+      root,
+      listed,
+      this.deps.machineId,
+      new Date().toISOString(),
+    );
     if (paths.length === 0) {
       return [];
     }
-
-    // Reconstruct a minimal _meta.json with placeholders
-    const now = new Date().toISOString();
-    const metaFiles: MetaJson["files"] = {};
-    for (const p of paths) {
-      metaFiles[p] = {
-        hash: "",
-        etag: "",
-        version: 0,
-        updatedAt: now,
-        machineId: this.deps.machineId,
-        wireGzip: blobs.some((b) => b.cloudPath === `${root}/${p}.gz`),
-      };
-    }
-    const reconstructedMeta: MetaJson = { files: metaFiles };
 
     // Write reconstructed _meta.json to cloud
     await this.deps.provider.uploadFile(
@@ -811,31 +767,9 @@ export class SyncEngine {
     return paths;
   }
 
+  /** Delegates to `listRemoteWorkspaceSummaries` (cloudWorkspaceLister.ts). */
   async listRemoteWorkspaceSummaries(): Promise<{ workspaceId: string; workspaceNote: string }[]> {
-    const listed = await this.deps.provider.listFolder(CLOUD_ROOT_DIR);
-    const candidates = SyncEngine.directChildFolderIds(CLOUD_ROOT_DIR, listed);
-    const out: { workspaceId: string; workspaceNote: string }[] = [];
-    for (const id of candidates) {
-      try {
-        const dl = await this.deps.provider.downloadFile(manifestCloudPath(id));
-        const m = JSON.parse(dl.body.toString("utf8")) as {
-          schemaVersion?: number;
-          workspaceId?: string;
-          workspaceNote?: string;
-        };
-        if (m.schemaVersion !== SUPPORTED_MANIFEST_SCHEMA) {
-          continue;
-        }
-        if (m.workspaceId !== id) {
-          continue;
-        }
-        out.push({ workspaceId: id, workspaceNote: m.workspaceNote ?? id });
-      } catch {
-        /* не workspace */
-      }
-    }
-    out.sort((a, b) => a.workspaceNote.localeCompare(b.workspaceNote, undefined, { sensitivity: "base" }));
-    return out;
+    return listRemoteWorkspaceSummaries(this.deps.provider, SUPPORTED_MANIFEST_SCHEMA);
   }
 
   /**
@@ -895,7 +829,7 @@ export class SyncEngine {
       gitBranch: manifest.gitBranch,
       sharedIgnorePatterns: sharedIgnorePatternsOrEmpty(manifest),
       providerType: manifest.providerType,
-      manifestMachines: this.manifestMachineCache(manifest),
+      manifestMachines: manifestMachineCache(manifest),
       manifestEtag: manifestDl.etag,
       metaEtag,
     });
@@ -938,17 +872,26 @@ export class SyncEngine {
     // Which files to take over is decided by `planTrackingDiff` (pure); this
     // loop only applies the decision. `existsLocally` is resolved up front so
     // the planner stays free of I/O.
+    //
+    // Link Bindings: a folder rule redirects where an adopted file LIVES on
+    // this machine — the planner keeps speaking canonical keys throughout,
+    // placement resolves here at the disk boundary.
+    const folderRules = manifest.folderBindings?.[this.deps.machineId];
+    const placementOf = (posixRel: string): string =>
+      localPathForCanonicalKey(folderRules, posixRel) ?? posixRel;
     const candidatePaths = manifest.files
       .filter((f) => !f.removedAt)
       .map((f) => f.path);
     const existing = new Set<string>();
     for (const posixRel of candidatePaths) {
-      if (await fileExists(this.localAbs(cfg, posixRel))) existing.add(posixRel);
+      if (await fileExists(this.localAbs(cfg, placementOf(posixRel)))) existing.add(posixRel);
     }
     const diff = planTrackingDiff({
       workspaceId,
       manifestFiles: manifest.files,
-      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      // Link Bindings: tracked rows are known to the manifest by their
+      // canonical key — localPath here would false-adopt every bound file.
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => manifestKeyOf(f)),
       metaHashFor: (rel: string) => meta.files[rel]?.hash,
       wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
       existsLocally: (rel: string) => existing.has(rel),
@@ -957,25 +900,36 @@ export class SyncEngine {
     let changed = false;
     for (const r of diff.rename) {
       const oldIdx = cfg.files.findIndex(
-        (f) => f.workspaceId === workspaceId && f.localPath === r.from,
+        (f) => f.workspaceId === workspaceId && manifestKeyOf(f) === r.from,
       );
       if (oldIdx < 0) continue;
-      cfg.files[oldIdx] = {
-        ...cfg.files[oldIdx],
-        localPath: r.to,
-        cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
-        localHash: r.localHash,
-      };
+      const prev = cfg.files[oldIdx];
+      const bound = prev.manifestPath !== undefined && prev.manifestPath !== prev.localPath;
+      // A canonical rename replayed on a bound machine moves only the key —
+      // the local placement (and the bytes on disk) stay put. An unbound row
+      // follows the rename, through a folder rule when one covers the target.
+      const renamedPlacement = placementOf(r.to);
+      cfg.files[oldIdx] = bound
+        ? { ...prev, manifestPath: r.to, cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip) }
+        : {
+            ...prev,
+            localPath: renamedPlacement,
+            manifestPath: renamedPlacement === r.to ? undefined : r.to,
+            cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
+            localHash: r.localHash,
+          };
       changed = true;
     }
     for (const a of diff.adopt) {
+      const placement = placementOf(a.posixRel);
       cfg.files.push({
-        localPath: a.posixRel,
+        localPath: placement,
         workspaceId,
         cloudPath: blobCloudPath(workspaceId, a.posixRel, a.wireGzip),
         lastSync: stamp,
         localHash: a.localHash,
         syncStatus: a.syncStatus,
+        ...(placement !== a.posixRel ? { manifestPath: a.posixRel } : {}),
       });
       changed = true;
     }
@@ -1069,7 +1023,7 @@ export class SyncEngine {
       tags: [],
       sharedIgnorePatterns: [],
       providerType,
-      manifestMachines: this.manifestMachineCache(manifest),
+      manifestMachines: manifestMachineCache(manifest),
       manifestEtag: up.etag,
       metaEtag: metaUp.etag,
     });
@@ -1134,7 +1088,7 @@ export class SyncEngine {
   async deleteCloudFilesOnly(workspaceId: string): Promise<void> {
     this.assertMayMutate("deleteCloudFilesOnly");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
-    await this.deleteCloudFolderRecursive(workspaceRootPath(workspaceId));
+    await deleteCloudFolderRecursive(this.deps.provider, workspaceRootPath(workspaceId));
     // Explicitly delete known dot-prefixed files that listFolder may skip
     for (const knownPath of [manifestCloudPath(workspaceId), metaCloudPath(workspaceId)]) {
       try {
@@ -1188,55 +1142,6 @@ export class SyncEngine {
   }
 
   /** Depth-first delete for Graph (direct children); mock returns flat descendants — still safe. */
-  private async deleteCloudFolderRecursive(folderPath: string): Promise<void> {
-    const asDir = folderPath.endsWith("/") ? folderPath : `${folderPath}/`;
-    let items: FileMetadata[];
-    try {
-      items = await this.deps.provider.listFolder(asDir);
-    } catch (e) {
-      if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-        return;
-      }
-      throw e;
-    }
-    for (const it of items) {
-      const p = it.cloudPath;
-      // `isFolder` comes straight from the listing on all four providers. Only
-      // when it is absent do we fall back to the old probe — which used to run
-      // for every entry, including plain files that can never have children,
-      // turning one delete into one extra `listFolder` per object.
-      let hasChildren: boolean;
-      if (it.isFolder === false) {
-        hasChildren = false;
-      } else if (it.isFolder === true) {
-        hasChildren = true;
-      } else {
-        const childPrefix = p.endsWith("/") ? p : `${p}/`;
-        let nested: FileMetadata[];
-        try {
-          nested = await this.deps.provider.listFolder(childPrefix);
-        } catch (e) {
-          if (e instanceof ProviderError && e.code === "NOT_FOUND") {
-            nested = [];
-          } else {
-            throw e;
-          }
-        }
-        hasChildren = nested.length > 0;
-      }
-      if (hasChildren) {
-        await this.deleteCloudFolderRecursive(p);
-      }
-      try {
-        await this.deps.provider.deleteFile(p);
-      } catch (e) {
-        if (!(e instanceof ProviderError && e.code === "NOT_FOUND")) {
-          throw e;
-        }
-      }
-    }
-  }
-
   /**
    * Копирует все активные треки из источника в цель (облачные blobs + merge манифеста/`_meta`), обновляет `vscodesync.json`.
    * Пересечение активных путей в двух workspace → ошибка до любых изменений.
@@ -1367,7 +1272,7 @@ export class SyncEngine {
     await this.mergeLocalTrackedAfterWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId);
 
     if (deleteSourceWorkspace) {
-      await this.deleteCloudFolderRecursive(workspaceRootPath(sourceWorkspaceId));
+      await deleteCloudFolderRecursive(this.deps.provider, workspaceRootPath(sourceWorkspaceId));
     }
 
     this.evictManifestCache(sourceWorkspaceId);
@@ -1418,36 +1323,10 @@ export class SyncEngine {
     await this.pushMetaJson(sourceWorkspaceId, EMPTY_META_JSON, entAfter.metaEtag, "push");
   }
 
-  /**
-   * Перевести треки источника на цель, объединить кэши тегов; убрать источник из activeWorkspaces (если ещё не убран).
-   */
+  /** Перевести треки источника на цель; transform — `planWorkspaceMergeCfg` (pure). */
   private async mergeLocalTrackedAfterWorkspaceMerge(sourceId: string, targetId: string): Promise<void> {
     const cfg = await this.loadCfg();
-    const srcEnt = cfg.activeWorkspaces.find((w) => w.workspaceId === sourceId);
-    const tgtEnt = cfg.activeWorkspaces.find((w) => w.workspaceId === targetId);
-    if (!tgtEnt) {
-      throw new Error("цель merge не найдена в активных workspace после облака");
-    }
-    const tagUnion = [...new Set([...(tgtEnt.tags ?? []), ...(srcEnt?.tags ?? [])])];
-
-    cfg.files = cfg.files.map((f) => {
-      if (f.workspaceId !== sourceId) {
-        return f;
-      }
-      return {
-        ...f,
-        workspaceId: targetId,
-        cloudPath: trackedFileCloudPath(targetId, f.localPath),
-      };
-    });
-    cfg.activeWorkspaces = cfg.activeWorkspaces.filter((w) => w.workspaceId !== sourceId);
-
-    const ti = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === targetId);
-    if (ti >= 0 && tagUnion.length > 0) {
-      cfg.activeWorkspaces[ti] = { ...cfg.activeWorkspaces[ti], tags: tagUnion };
-    }
-
-    await this.saveCfg(cfg);
+    await this.saveCfg(applyWorkspaceMergeToCfg(cfg, sourceId, targetId));
   }
 
   /** Обновить название workspace в облачном манифесте и в `vscodesync.json`. */
@@ -1474,7 +1353,7 @@ export class SyncEngine {
       machines: this.touchMachine(remote.machines, now),
     };
     await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    await this.patchEntry(workspaceId, { workspaceNote: note, manifestMachines: this.manifestMachineCache(updated) });
+    await this.patchEntry(workspaceId, { workspaceNote: note, manifestMachines: manifestMachineCache(updated) });
   }
 
   /** Поля облачного манифеста для подсказок в UI (читает манифест с облака). */
@@ -1769,7 +1648,9 @@ export class SyncEngine {
     // which was masked while `setSoftLock` inflated `version` on each call.
     const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
     const now = new Date().toISOString();
-    const files = applyLockChange(m.files, posixRel, {
+    // Link Bindings: the lock lives on the canonical manifest row.
+    const lockTracked = this.findTracked(cfg, workspaceId, posixRel);
+    const files = applyLockChange(m.files, lockTracked ? manifestKeyOf(lockTracked) : posixRel, {
       machineId: this.deps.machineId,
       sinceIso: now,
     });
@@ -1813,12 +1694,15 @@ export class SyncEngine {
       return;
     }
     const freshEtag = await this.currentManifestEtag(workspaceId, entry.manifestEtag);
-    const existing = m.files.find((f) => f.path === posixRel && !f.removedAt);
+    // Link Bindings: the lock lives on the canonical manifest row.
+    const lockTracked = this.findTracked(cfg, workspaceId, posixRel);
+    const lockKey = lockTracked ? manifestKeyOf(lockTracked) : posixRel;
+    const existing = m.files.find((f) => f.path === lockKey && !f.removedAt);
     if (!existing?.editingBy || existing.editingBy !== this.deps.machineId) {
       return; // Only clear own lock
     }
     const now = new Date().toISOString();
-    const files = applyLockChange(m.files, posixRel, null);
+    const files = applyLockChange(m.files, lockKey, null);
     if (files === null) {
       return;
     }
@@ -1896,7 +1780,7 @@ export class SyncEngine {
         gitBranch: manifest.gitBranch,
         sharedIgnorePatterns: sharedIgnorePatternsOrEmpty(manifest),
         providerType: manifest.providerType,
-        manifestMachines: this.manifestMachineCache(manifest),
+        manifestMachines: manifestMachineCache(manifest),
       };
     }
     await this.saveCfg(cfg);
@@ -1923,17 +1807,33 @@ export class SyncEngine {
       files: [...remoteManifest.files],
     };
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
+    // Link Bindings: a fresh file under a folder rule's local prefix is keyed
+    // under the canonical prefix (work `promed/**` ↔ home `php/**`).
+    const addFolderRules = remoteManifest.folderBindings?.[this.deps.machineId];
     for (const abs of absolutePaths) {
       await this.assertFileWithinSizeLimit(abs);
       const posixRel = this.posixRel(cfg, abs);
+      // Re-adding an already-bound file must stay on its canonical key —
+      // keying by the local placement would fork the manifest row, `_meta`
+      // row and blob.
+      const prior = this.findTracked(cfg, workspaceId, posixRel);
+      const key = prior
+        ? manifestKeyOf(prior)
+        : canonicalKeyForLocalPath(addFolderRules, posixRel) ?? posixRel;
       const markers = await this.fileHasSyncMarkers(abs);
-      const exists = localCopy.files.some((f) => f.path === posixRel && !f.removedAt);
-      if (!exists) {
+      const existing = localCopy.files.find((f) => f.path === key && !f.removedAt);
+      // Fresh rows get a random stable identity and a human label right away;
+      // an existing legacy row keeps `undefined` here until the write-path
+      // backfill fills it (tracking cache catches up later).
+      const rowLinkId = existing ? existing.linkId : newLinkId();
+      if (!existing) {
         localCopy.files.push({
-          path: posixRel,
+          path: key,
           addedAt: now,
           version: this.nextManifestVersion(localCopy.files),
           hasSyncignoreMarkers: markers,
+          linkId: rowLinkId,
+          linkName: defaultLinkName(key),
         });
       }
       // Same pipeline as `pushFile`. This used to call `pushBlobRaw`, which
@@ -1945,7 +1845,7 @@ export class SyncEngine {
       const plaintext = await fs.readFile(abs);
       const encoded = planUploadEncoding({
         workspaceId,
-        posixRel,
+        posixRel: key,
         plaintext,
         encrypt: this.deps.encrypt,
         decrypt: this.deps.decrypt,
@@ -1954,8 +1854,8 @@ export class SyncEngine {
       const cloudPath = encoded.cloudPath;
       const uploaded = await this.deps.provider.uploadFile(cloudPath, encoded.body, { signal: this.abortSignal });
       this.emitTransfer({ direction: "upload", bytes: encoded.body.length });
-      const hash = await computeHash(abs, this.hashCfg(posixRel));
-      const prev = meta.files[posixRel];
+      const hash = hashCanonicalBuffer(plaintext, key, this.hashCfg(key));
+      const prev = meta.files[key];
       const prevVersion = prev === undefined ? 0 : prev.version;
       const row: MetaEntry = {
         hash,
@@ -1967,7 +1867,7 @@ export class SyncEngine {
       if (encoded.wireGzip) {
         row.wireGzip = true;
       }
-      meta.files[posixRel] = row;
+      meta.files[key] = row;
       this.metaStore.put(workspaceId, meta);
       const tracked: TrackedFile = {
         localPath: posixRel,
@@ -1976,6 +1876,8 @@ export class SyncEngine {
         lastSync: now,
         localHash: hash,
         syncStatus: "ok",
+        ...(key !== posixRel ? { manifestPath: key } : {}),
+        ...(rowLinkId !== undefined ? { linkId: rowLinkId } : {}),
       };
       const ix = cfg.files.findIndex((f) => f.workspaceId === workspaceId && f.localPath === posixRel);
       if (ix >= 0) {
@@ -2010,6 +1912,151 @@ export class SyncEngine {
     await this.saveCfg(finalCfg);
   }
 
+  /**
+   * Link Bindings (docs/v2/linkBindings.md): bind an existing local file to a
+   * live manifest row. Pure metadata — no content moves. All decisions live in
+   * `planBindLocalFile`; this method is the I/O shell around it.
+   */
+  async bindLocalFile(
+    workspaceId: string,
+    manifestKey: string,
+    localAbsPath: string,
+    opts?: { replaceExisting?: boolean },
+  ): Promise<{ localPosixRel: string; contentMatches: boolean }> {
+    this.assertMayMutate("bindLocalFile");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const localPosixRel = this.posixRel(cfg, localAbsPath);
+    const remoteManifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!remoteManifest) {
+      throw new Error("manifest missing on cloud");
+    }
+    const meta = await this.pullMeta(workspaceId, entry.metaEtag);
+    const now = new Date().toISOString();
+    const plan = planBindLocalFile({
+      workspaceId,
+      manifestKey,
+      localPosixRel,
+      machineId: this.deps.machineId,
+      trackedFiles: cfg.files,
+      manifestFiles: remoteManifest.files,
+      metaEntry: meta.files[manifestKey],
+      localHash: await this.hashTrackedFile(localAbsPath, manifestKey),
+      nextVersion: this.nextManifestVersion(remoteManifest.files),
+      nowIso: now,
+      replaceExisting: opts?.replaceExisting === true,
+    });
+    if (!plan.ok) {
+      throw new BindRejectedError(plan.reason, plan.detail);
+    }
+    const localCopy: CloudManifest = {
+      ...remoteManifest,
+      updatedAt: now,
+      machines: this.touchMachine(remoteManifest.machines, now),
+      files: remoteManifest.files.map((f) => (f.path === manifestKey ? plan.updatedRow : f)),
+    };
+    await this.putManifest(workspaceId, localCopy, entry.manifestEtag);
+    const freshCfg = await this.loadCfg();
+    freshCfg.files = freshCfg.files.filter(
+      (f) => !(f.workspaceId === workspaceId && (manifestKeyOf(f) === manifestKey || f.localPath === localPosixRel)),
+    );
+    freshCfg.files.push(plan.tracked);
+    await this.saveCfg(freshCfg);
+    this.fireActivity({
+      kind: "bind",
+      workspaceId,
+      workspaceNote: entry.workspaceNote,
+      relPath: localPosixRel,
+      machineName: this.deps.machineName,
+      provider: this.deps.provider.type,
+    });
+    return { localPosixRel, contentMatches: plan.contentMatches };
+  }
+
+  /**
+   * Link Bindings: bind a whole canonical folder to a local folder with the
+   * same inner structure (work `promed/**` ↔ home `php/**`). Writes this
+   * machine's folder rule into the manifest, re-places already-tracked rows
+   * whose file actually lives under the local prefix, then lets the regular
+   * adoption pass register the rest. Metadata only — no content moves.
+   */
+  async bindLocalFolder(
+    workspaceId: string,
+    canonicalDirPrefix: string,
+    localAbsDir: string,
+  ): Promise<{ localDirRel: string; reboundTracked: number }> {
+    this.assertMayMutate("bindLocalFolder");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const canonPrefix = normalizeDirPrefix(canonicalDirPrefix);
+    const localDirRel = normalizeDirPrefix(this.posixRel(cfg, localAbsDir));
+    if (canonPrefix === "" || localDirRel === "") {
+      throw new Error("empty folder prefix");
+    }
+    const remoteManifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!remoteManifest) {
+      throw new Error("manifest missing on cloud");
+    }
+    const now = new Date().toISOString();
+    const machineRules = {
+      ...remoteManifest.folderBindings?.[this.deps.machineId],
+      [canonPrefix]: { path: localDirRel, boundAt: now },
+    };
+    await this.putManifest(
+      workspaceId,
+      {
+        ...remoteManifest,
+        updatedAt: now,
+        machines: this.touchMachine(remoteManifest.machines, now),
+        folderBindings: { ...remoteManifest.folderBindings, [this.deps.machineId]: machineRules },
+      },
+      entry.manifestEtag,
+    );
+    // Re-place tracked rows stranded at the canonical placement whose bytes
+    // actually live under the local prefix.
+    const meta = await this.pullMeta(workspaceId, entry.metaEtag);
+    const freshCfg = await this.loadCfg();
+    let rebound = 0;
+    for (let i = 0; i < freshCfg.files.length; i++) {
+      const f = freshCfg.files[i];
+      if (f.workspaceId !== workspaceId) continue;
+      const fKey = manifestKeyOf(f);
+      if (!fKey.startsWith(`${canonPrefix}/`) || f.localPath !== fKey) continue;
+      const placement = `${localDirRel}/${fKey.slice(canonPrefix.length + 1)}`;
+      if (await fileExists(this.localAbs(freshCfg, f.localPath))) continue;
+      if (!(await fileExists(this.localAbs(freshCfg, placement)))) continue;
+      const hash = await this.hashTrackedFile(this.localAbs(freshCfg, placement), fKey).catch(() => "");
+      const matches = hash !== "" && hash === meta.files[fKey]?.hash;
+      freshCfg.files[i] = {
+        ...f,
+        localPath: placement,
+        manifestPath: fKey,
+        localHash: matches ? hash : "",
+        syncStatus: matches ? "ok" : "cloud_newer",
+      };
+      rebound += 1;
+    }
+    await this.saveCfg(freshCfg);
+    await this.adoptManifestFilesFromCloud(workspaceId);
+    this.fireActivity({
+      kind: "bind",
+      workspaceId,
+      workspaceNote: entry.workspaceNote,
+      relPath: `${localDirRel}/ ⇄ ${canonPrefix}/`,
+      machineName: this.deps.machineName,
+      provider: this.deps.provider.type,
+    });
+    return { localDirRel, reboundTracked: rebound };
+  }
+
   /** Удалить файлы из трекинга: blob в облаке, строка в `_meta`, tombstone в манифесте, запись в локальном кэше. */
   async removeTrackedFiles(workspaceId: string, absolutePaths: string[]): Promise<void> {
     this.assertMayMutate("removeTrackedFiles");
@@ -2042,18 +2089,21 @@ export class SyncEngine {
     // files, continue?" all 500 blobs were already gone — and answering "no"
     // left the data deleted and the manifest untouched, the worst of both.
     // Pass 1 computes what the manifest would become and asks; pass 2 deletes.
-    const plannedRemovals: { posixRel: string; cloudPath: string }[] = [];
+    // Link Bindings: `key` is the canonical manifest/_meta/blob key; `posixRel`
+    // stays the local placement (matches cfg.files[].localPath below).
+    const plannedRemovals: { posixRel: string; key: string; cloudPath: string }[] = [];
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
       const tracked = this.findTracked(cfg, workspaceId, posixRel);
+      const key = tracked ? manifestKeyOf(tracked) : posixRel;
       const cloudPath =
         tracked?.cloudPath ??
-        blobCloudPath(workspaceId, posixRel, meta.files[posixRel]?.wireGzip === true);
-      plannedRemovals.push({ posixRel, cloudPath });
+        blobCloudPath(workspaceId, key, meta.files[key]?.wireGzip === true);
+      plannedRemovals.push({ posixRel, key, cloudPath });
     }
 
-    for (const { posixRel } of plannedRemovals) {
-      const mfIx = localCopy.files.findIndex((f) => f.path === posixRel);
+    for (const { key } of plannedRemovals) {
+      const mfIx = localCopy.files.findIndex((f) => f.path === key);
       const nextVer = this.nextManifestVersion(localCopy.files);
       if (mfIx >= 0) {
         const prev = localCopy.files[mfIx];
@@ -2064,7 +2114,7 @@ export class SyncEngine {
         };
       } else {
         localCopy.files.push({
-          path: posixRel,
+          path: key,
           addedAt: now,
           version: nextVer,
           hasSyncignoreMarkers: false,
@@ -2086,7 +2136,7 @@ export class SyncEngine {
       }
     }
 
-    for (const { posixRel, cloudPath } of plannedRemovals) {
+    for (const { posixRel, key, cloudPath } of plannedRemovals) {
       try {
         await this.deps.provider.deleteFile(cloudPath);
       } catch (e) {
@@ -2095,7 +2145,7 @@ export class SyncEngine {
         }
       }
       meta.files = Object.fromEntries(
-        Object.entries(meta.files).filter(([key]) => key !== posixRel),
+        Object.entries(meta.files).filter(([metaKey]) => metaKey !== key),
       );
       this.fireActivity({
         kind: "remove",
@@ -2171,10 +2221,13 @@ export class SyncEngine {
 
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
+      // Link Bindings: tombstone/meta go by the canonical key of the tracked row.
+      const trackedRow = this.findTracked(cfg, workspaceId, posixRel);
+      const key = trackedRow ? manifestKeyOf(trackedRow) : posixRel;
       meta.files = Object.fromEntries(
-        Object.entries(meta.files).filter(([key]) => key !== posixRel),
+        Object.entries(meta.files).filter(([metaKey]) => metaKey !== key),
       );
-      const mfIx = localCopy.files.findIndex((f) => f.path === posixRel);
+      const mfIx = localCopy.files.findIndex((f) => f.path === key);
       const nextVer = this.nextManifestVersion(localCopy.files);
       if (mfIx >= 0) {
         const prev = localCopy.files[mfIx];
@@ -2185,7 +2238,7 @@ export class SyncEngine {
         };
       } else {
         localCopy.files.push({
-          path: posixRel,
+          path: key,
           addedAt: now,
           version: nextVer,
           hasSyncignoreMarkers: false,
@@ -2241,6 +2294,43 @@ export class SyncEngine {
     const remoteManifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
     if (!remoteManifest) {
       throw new Error("manifest missing on cloud");
+    }
+
+    // Link Bindings: a local move of a BOUND file does not touch the canonical
+    // key — it is a rebind: local placement + the row's bindings entry change,
+    // no blob copy, no tombstone, no `_meta` move. (Stage 3 adds the modal
+    // offering a canonical rename instead.)
+    const renameKey = manifestKeyOf(trackedEntry);
+    if (renameKey !== oldRel) {
+      const nowBind = new Date().toISOString();
+      const row = remoteManifest.files.find((f) => f.path === renameKey && !f.removedAt);
+      if (row) {
+        const updatedRow: ManifestFile = {
+          ...row,
+          version: Math.max(this.nextManifestVersion(remoteManifest.files), row.version + 1),
+          bindings: {
+            ...row.bindings,
+            [this.deps.machineId]: { path: newRel, boundAt: nowBind },
+          },
+        };
+        await this.putManifest(
+          workspaceId,
+          {
+            ...remoteManifest,
+            updatedAt: nowBind,
+            machines: this.touchMachine(remoteManifest.machines, nowBind),
+            files: remoteManifest.files.map((f) => (f === row ? updatedRow : f)),
+          },
+          entry.manifestEtag,
+        );
+      }
+      const rebindCfg = await this.loadCfg();
+      const ix = rebindCfg.files.findIndex((f) => f.workspaceId === workspaceId && f.localPath === oldRel);
+      if (ix >= 0) {
+        rebindCfg.files[ix] = { ...rebindCfg.files[ix], localPath: newRel, manifestPath: renameKey };
+      }
+      await this.saveCfg(rebindCfg);
+      return;
     }
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
 
@@ -2301,7 +2391,10 @@ export class SyncEngine {
         version: Math.max(nextVer, prev.version + 1),
       };
     }
-    // Add new entry with renamedFrom marker
+    // Add new entry with renamedFrom marker. Link Bindings: identity and the
+    // other machines' placements travel with the rename — their bindings hold
+    // machine-local paths, which a canonical rename does not affect.
+    const oldRow = oldIx >= 0 ? remoteManifest.files.find((f) => f.path === oldRel) : undefined;
     const existingNewIx = localCopy.files.findIndex((f) => f.path === newRel);
     const newManifestFile: ManifestFile = {
       path: newRel,
@@ -2310,6 +2403,9 @@ export class SyncEngine {
       hasSyncignoreMarkers: trackedEntry.syncStatus === "ok" ? false : trackedEntry.syncStatus === "conflict",
       renamedFrom: oldRel,
       renamedAt: now,
+      ...(oldRow?.linkId !== undefined ? { linkId: oldRow.linkId } : {}),
+      ...(oldRow?.linkName !== undefined ? { linkName: oldRow.linkName } : {}),
+      ...(oldRow?.bindings !== undefined ? { bindings: { ...oldRow.bindings } } : {}),
     };
     if (existingNewIx >= 0) {
       localCopy.files[existingNewIx] = { ...localCopy.files[existingNewIx], ...newManifestFile };
@@ -2363,45 +2459,13 @@ export class SyncEngine {
     return m + 1;
   }
 
+  /** Delegates to `touchManifestMachine` (machineRegistry.ts). */
   private touchMachine(machines: CloudManifest["machines"], now: string): CloudManifest["machines"] {
-    const byId = new Map(machines.map((m) => [m.machineId, { ...m }]));
-    const cur = byId.get(this.deps.machineId);
-    const requireApproval = this.deps.requireMachineApproval?.() === true;
-    if (cur) {
-      cur.lastSeen = now;
-    } else {
-      const othersBeforeSelf = byId.size;
-      const initialStatus: "pending" | "active" =
-        requireApproval && othersBeforeSelf > 0 ? "pending" : "active";
-      byId.set(this.deps.machineId, {
-        machineId: this.deps.machineId,
-        machineName: this.deps.machineName,
-        lastSeen: now,
-        status: initialStatus,
-      });
-    }
-    return [...byId.values()];
-  }
-
-  private manifestMachineCache(m: CloudManifest): ManifestMachineCacheEntry[] {
-    return m.machines.map((x) => ({
-      machineId: x.machineId,
-      machineName: x.machineName,
-      lastSeen: x.lastSeen,
-      status: x.status,
-    }));
-  }
-
-  private entryPatchFromManifest(m: CloudManifest): Pick<
-    ActiveWorkspaceEntry,
-    "tags" | "gitBranch" | "sharedIgnorePatterns" | "manifestMachines"
-  > {
-    return {
-      tags: m.tags,
-      gitBranch: m.gitBranch,
-      sharedIgnorePatterns: sharedIgnorePatternsOrEmpty(m),
-      manifestMachines: this.manifestMachineCache(m),
-    };
+    return touchManifestMachine(machines, now, {
+      machineId: this.deps.machineId,
+      machineName: this.deps.machineName,
+      requireApproval: this.deps.requireMachineApproval?.() === true,
+    });
   }
 
   private async downloadManifest(
@@ -2418,15 +2482,12 @@ export class SyncEngine {
     entry: ActiveWorkspaceEntry,
   ): Promise<void> {
     const now = new Date().toISOString();
-    const trackedPaths = cfg.files
-      .filter((f) => f.workspaceId === workspaceId)
-      .map((f) => f.localPath);
-    const manifestFiles: ManifestFile[] = trackedPaths.map((p, i) => ({
-      path: p,
-      addedAt: now,
-      version: i + 1,
-      hasSyncignoreMarkers: false,
-    }));
+    // Builder in linkIdentity.ts: canonical keys + re-asserted own placement.
+    const manifestFiles = rebuildManifestFilesFromTracked(
+      cfg.files.filter((f) => f.workspaceId === workspaceId),
+      this.deps.machineId,
+      now,
+    );
     const manifest: CloudManifest = {
       schemaVersion: SUPPORTED_MANIFEST_SCHEMA,
       workspaceId,
@@ -2446,7 +2507,7 @@ export class SyncEngine {
     await this.patchEntry(workspaceId, {
       manifestEtag: up.etag,
       metaEtag: metaUp.etag,
-      ...this.entryPatchFromManifest(manifest),
+      ...entryPatchFromManifest(manifest),
     });
     this.cacheManifest(workspaceId, manifest, up.etag);
     this.metaStore.put(workspaceId, EMPTY_META_JSON);
@@ -2510,8 +2571,8 @@ export class SyncEngine {
     try {
       const meta = await this.pullMeta(file.workspaceId, undefined);
       const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
-      const buf = this.decodeCloudBlob(dl.body, meta.files[file.localPath]?.wireGzip === true);
-      const current = hashCanonicalBuffer(buf, file.localPath, this.hashCfg(file.localPath));
+      const buf = this.decodeCloudBlob(dl.body, meta.files[manifestKeyOf(file)]?.wireGzip === true);
+      const current = hashCanonicalBuffer(buf, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
       return current !== baseline;
     } catch {
       return false;
@@ -2643,39 +2704,21 @@ export class SyncEngine {
     }
     const meta = await this.pullMeta(workspaceId, ent.metaEtag);
     const updated: MetaJson = { ...meta, files: { ...meta.files } };
-    let applied = 0;
-    let skippedMissing = 0;
-    let skippedDrift = 0;
-    let skippedAlreadyDone = 0;
-    for (const task of tasks) {
-      const row = updated.files[task.relPath];
-      if (!row) {
-        skippedMissing += 1;
-        continue;
-      }
-      if (typeof row.hashBlake3 === "string" && /^[0-9a-f]{64}$/.test(row.hashBlake3)) {
-        skippedAlreadyDone += 1;
-        continue;
-      }
-      const abs = this.localAbs(cfg, task.relPath);
-      let buf: Buffer;
-      try {
-        buf = await fs.readFile(abs);
-      } catch {
-        skippedMissing += 1;
-        continue;
-      }
-      const dual = hashCanonicalBufferDual(buf, task.relPath, this.hashCfg(task.relPath));
-      // Drift guard — if the local file's sha256 differs from the meta's
-      // current sha256, refuse to backfill: the local copy is out of sync
-      // with the cloud meta and a regular pushFile is the right path.
-      if (dual.sha256 !== row.hash) {
-        skippedDrift += 1;
-        continue;
-      }
-      updated.files[task.relPath] = { ...row, hashBlake3: dual.blake3 };
-      applied += 1;
-    }
+    // Loop extracted to `planBlake3Backfill.ts`. Link Bindings: `relPath` is a
+    // canonical meta key — the bytes live at the machine's own placement.
+    const { applied, skippedMissing, skippedDrift, skippedAlreadyDone } = await runBlake3BackfillTasks(
+      updated,
+      tasks,
+      {
+        readTrackedBytes: async (canonicalRel) => {
+          const trackedRow = cfg.files.find(
+            (f) => f.workspaceId === workspaceId && manifestKeyOf(f) === canonicalRel,
+          );
+          return fs.readFile(this.localAbs(cfg, trackedRow?.localPath ?? canonicalRel)).catch(() => null);
+        },
+        dualHash: (buf, canonicalRel) => hashCanonicalBufferDual(buf, canonicalRel, this.hashCfg(canonicalRel)),
+      },
+    );
     if (applied > 0) {
       await this.pushMetaJson(workspaceId, updated, ent.metaEtag, "push");
     }
@@ -2766,7 +2809,7 @@ export class SyncEngine {
     if (this.deps.onPurgeLostFiles) {
       const activePaths = new Set(manifest.files.filter((f) => !f.removedAt).map((f) => f.path));
       const wouldBePruned = cfg.files.filter(
-        (f) => f.workspaceId === workspaceId && !activePaths.has(f.localPath),
+        (f) => f.workspaceId === workspaceId && !activePaths.has(manifestKeyOf(f)),
       );
       if (wouldBePruned.length > 0) {
         const lost: PurgeLostFileItem[] = [];
@@ -2812,7 +2855,7 @@ export class SyncEngine {
     // Update soft lock cache from manifest
     const machineById = new Map(entry.manifestMachines?.map((m) => [m.machineId, m.machineName]) ?? []);
     for (const file of trackedFiles) {
-      const mf = manifest.files.find((x) => x.path === file.localPath && !x.removedAt);
+      const mf = manifest.files.find((x) => x.path === manifestKeyOf(file) && !x.removedAt);
       const newEditingBy = mf?.editingBy && mf.editingBy !== this.deps.machineId ? mf.editingBy : undefined;
       if (file.editingBy !== newEditingBy) {
         file.editingBy = newEditingBy;
@@ -2849,7 +2892,9 @@ export class SyncEngine {
     const diff = planTrackingDiff({
       workspaceId,
       manifestFiles: manifest.files,
-      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => f.localPath),
+      // Link Bindings: same canonical-key feed as the adoption pass — a bound
+      // file otherwise reads as a perpetual adopt+prune drift.
+      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => manifestKeyOf(f)),
       metaHashFor: () => undefined,
       wireGzipFor: () => false,
       existsLocally: () => false,
@@ -2920,7 +2965,7 @@ export class SyncEngine {
           // Cancellation lands between files (A5): the request in flight
           // finishes, nothing new starts.
           this.assertNotCancelled(checkOnly ? "проверка расхождений" : "синхронизация");
-          const m = manifest.files.find((x) => x.path === file.localPath && !x.removedAt);
+          const m = manifest.files.find((x) => x.path === manifestKeyOf(file) && !x.removedAt);
           if (!m) return;
           if (file.syncStatus === "conflict") return;
           const ent = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -2961,9 +3006,9 @@ export class SyncEngine {
     file: TrackedFile,
     meta: MetaJson,
   ): Promise<void> {
-    const metaRow = meta.files[file.localPath];
+    const metaRow = meta.files[manifestKeyOf(file)];
     const base = metaRow === undefined ? undefined : metaRow.hash;
-    const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
+    const localCurrent = await this.hashTrackedFile(this.localAbs(cfg, file.localPath), manifestKeyOf(file)).catch(() => "");
     let cloudCurrent = "";
     try {
       const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
@@ -2971,7 +3016,7 @@ export class SyncEngine {
         cloudCurrent = base ?? "";
       } else {
         const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-        cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
+        cloudCurrent = hashCanonicalBuffer(plain, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -2985,7 +3030,7 @@ export class SyncEngine {
       localHash: localCurrent,
       cloudHash: cloudCurrent,
     });
-    const next = syncStatusForAction(action);
+    const next = syncStatusForAction(action, localCurrent === "");
     if (file.syncStatus !== next) {
       verboseLog(
         "syncEngine",
@@ -3024,7 +3069,7 @@ export class SyncEngine {
       if (f.workspaceId !== manifest.workspaceId) {
         return true;
       }
-      return active.has(`${f.workspaceId}:${f.localPath}`);
+      return active.has(`${f.workspaceId}:${manifestKeyOf(f)}`);
     });
   }
 
@@ -3036,9 +3081,9 @@ export class SyncEngine {
     entry: ActiveWorkspaceEntry,
   ): Promise<void> {
     this.assertMayMutate("syncOneFile");
-    const metaRow = meta.files[file.localPath];
+    const metaRow = meta.files[manifestKeyOf(file)];
     const base = metaRow === undefined ? undefined : metaRow.hash;
-    const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
+    const localCurrent = await this.hashTrackedFile(this.localAbs(cfg, file.localPath), manifestKeyOf(file)).catch(() => "");
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
@@ -3047,7 +3092,7 @@ export class SyncEngine {
         cloudCurrent = base ?? "";
       } else {
         cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-        cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
+        cloudCurrent = hashCanonicalBuffer(cloudBuf, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
       }
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -3087,13 +3132,15 @@ export class SyncEngine {
       }
       await this.pushFile(cfg, workspaceId, file.localPath, entry);
     } else if (action === "none") {
-      if (file.syncStatus === "cloud_newer") {
+      if (file.syncStatus === "cloud_newer" || file.syncStatus === "missing_local") {
         file.syncStatus = "ok";
         await this.persistMutatedCfg(cfg);
       }
     } else if (action === "pull") {
-      if (file.syncStatus !== "cloud_newer") {
-        file.syncStatus = "cloud_newer";
+      // Absent bytes refine "pull" to the honest missing_local state.
+      const pullStatus = syncStatusForAction(action, localCurrent === "");
+      if (file.syncStatus !== pullStatus) {
+        file.syncStatus = pullStatus;
         await this.persistMutatedCfg(cfg);
       }
     } else {
@@ -3192,7 +3239,7 @@ export class SyncEngine {
         manifest.files.filter((f) => !f.removedAt).map((f) => f.path),
       );
       const trackedFiles = cfg.files.filter(
-        (f) => f.workspaceId === wsId && activeManifestPaths.has(f.localPath),
+        (f) => f.workspaceId === wsId && activeManifestPaths.has(manifestKeyOf(f)),
       );
 
       const rows: SyncPreviewFileRow[] = [];
@@ -3201,9 +3248,9 @@ export class SyncEngine {
           rows.push({ localPath: file.localPath, action: "conflict_pending" });
           continue;
         }
-        const metaRow = meta.files[file.localPath];
+        const metaRow = meta.files[manifestKeyOf(file)];
         const base = metaRow === undefined ? undefined : metaRow.hash;
-        const localCurrent = await computeHash(this.localAbs(cfg, file.localPath), this.hashCfg(file.localPath)).catch(() => "");
+        const localCurrent = await this.hashTrackedFile(this.localAbs(cfg, file.localPath), manifestKeyOf(file)).catch(() => "");
         let cloudCurrent = "";
         try {
           // Conditional GET (этап 5.2): the preview used to download the full
@@ -3218,7 +3265,7 @@ export class SyncEngine {
             cloudCurrent = base ?? "";
           } else {
             const plain = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-            cloudCurrent = hashCanonicalBuffer(plain, file.localPath, this.hashCfg(file.localPath));
+            cloudCurrent = hashCanonicalBuffer(plain, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
           }
         } catch (e) {
           if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
@@ -3265,14 +3312,14 @@ export class SyncEngine {
       return true;
     }
 
-    const metaRow = meta.files[file.localPath];
+    const metaRow = meta.files[manifestKeyOf(file)];
     const base = metaRow === undefined ? undefined : metaRow.hash;
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
       const dl = await this.deps.provider.downloadFile(file.cloudPath, { signal: this.abortSignal });
       cloudBuf = this.decodeCloudBlob(dl.body, metaRow?.wireGzip === true);
-      cloudCurrent = hashCanonicalBuffer(cloudBuf, file.localPath, this.hashCfg(file.localPath));
+      cloudCurrent = hashCanonicalBuffer(cloudBuf, manifestKeyOf(file), this.hashCfg(manifestKeyOf(file)));
     } catch (e) {
       if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
         throw e;
@@ -3425,7 +3472,7 @@ export class SyncEngine {
               // Per-file isolation: one unreadable or vanished file must not
               // abort the other files of the same workspace.
               try {
-                const localHash = await computeHash(this.localAbs(c2, f.localPath), this.hashCfg(f.localPath));
+                const localHash = await this.hashTrackedFile(this.localAbs(c2, f.localPath), manifestKeyOf(f));
                 if (localHash !== f.localHash) {
                   await this.pushFile(c2, id, f.localPath, entry);
                   pushedFiles++;
@@ -3532,7 +3579,7 @@ export class SyncEngine {
     // Refresh editingBy cache from manifest (same as syncWorkspace)
     const machineById = new Map(entry.manifestMachines?.map((m) => [m.machineId, m.machineName]) ?? []);
     for (const file of trackedFiles) {
-      const mf = manifest.files.find((x) => x.path === file.localPath && !x.removedAt);
+      const mf = manifest.files.find((x) => x.path === manifestKeyOf(file) && !x.removedAt);
       const newEditingBy = mf?.editingBy && mf.editingBy !== this.deps.machineId ? mf.editingBy : undefined;
       if (file.editingBy !== newEditingBy) {
         file.editingBy = newEditingBy;
@@ -3583,6 +3630,9 @@ export class SyncEngine {
     if (!file) {
       throw new Error("not tracked");
     }
+    // Link Bindings: manifest/_meta/blob/history are keyed canonically; disk
+    // access stays on the local path.
+    const key = manifestKeyOf(file);
     if (file.syncStatus === "conflict") {
       // Symmetric with `pullFile`: a conflicted file is never moved silently.
       // `pushAll` already filters conflicts out before reaching here, and a
@@ -3595,7 +3645,7 @@ export class SyncEngine {
     const abs = this.localAbs(cfg, posixRel);
     await this.assertFileWithinSizeLimit(abs);
     const hashStartMs = this.deps.onSyncProfileSample ? Date.now() : 0;
-    const hash = await computeHash(abs, this.hashCfg(posixRel));
+    const hash = await this.hashTrackedFile(abs, key);
     let hashMsAccum = this.deps.onSyncProfileSample ? Date.now() - hashStartMs : 0;
 
     const uploadAllowed = await this.reconcileBeforePushUpload(
@@ -3619,10 +3669,10 @@ export class SyncEngine {
       // but reusing the in-memory copy saves the round-trip entirely.
       const cachedMeta = this.metaStore.peek(workspaceId);
       const metaLocked = cachedMeta ?? (await this.pullMeta(workspaceId, ent.metaEtag));
-      const prevLocked = metaLocked.files[posixRel];
+      const prevLocked = metaLocked.files[key];
       const prevEtagLocked = prevLocked === undefined ? undefined : prevLocked.etag;
       const prevWireGzipLocked = prevLocked?.wireGzip === true;
-      await this.historyStore.snapshot(workspaceId, posixRel, oldBlobPathForHistory);
+      await this.historyStore.snapshot(workspaceId, key, oldBlobPathForHistory);
       const plaintextBufLocked = await fs.readFile(abs);
       // Hash the exact bytes we are about to upload.
       //
@@ -3638,7 +3688,7 @@ export class SyncEngine {
       // Hashing the in-memory buffer removes the race by construction and costs
       // no second read of the file.
       const hashStartLocked = this.deps.onSyncProfileSample ? Date.now() : 0;
-      const hashLocked = hashCanonicalBuffer(plaintextBufLocked, posixRel, this.hashCfg(posixRel));
+      const hashLocked = hashCanonicalBuffer(plaintextBufLocked, key, this.hashCfg(key));
       if (this.deps.onSyncProfileSample) {
         hashMsAccum += Date.now() - hashStartLocked;
       }
@@ -3648,7 +3698,7 @@ export class SyncEngine {
 
       const encoded = planUploadEncoding({
         workspaceId,
-        posixRel,
+        posixRel: key,
         plaintext: plaintextBufLocked,
         encrypt: this.deps.encrypt,
         decrypt: this.deps.decrypt,
@@ -3677,46 +3727,18 @@ export class SyncEngine {
         const wantVerify = verifyMode !== "never" && !this.deps.encrypt;
         const verifyStartMs = this.deps.onSyncProfileSample && wantVerify ? Date.now() : 0;
         if (wantVerify) {
-          await this.verifyUploadPlaintextHash(uploadCloudPath, hashLocked, posixRel, wireGzip);
+          await this.verifyUploadPlaintextHash(uploadCloudPath, hashLocked, key, wireGzip);
         }
-        // v0.18 D01 — additional provider-side digest check. When the
-        // provider exposes md5/sha1/sha256 via getMetadata, we compute
-        // the expected digest locally and compare. Skip for encrypted
-        // uploads (provider sees ciphertext, not plaintext) and for
-        // wire-compressed uploads (provider digests the .gz bytes, not
-        // the plaintext we hold).
+        // v0.18 D01 — additional provider-side digest check (shared helper in
+        // providerHashVerify.ts). Skip for encrypted uploads (provider sees
+        // ciphertext) and wire-compressed uploads (provider digests the .gz).
         if (
           !this.deps.encrypt &&
           !wireGzip &&
           this.resolveProviderHashVerify()
         ) {
-          try {
-            const meta = await this.deps.provider.getMetadata(uploadCloudPath);
-            // `contentDigest` is the field defined as a hash of the bytes (E10).
-            // This used to read `meta.etag`, which on OneDrive is a Graph token
-            // `{GUID},N` and on Dropbox is `rev` — so with the setting on, every
-            // OneDrive push failed with INTEGRITY_FAILED right after a
-            // successful upload. A provider that exposes no digest is skipped.
-            if (meta?.contentDigest) {
-              const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
-              const expected = expectedProviderDigests(this.deps.provider.type, plaintextBufLocked);
-              const actual = meta.contentDigest.value.toLowerCase();
-              const matched = expected.some(
-                (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
-              );
-              if (!matched) {
-                throw new ProviderError(
-                  "INTEGRITY_FAILED",
-                  `Provider digest mismatch on ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
-                );
-              }
-            }
-          } catch (e) {
-            if (e instanceof ProviderError && e.code === "INTEGRITY_FAILED") throw e;
-            // Other failures (NOT_FOUND on metadata, network blip) are
-            // non-fatal; the standard plaintext verify above already
-            // caught the most common corruption mode.
-          }
+          const { verifyProviderContentDigest } = await import("./providerHashVerify.js");
+          await verifyProviderContentDigest(this.deps.provider, uploadCloudPath, plaintextBufLocked, posixRel);
         }
         const verifyMs = this.deps.onSyncProfileSample && wantVerify ? Date.now() - verifyStartMs : 0;
         const prevVersion = prevLocked === undefined ? 0 : prevLocked.version;
@@ -3732,20 +3754,21 @@ export class SyncEngine {
         }
         const algo = this.deps.canonicalHashAlgo?.() ?? "sha256";
         if (algo !== "sha256") {
-          const dual = hashCanonicalBufferDual(plaintextBufLocked, posixRel, this.hashCfg(posixRel));
+          const dual = hashCanonicalBufferDual(plaintextBufLocked, key, this.hashCfg(key));
           row.hashBlake3 = dual.blake3;
         }
         const nextMeta: MetaJson = {
           ...metaLocked,
           files: {
             ...metaLocked.files,
-            [posixRel]: row,
+            [key]: row,
           },
         };
         await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "push");
         if (this.deps.onPushFile) {
           try {
-            this.deps.onPushFile(workspaceId, posixRel, plaintextBufLocked, {
+            // P2P mirror speaks the canonical namespace shared by peers.
+            this.deps.onPushFile(workspaceId, key, plaintextBufLocked, {
               hash: row.hash,
               hashBlake3: row.hashBlake3,
               version: row.version,
@@ -3929,16 +3952,18 @@ export class SyncEngine {
     if (!file) {
       throw new Error("not tracked");
     }
+    // Link Bindings: canonical key for meta/blob, local path for disk.
+    const key = manifestKeyOf(file);
     if (file.syncStatus === "conflict") {
       throw new FileConflictError(posixRel);
     }
     const meta = metaIn ?? (await this.pullMeta(workspaceId, ent.metaEtag));
-    const metaRow = meta.files[posixRel];
+    const metaRow = meta.files[key];
     const abs = this.localAbs(cfg, posixRel);
     const hadLocal = await fileExists(abs);
     let localCanon = "";
     if (hadLocal) {
-      localCanon = await computeHash(abs, this.hashCfg(posixRel)).catch(() => "");
+      localCanon = await this.hashTrackedFile(abs, key).catch(() => "");
     }
     const localMatchesMetaHash =
       metaRow?.hash !== undefined &&
@@ -3951,45 +3976,21 @@ export class SyncEngine {
         ? metaRow.etag
         : undefined;
     const wireGzip = metaRow?.wireGzip === true;
-    const downloadPath = blobCloudPath(workspaceId, posixRel, wireGzip);
+    const downloadPath = blobCloudPath(workspaceId, key, wireGzip);
     const dl = await this.deps.provider.downloadFile(downloadPath, {
       ifNoneMatch,
     });
-    // X1 — provider digest verify on pull. Mirrors the push-side D01
-    // check: when the provider's metadata exposes md5/sha1/sha256, compare
-    // it against the digest we'd compute from the downloaded body. Skip
-    // for encrypted reads (the provider sees ciphertext) and for
-    // wire-compressed blobs (provider digests the .gz, not plaintext).
+    // X1 — provider digest verify on pull (shared helper mirrors the
+    // push-side D01 check). Skip for encrypted reads and wire-compressed
+    // blobs; the local canonical hash below covers the common cases.
     if (
       !dl.notModified &&
       !this.deps.decrypt &&
       !wireGzip &&
       this.resolveProviderHashVerify()
     ) {
-      try {
-        // Same field as the push-side check (E10): a download's `etag` is not a
-        // digest, so the comparison has to come from provider metadata.
-        const meta = await this.deps.provider.getMetadata(downloadPath);
-        if (meta?.contentDigest) {
-          const { expectedProviderDigests, digestEquals } = await import("./providerHashVerify.js");
-          const expected = expectedProviderDigests(this.deps.provider.type, dl.body);
-          const actual = meta.contentDigest.value.toLowerCase();
-          const matched = expected.some(
-            (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
-          );
-          if (!matched) {
-            throw new ProviderError(
-              "INTEGRITY_FAILED",
-              `Provider digest mismatch on pull ${posixRel}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
-            );
-          }
-        }
-      } catch (e) {
-        if (e instanceof ProviderError && e.code === "INTEGRITY_FAILED") throw e;
-        // Other failures (provider doesn't expose etag-as-digest, etc.)
-        // are non-fatal — local canonical hash check below catches the
-        // common corruption case anyway.
-      }
+      const { verifyProviderContentDigest } = await import("./providerHashVerify.js");
+      await verifyProviderContentDigest(this.deps.provider, downloadPath, dl.body, `pull ${posixRel}`);
     }
     if (dl.notModified) {
       if (file.localHash !== localCanon || file.syncStatus !== "ok") {
@@ -4016,7 +4017,7 @@ export class SyncEngine {
         this.deps.onFilePulled(posixRel, oldContent, mergedText);
       }
     }
-    const hash = await computeHash(abs, this.hashCfg(posixRel));
+    const hash = await this.hashTrackedFile(abs, key);
     // Update cloud meta FIRST. Only after the cloud consensus is published
     // do we mark the file locally as "ok" — otherwise a tick that fires in
     // the window between local persist and cloud meta upload would see
@@ -4037,7 +4038,7 @@ export class SyncEngine {
       ...meta,
       files: {
         ...meta.files,
-        [posixRel]: rowMeta,
+        [key]: rowMeta,
       },
     };
     await this.pushMetaJson(workspaceId, nextMeta, ent.metaEtag, "pull-completion");
@@ -4069,7 +4070,7 @@ export class SyncEngine {
     if (!hit) {
       throw new Error("not tracked");
     }
-    const dir = historyDirForFile(hit.workspaceId, posixRel);
+    const dir = historyDirForFile(hit.workspaceId, manifestKeyOf(hit));
     const items = await this.deps.provider.listFolder(dir);
     const baseName = (p: string): string => {
       const i = p.lastIndexOf("/");
@@ -4078,8 +4079,16 @@ export class SyncEngine {
     return [...items].sort((a, b) => baseName(b.cloudPath).localeCompare(baseName(a.cloudPath)));
   }
 
-  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла. Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
-  async downloadHistorySnapshotIfOwned(posixRel: string, historyCloudPath: string): Promise<Buffer> {
+  /**
+   * Shared prologue of the tracked-blob readers: tracked row by local path,
+   * its workspace entry, `_meta` row and wire codec — everything keyed by the
+   * canonical manifest key (Link Bindings).
+   */
+  private async trackedReadContext(posixRel: string): Promise<{
+    hit: TrackedFile;
+    key: string;
+    wireGzip: boolean;
+  }> {
     const cfg = await this.loadCfg();
     const hit = cfg.files.find((f) => f.localPath === posixRel);
     if (!hit) {
@@ -4090,40 +4099,35 @@ export class SyncEngine {
       throw new Error("no entry");
     }
     const meta = await this.pullMeta(hit.workspaceId, ent.metaEtag);
-    const row = meta.files[posixRel];
-    const wireGzip = row?.wireGzip === true;
-    const prefix = `${historyDirForFile(hit.workspaceId, posixRel)}/`;
+    const key = manifestKeyOf(hit);
+    return { hit, key, wireGzip: meta.files[key]?.wireGzip === true };
+  }
+
+  /** Download with one retry on an empty 304 body (provider cache quirk). */
+  private async downloadCloudBytes(cloudPath: string): Promise<Buffer> {
+    let dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
+    if (dl.notModified && dl.body.length === 0) {
+      dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
+    }
+    return dl.body;
+  }
+
+  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла. Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
+  async downloadHistorySnapshotIfOwned(posixRel: string, historyCloudPath: string): Promise<Buffer> {
+    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
+    const prefix = `${historyDirForFile(hit.workspaceId, key)}/`;
     const norm = historyCloudPath.replace(/\/$/, "");
     if (!norm.startsWith(prefix)) {
       throw new Error("not a history path for this file");
     }
-    let dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
-    if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(norm, { signal: this.abortSignal });
-    }
-    return this.decodeCloudBlob(dl.body, wireGzip);
+    return this.decodeCloudBlob(await this.downloadCloudBytes(norm), wireGzip);
   }
 
   /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
   async downloadTrackedBlob(posixRel: string): Promise<{ body: Buffer }> {
-    const cfg = await this.loadCfg();
-    const hit = cfg.files.find((f) => f.localPath === posixRel);
-    if (!hit) {
-      throw new Error("not tracked");
-    }
-    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === hit.workspaceId);
-    if (!ent) {
-      throw new Error("no entry");
-    }
-    const meta = await this.pullMeta(hit.workspaceId, ent.metaEtag);
-    const row = meta.files[posixRel];
-    const wireGzip = row?.wireGzip === true;
-    const path = blobCloudPath(hit.workspaceId, posixRel, wireGzip);
-    let dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
-    if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(path, { signal: this.abortSignal });
-    }
-    return { body: this.decodeCloudBlob(dl.body, wireGzip) };
+    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
+    const path = blobCloudPath(hit.workspaceId, key, wireGzip);
+    return { body: this.decodeCloudBlob(await this.downloadCloudBytes(path), wireGzip) };
   }
 }
 

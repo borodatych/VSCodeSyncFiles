@@ -870,6 +870,14 @@
         "title": "%cmd.addToNewWorkspace.title%"
       },
       {
+        "command": "vscodesync.bindLocalFile",
+        "title": "%cmd.bindLocalFile.title%"
+      },
+      {
+        "command": "vscodesync.bindLocalFolder",
+        "title": "%cmd.bindLocalFolder.title%"
+      },
+      {
         "command": "vscodesync.pushAll",
         "title": "%cmd.pushAll.title%"
       },
@@ -1872,6 +1880,11 @@
           "group": "1_sync@2"
         },
         {
+          "command": "vscodesync.bindLocalFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
+          "group": "1_sync@3"
+        },
+        {
           "command": "vscodesync.sendQuickTransfer",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "1_sync@3"
@@ -1932,6 +1945,11 @@
           "command": "vscodesync.addToNewWorkspace",
           "when": "explorerResourceIsFolder",
           "group": "vscodesync@2"
+        },
+        {
+          "command": "vscodesync.bindLocalFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "vscodesync@3"
         },
         {
           "submenu": "vscodesync.submenu",

@@ -63,13 +63,20 @@ function consensusLagsLocally(input: FileActionInput): boolean {
   );
 }
 
-/** How a planned action shows up in the workspace config / UI. */
-export function syncStatusForAction(action: ChangeAction): TrackedSyncStatus {
+/**
+ * How a planned action shows up in the workspace config / UI.
+ *
+ * `localAbsent` refines "pull": a tracked file with no bytes on disk is
+ * `missing_local`, not `cloud_newer` — before Link Bindings that state hid
+ * behind `localHash: ""` and decorations showed it as synced. The verdict
+ * (pull restores it) is unchanged; only the honesty of the label is.
+ */
+export function syncStatusForAction(action: ChangeAction, localAbsent = false): TrackedSyncStatus {
   switch (action) {
     case "push":
       return "pending_push";
     case "pull":
-      return "cloud_newer";
+      return localAbsent ? "missing_local" : "cloud_newer";
     case "none":
       return "ok";
     case "conflict":

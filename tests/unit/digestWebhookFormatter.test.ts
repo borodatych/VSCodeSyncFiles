@@ -9,7 +9,7 @@ const sampleDigest = (): WeeklyDigest => ({
   windowDays: 7,
   totalEvents: 23,
   byKind: {
-    push: 12, pull: 5, conflict: 2, add: 3, remove: 1,
+    push: 12, pull: 5, conflict: 2, add: 3, bind: 0, remove: 1,
     resolve_keep_mine: 0, resolve_take_theirs: 0,
     resolve_keep_both: 0, workspace_remote_deleted: 0, manifest_repaired: 0,
     hash_migration: 0, branch_mismatch_detected: 0,

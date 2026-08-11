@@ -481,6 +481,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       item.iconPath = new vscode.ThemeIcon("arrow-down");
       item.tooltip = `${element.workspaceNote}\n${element.localPath}\n\nОблако содержит более новую версию.\nНажмите ПКМ → «Получить файл» для обновления.`;
       item.contextValue = "vscodeSync.file";
+    } else if (st === "missing_local") {
+      // Link Bindings: tracked, absent on disk — an honest state of its own.
+      // The `vscodeSync.file` prefix keeps the shared menu (Pull works; Push
+      // errors politely); binding row-actions target `fileMissing` explicitly.
+      item.description = "нет на диске";
+      item.iconPath = new vscode.ThemeIcon("close");
+      item.contextValue = "vscodeSync.fileMissing";
     } else {
       item.contextValue = "vscodeSync.file";
     }

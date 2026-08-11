@@ -39,9 +39,10 @@ export interface AdoptedFilePlan {
    * A file adopted from someone else's manifest exists in the cloud, not
    * necessarily on this disk. Registering it as already-synced (cloud hash in
    * `localHash`, status `ok`) is what used to leave it never pulled.
+   * `missing_local` is the honest form of "not on this disk" (Link Bindings).
    */
   localHash: string;
-  syncStatus: "ok" | "cloud_newer";
+  syncStatus: "ok" | "missing_local";
 }
 
 export interface RenamedFilePlan {
@@ -83,7 +84,7 @@ export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
       posixRel: row.path,
       wireGzip,
       localHash: exists ? metaHash : "",
-      syncStatus: exists ? "ok" : "cloud_newer",
+      syncStatus: exists ? "ok" : "missing_local",
     });
   }
 

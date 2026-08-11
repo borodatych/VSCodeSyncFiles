@@ -69,6 +69,7 @@ export function buildWeeklyDigest(input: WeeklyDigestInput): WeeklyDigest {
     pull: 0,
     conflict: 0,
     add: 0,
+    bind: 0,
     remove: 0,
     resolve_keep_mine: 0,
     resolve_take_theirs: 0,

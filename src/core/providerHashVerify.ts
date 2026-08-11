@@ -24,6 +24,8 @@
  */
 
 import { createHash } from "node:crypto";
+import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
+import { ProviderError } from "../providers/cloudProviderTypes.js";
 import type { ProviderType } from "./types.js";
 
 export type VerifiableDigestKind = "md5" | "sha1" | "sha256" | "dropbox-content-hash";
@@ -106,4 +108,42 @@ export function digestEquals(a: string, b: string): boolean {
     diff |= (a.charCodeAt(i) ^ b.charCodeAt(i));
   }
   return diff === 0;
+}
+
+/**
+ * Shared post-transfer digest check (push D01 / pull X1) — extracted verbatim
+ * from the two near-identical inline blocks in `syncEngine.ts` (engine
+ * line-ceiling offset for Link Bindings). Compares the provider's advertised
+ * content digest against digests of the plaintext we hold. Throws
+ * INTEGRITY_FAILED on a confirmed mismatch; every other failure (no metadata,
+ * network blip, provider without digests) is silently non-fatal — the caller's
+ * canonical-hash checks cover the common corruption modes.
+ */
+export async function verifyProviderContentDigest(
+  provider: Pick<ICloudProvider, "type" | "getMetadata">,
+  cloudPath: string,
+  plaintext: Buffer,
+  label: string,
+): Promise<void> {
+  try {
+    const meta = await provider.getMetadata(cloudPath);
+    // `contentDigest` is the field defined as a hash of the bytes (E10) — a
+    // provider `etag` is NOT a digest (OneDrive: Graph token; Dropbox: rev).
+    if (meta?.contentDigest) {
+      const expected = expectedProviderDigests(provider.type, plaintext);
+      const actual = meta.contentDigest.value.toLowerCase();
+      const matched = expected.some(
+        (d) => d.kind === meta.contentDigest?.kind && digestEquals(d.value, actual),
+      );
+      if (!matched) {
+        throw new ProviderError(
+          "INTEGRITY_FAILED",
+          `Provider digest mismatch on ${label}: provider ${meta.contentDigest.kind}=${actual} expected one of [${expected.map((d) => `${d.kind}=${d.value}`).join(", ")}]`,
+        );
+      }
+    }
+  } catch (e) {
+    if (e instanceof ProviderError && e.code === "INTEGRITY_FAILED") throw e;
+    // Non-fatal by design; see the doc comment.
+  }
 }

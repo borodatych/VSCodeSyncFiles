@@ -113,3 +113,47 @@ describe("mergeCloudManifests", () => {
     expect(out.machines.map((m) => m.machineId).sort()).toEqual(["M1", "M2", "M3"]);
   });
 });
+
+describe("mergeCloudManifests — folderBindings (docs/v2/linkBindings.md)", () => {
+  it("union машин; внутри машины по-префиксный LWW на boundAt", () => {
+    const local = manifest({
+      folderBindings: {
+        "M-home": {
+          promed: { path: "php", boundAt: "t5" },
+          "promed/vendor": { path: "lib", boundAt: "t1" },
+        },
+      },
+    });
+    const remote = manifest({
+      folderBindings: {
+        "M-home": { promed: { path: "php-old", boundAt: "t2" } },
+        "M-work": { promed: { path: "promed", boundAt: "t3" } },
+      },
+    });
+    for (const merged of [mergeCloudManifests(local, remote), mergeCloudManifests(remote, local)]) {
+      expect(merged.folderBindings).toEqual({
+        "M-home": {
+          promed: { path: "php", boundAt: "t5" },
+          "promed/vendor": { path: "lib", boundAt: "t1" },
+        },
+        "M-work": { promed: { path: "promed", boundAt: "t3" } },
+      });
+    }
+  });
+
+  it("обе стороны без folderBindings → поле отсутствует (не пустой объект)", () => {
+    const merged = mergeCloudManifests(manifest({}), manifest({}));
+    expect("folderBindings" in merged).toBe(false);
+  });
+
+  it("одна сторона без поля — правила выживают при победе любой стороны", () => {
+    const withRules = manifest({
+      updatedAt: T2,
+      folderBindings: { "M-home": { promed: { path: "php", boundAt: "t1" } } },
+    });
+    const without = manifest({});
+    for (const merged of [mergeCloudManifests(withRules, without), mergeCloudManifests(without, withRules)]) {
+      expect(merged.folderBindings).toEqual({ "M-home": { promed: { path: "php", boundAt: "t1" } } });
+    }
+  });
+});

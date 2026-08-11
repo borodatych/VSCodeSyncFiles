@@ -18,6 +18,7 @@
 import type { ICloudProvider } from "../../providers/cloudProviderTypes.js";
 import { ProviderError } from "../../providers/cloudProviderTypes.js";
 import { manifestCloudPath, type CloudManifest } from "../cloudLayout.js";
+import { withBackfilledLinkIds, withPrunedStaleBindings } from "../linkIdentity.js";
 import { mergeCloudManifests } from "../manifestMerger.js";
 import { validateManifestShape } from "../manifestValidate.js";
 import { detectMassChange, type MassChangeReport } from "../massChangeGuard.js";
@@ -175,7 +176,12 @@ export function createManifestStore(deps: ManifestStoreDeps): ManifestStore {
     async put(workspaceId, manifest, ifMatch, retries = 3): Promise<string | undefined> {
       await deps.beforeWrite(workspaceId);
       try {
-        const clean = purgeTombstones(manifest, deps.tombstonePurgeDays());
+        // Link Bindings hygiene rides every write this machine already makes:
+        // deterministic linkId backfill (no version bump — convergence comes
+        // from determinism) and pruning bindings of machines that left.
+        const clean = withPrunedStaleBindings(
+          withBackfilledLinkIds(purgeTombstones(manifest, deps.tombstonePurgeDays())),
+        );
         // Never push a manifest we would reject on download.
         const validation = validateManifestShape(clean);
         if (!validation.ok) {

@@ -47,6 +47,7 @@ import { registerWorkspaceTreeContextCommands } from "./commands/registerWorkspa
 import { registerFileTreeContextCommands } from "./commands/registerFileTreeContext.js";
 import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
+import { registerLinkBindingsCommands } from "./commands/registerLinkBindings.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
 import { registerDivergenceNotice, registerDivergencesCommands, type DivergencesCommandsDeps } from "./commands/registerDivergences.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
@@ -473,6 +474,7 @@ export function activate(context: vscode.ExtensionContext): void {
       registry,
       runWithEngine,
     }),
+    ...registerLinkBindingsCommands({ runWithEngine }),
   );
 
   registerObservers({ context, globalConfig, registry });

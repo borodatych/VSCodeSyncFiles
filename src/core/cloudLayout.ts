@@ -45,12 +45,36 @@ export interface CloudManifest {
   updatedAt: string;
   machines: MachineEntry[];
   files: ManifestFile[];
+  /**
+   * Link Bindings (docs/v2/linkBindings.md): per-machine FOLDER placement
+   * rules — `machineId → canonical dir prefix → { path: local dir prefix,
+   * boundAt }`. Unlike per-file `bindings`, a folder rule also applies to
+   * FUTURE files: adoption places new cloud files under the machine's local
+   * prefix, and adding a file under the local prefix keys it under the
+   * canonical one. Longest canonical prefix wins; a per-file binding beats
+   * any folder rule. Prefixes are stored without trailing slash. Merge is
+   * per-(machine, prefix) LWW on `boundAt` — no Lamport version involved.
+   */
+  folderBindings?: Record<string, Record<string, BindingEntry>>;
 }
 
 /** Safe read for ignore patterns (absent in legacy manifests). */
 export function sharedIgnorePatternsOrEmpty(m: CloudManifest): string[] {
   const v = m.sharedIgnorePatterns;
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * Link Bindings (docs/v2/linkBindings.md): per-machine placement of one logical
+ * file. `path` is POSIX-relative to that machine's effective sync root. A key
+ * is present only while the machine's placement differs from the canonical
+ * `ManifestFile.path`; unbinding writes the canonical path back (never deletes
+ * the key — deletion + union-merge would resurrect it from older copies).
+ * `boundAt` is the LWW tie-breaker for per-key merge.
+ */
+export interface BindingEntry {
+  path: string;
+  boundAt: string;
 }
 
 export interface ManifestFile {
@@ -63,6 +87,18 @@ export interface ManifestFile {
   hasSyncignoreMarkers: boolean;
   editingBy?: string;
   editingSince?: string;
+  /**
+   * Link Bindings: stable logical identity (16 hex), survives canonical
+   * renames. Optional — legacy rows get a deterministic lazy backfill
+   * (`deterministicLinkId`) that does NOT bump `version`: convergence comes
+   * from determinism, not Lamport. Old extension versions ignore the field
+   * and preserve it (merge/edits spread rows).
+   */
+  linkId?: string;
+  /** Human label («линковочное имя»). Not a key — collisions allowed; default basename(path). */
+  linkName?: string;
+  /** machineId → placement on that machine. See {@link BindingEntry}. */
+  bindings?: Record<string, BindingEntry>;
 }
 
 export interface MachineEntry {

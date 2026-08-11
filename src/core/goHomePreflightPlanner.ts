@@ -34,7 +34,7 @@ export function planGoHomePreflight(files: PreflightFile[]): GoHomeVerdict {
   const conflicts: string[] = [];
   for (const f of files) {
     if (f.syncStatus === "pending_push") pendingPush.push(f.localPath);
-    else if (f.syncStatus === "cloud_newer") cloudNewer.push(f.localPath);
+    else if (f.syncStatus === "cloud_newer" || f.syncStatus === "missing_local") cloudNewer.push(f.localPath);
     else if (f.syncStatus === "conflict") conflicts.push(f.localPath);
   }
   const categories = [

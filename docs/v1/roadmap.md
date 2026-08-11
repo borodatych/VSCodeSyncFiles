@@ -626,6 +626,36 @@
       сохранены в `src/core/walkthroughVideoSpec.ts`; там же вскрылось, что
       модуль не подключён к рантайму — записано в `docs/knowledge.md`.
 
+## Фаза 27 — Link Bindings: структура не обязана совпадать (после 1.0.0)
+
+> Дизайн: [docs/v2/linkBindings.md](../v2/linkBindings.md). Согласован владельцем
+> 2026-08-11 (проработка: 3 конкурирующих дизайна + 3 судьи; победил оверлей).
+
+- [x] **Этап 1 — ядро идентичности и привязки** — ✅ (2026-08-11, ветка `next`)
+      Манифест: `linkId` (детерминированный бэкфилл без bump version),
+      `linkName`, `bindings` (по-ключевой LWW-merge на `boundAt`),
+      `folderBindings` (пер-машинные папочные правила: работа `promed/**` ↔ дом
+      `php/**`, действуют и на будущие файлы через adopt/addFiles);
+      `schemaVersion` остаётся 1. Локально: `TrackedFile.manifestPath`/`linkId`,
+      единый `manifestKeyOf` + свип ~70 точек ключевания движка (меta/манифест/
+      blob/history/hash/locks) + гейт `tests/unit/manifestKeyUsage.test.ts`.
+      Честный статус `missing_local` по всем поверхностям (декорации — включая
+      старый баг «✓ у отсутствующего файла», дерево, панель, статус-бар, SCM,
+      дайджесты, explain). Команды `vscodesync.bindLocalFile` /
+      `vscodesync.bindLocalFolder` (+nls en/ru, меню). Анти-воскрешение bind в
+      tombstone. Локальный rename привязанного файла = rebind без модалки.
+      Потолок движка соблюдён выносами: deleteCloudFolder, directChildFolderIds
+      + listRemoteWorkspaceSummaries, planBlake3Backfill, planCloudScanRepair,
+      planWorkspaceMergeCfg, manifestCacheFields, touchManifestMachine,
+      verifyProviderContentDigest (DRY push/pull). Проверки: compile/typecheck/
+      lint чисто, 282 файла / 2398 тестов.
+- [ ] **Этап 2 — размещение при pull и дедуп при добавлении** — pull-QuickPick
+      «как у отправителя / своё место / привязать», батч-вопрос, `planAddDuplicates`,
+      linkName InputBox, hash-подсказки в bind-пикере, row-actions панели, бейдж «⇄».
+- [ ] **Этап 3 — rename/rebind-потоки** — модалка rename, case-only, «файл
+      переехал», реплей чужого rename, самолечение + rate-limit, диагностика
+      дубликата `linkId` + repair, metadata-only guard, `renameLinkName`.
+
 ---
 
 ## Ключевые архитектурные решения (зафиксировано)

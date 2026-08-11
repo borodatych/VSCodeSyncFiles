@@ -8,7 +8,7 @@
  * vscode.
  */
 
-import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
+import type { FileMetadata, ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { CLOUD_ROOT_DIR, manifestCloudPath } from "./cloudLayout.js";
 import { parseManifestSafe } from "./manifestValidate.js";
 
@@ -53,4 +53,72 @@ export async function listCloudWorkspacesViaPaths(
   }
   summaries.sort((a, b) => a.workspaceNote.localeCompare(b.workspaceNote));
   return summaries;
+}
+
+/**
+ * Direct child folder ids of the cloud root from a flat listing. Extracted
+ * verbatim from `syncEngine.ts` (engine line-ceiling offset for Link
+ * Bindings). Handles providers that return full disk paths (Yandex app
+ * folder) by locating the root marker inside the path.
+ */
+export function directChildFolderIds(cloudRoot: string, items: FileMetadata[]): string[] {
+  const base = cloudRoot.endsWith("/") ? cloudRoot : `${cloudRoot}/`;
+  const ids = new Set<string>();
+  for (const it of items) {
+    let rest: string | undefined;
+    if (it.cloudPath.startsWith(base)) {
+      rest = it.cloudPath.slice(base.length);
+    } else {
+      // app folder: Yandex returns full disk path, e.g. "Приложения/App/VSCodeSyncFiles/id"
+      const markerIdx = it.cloudPath.indexOf(base);
+      if (markerIdx >= 0) {
+        rest = it.cloudPath.slice(markerIdx + base.length);
+      }
+    }
+    if (rest === undefined) {
+      continue;
+    }
+    const seg = rest.split("/")[0];
+    if (!seg || seg.includes(".")) {
+      continue;
+    }
+    ids.add(seg);
+  }
+  return [...ids];
+}
+
+/**
+ * Remote workspace summaries via manifest probes (extracted verbatim from
+ * `syncEngine.listRemoteWorkspaceSummaries` — engine line-ceiling offset for
+ * Link Bindings). Skips folders whose manifest is unreadable, has a foreign
+ * schemaVersion or a mismatched workspaceId.
+ */
+export async function listRemoteWorkspaceSummaries(
+  provider: ICloudProvider,
+  supportedSchema: number,
+): Promise<{ workspaceId: string; workspaceNote: string }[]> {
+  const listed = await provider.listFolder(CLOUD_ROOT_DIR);
+  const candidates = directChildFolderIds(CLOUD_ROOT_DIR, listed);
+  const out: { workspaceId: string; workspaceNote: string }[] = [];
+  for (const id of candidates) {
+    try {
+      const dl = await provider.downloadFile(manifestCloudPath(id));
+      const m = JSON.parse(dl.body.toString("utf8")) as {
+        schemaVersion?: number;
+        workspaceId?: string;
+        workspaceNote?: string;
+      };
+      if (m.schemaVersion !== supportedSchema) {
+        continue;
+      }
+      if (m.workspaceId !== id) {
+        continue;
+      }
+      out.push({ workspaceId: id, workspaceNote: m.workspaceNote ?? id });
+    } catch {
+      /* не workspace */
+    }
+  }
+  out.sort((a, b) => a.workspaceNote.localeCompare(b.workspaceNote, undefined, { sensitivity: "base" }));
+  return out;
 }
