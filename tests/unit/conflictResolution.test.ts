@@ -262,3 +262,54 @@ describe("tombstone purge", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// «Оставить моё» после ухода облака вперёд — бесконечный круг (регресс v0.4.0)
+// ---------------------------------------------------------------------------
+
+describe("resolveConflictKeepMine — перезапись ушедшей вперёд облачной версии", () => {
+  let rootA = "";
+  let rootB = "";
+
+  afterEach(async () => {
+    for (const r of [rootA, rootB]) {
+      if (r) await fs.rm(r, { recursive: true, force: true });
+    }
+    rootA = "";
+    rootB = "";
+  });
+
+  /**
+   * Пользовательский сценарий: конфликт отмечен, затем облачный блоб
+   * переписан, а `_meta` не догнал — этой пары достаточно, чтобы etag,
+   * который держит машина, перестал совпадать с блобом. «Оставить моё»
+   * уходило с `ifMatch` на этот etag → провайдер отвечал 412 → ветка 412
+   * заново поднимала конфликт и обнуляла baseline. Пользователь жал кнопку
+   * снова — и так по кругу, файл в облако не попадал никогда.
+   */
+  it("force keep-mine перезаписывает облако, а не возвращает конфликт по 412", async () => {
+    const { provider, rootA: rA, wid, rel } = await setupBase();
+    rootA = rA;
+    rootB = await fs.mkdtemp(path.join(os.tmpdir(), "vsc-km-b-"));
+
+    const engineB = new SyncEngine({ workspaceRoot: rootB, provider, machineId: "B", machineName: "B", trigger: "user" });
+    await seedConflictState(provider, rootB, wid, rel, "// version-B\n", "// version-A\n", engineB);
+    await engineB.syncWorkspace(wid);
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("conflict");
+
+    // Блоб переписан напрямую: etag изменился, `_meta` остался прежним.
+    const cloudPath = trackedFileCloudPath(wid, rel);
+    await provider.uploadFile(cloudPath, Buffer.from("// version-D\n", "utf8"));
+
+    // Пользователя предупреждают…
+    expect(await engineB.resolveConflictKeepMine(wid, rel)).toBe("cloud_moved");
+    // …и он всё равно выбирает свою версию: она ОБЯЗАНА попасть в облако.
+    expect(await engineB.resolveConflictKeepMine(wid, rel, { force: true })).toBe("pushed");
+    expect((await provider.downloadFile(cloudPath)).body.toString("utf8")).toBe("// version-B\n");
+    expect(
+      (await WorkspaceConfigManager.load(rootB)).files.find((f) => f.localPath === rel)?.syncStatus,
+    ).toBe("ok");
+  });
+});

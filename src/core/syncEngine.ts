@@ -3707,7 +3707,14 @@ export class SyncEngine {
 
       const uploadBuf = encoded.body;
 
-      const ifMatchBlob = pathModeChanged ? undefined : prevEtagLocked;
+      // "Keep mine" IS the deliberate overwrite of the cloud copy: the user
+      // confirmed it in the D5 modal, and the previous cloud version was just
+      // copied into `.history` above. Sending `ifMatch` here made the upload
+      // fail with 412 exactly when the cloud had moved on — the one case the
+      // button exists for — and the 412 branch below re-raised the conflict,
+      // so "Всё равно оставить моё" looped forever without ever writing.
+      const ifMatchBlob =
+        pathModeChanged || activityHint?.asAutoResolvedKeepMine === true ? undefined : prevEtagLocked;
       let etag = prevEtagLocked;
       const networkStartMs = this.deps.onSyncProfileSample ? Date.now() : 0;
       try {
