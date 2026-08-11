@@ -80,6 +80,10 @@
     cloudPath: string;
     lastSync: string;        // ISO 8601
     localHash: string;       // SHA-256 от нормализованной санированной версии
+    // Link Bindings (docs/v2/linkBindings.md, 2026-08-11):
+    manifestPath?: string;   // канонический ключ манифеста/_meta; отсутствует ⇒ равен localPath —
+                             // все конфиги до фичи валидны без миграции; читать через manifestKeyOf
+    linkId?: string;         // кэш идентичности облачной строки
   }
   ```
 - [x] Реализовать `WorkspaceConfigManager`:
