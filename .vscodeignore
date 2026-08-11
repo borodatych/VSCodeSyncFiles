@@ -12,6 +12,8 @@ references/**
 CLAUDE.md
 
 # Dev configs
+.husky/**
+.lintstagedrc.json
 .github/**
 .vscode-test/**
 esbuild.mjs
