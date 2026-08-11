@@ -20,7 +20,9 @@ export type ManifestDiagnosticKind =
   | "duplicate_file_path"
   | "machine_not_in_machines_array"
   | "tag_with_whitespace"
-  | "addedAt_not_iso";
+  | "addedAt_not_iso"
+  /** Link Bindings: two LIVE rows share one identity (bind-vs-rename race). */
+  | "duplicate_link_id";
 
 export type ManifestDiagnosticSeverity = "error" | "warning" | "info";
 
@@ -79,6 +81,25 @@ export function diagnoseManifest(manifest: unknown): ManifestDiagnosticsReport {
           ref: f.path,
         });
       }
+    }
+  }
+
+  // Link Bindings: one linkId on two LIVE rows — the artefact of a bind
+  // racing a canonical rename. Tombstoned carriers are fine (that's how a
+  // rename hands identity over); repair is `repairDuplicateLinkIds`.
+  const liveByLinkId = new Map<string, string>();
+  for (const f of m.files) {
+    if (f.removedAt !== undefined || f.linkId === undefined) continue;
+    const prior = liveByLinkId.get(f.linkId);
+    if (prior !== undefined) {
+      diagnostics.push({
+        kind: "duplicate_link_id",
+        severity: "warning",
+        detail: `Rows "${prior}" and "${f.path}" share linkId ${f.linkId} — likely a bind/rename race.`,
+        ref: f.path,
+      });
+    } else {
+      liveByLinkId.set(f.linkId, f.path);
     }
   }
 

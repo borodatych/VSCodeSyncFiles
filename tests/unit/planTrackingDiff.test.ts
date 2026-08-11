@@ -27,7 +27,7 @@ describe("planTrackingDiff", () => {
     expect(d.prune).toEqual([]);
   });
 
-  it("файла нет на диске → adopt со статусом cloud_newer и пустым localHash", () => {
+  it("файла нет на диске → adopt со статусом missing_local и пустым localHash", () => {
     // Раньше такие записи получали cloud-хэш в localHash и статус ok —
     // выглядели синхронизированными, и их никто никогда не тянул.
     const d = planTrackingDiff(
@@ -37,7 +37,7 @@ describe("planTrackingDiff", () => {
       posixRel: "a.ts",
       wireGzip: false,
       localHash: "",
-      syncStatus: "cloud_newer",
+      syncStatus: "missing_local",
     });
   });
 

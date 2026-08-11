@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -764,33 +764,24 @@
             ]
           },
           {
-            "id": "videoAddFirstFile",
-            "title": "Видео: добавьте первый файл",
-            "description": "30-секундный клип: ПКМ на файле → VSCodeSync → Add file.",
+            "id": "resolveConflict",
+            "title": "Разрешите конфликт",
+            "description": "Если файл изменился и здесь, и на другой машине, расширение не выбирает за вас: оно показывает трёхстороннее сравнение, где для каждого фрагмента можно оставить свою версию, взять чужую или собрать общую.\n\n[Разрешить конфликты](command:vscodesync.resolveConflicts)",
             "media": {
-              "markdown": "media/walkthroughs/add-first-file.md"
-            },
-            "completionEvents": [
-              "onCommand:vscodesync.addCurrentFile"
-            ]
-          },
-          {
-            "id": "videoResolveConflict",
-            "title": "Видео: разрешение конфликта",
-            "description": "30-секундный клип: 3-way diff, keep mine / take theirs.",
-            "media": {
-              "markdown": "media/walkthroughs/resolve-conflict.md"
+              "image": "media/vscodesync.png",
+              "altText": "VSCodeSync logo"
             },
             "completionEvents": [
               "onCommand:vscodesync.resolveConflicts"
             ]
           },
           {
-            "id": "videoTimeTravel",
-            "title": "Видео: time-travel scrubber",
-            "description": "30-секундный клип: scrubber по версиям файла + restore.",
+            "id": "timeTravel",
+            "title": "Вернитесь к прошлой версии файла",
+            "description": "Time-Travel слайдер прокручивает историю текущего файла: перетаскиваете ползунок по версиям, видите содержимое каждой и восстанавливаете нужную.\n\n[Открыть слайдер](command:vscodesync.openTimeTravelScrubber)",
             "media": {
-              "markdown": "media/walkthroughs/time-travel.md"
+              "image": "media/vscodesync.png",
+              "altText": "VSCodeSync logo"
             },
             "completionEvents": [
               "onCommand:vscodesync.openTimeTravelScrubber"
@@ -877,6 +868,18 @@
       {
         "command": "vscodesync.addToNewWorkspace",
         "title": "%cmd.addToNewWorkspace.title%"
+      },
+      {
+        "command": "vscodesync.bindLocalFile",
+        "title": "%cmd.bindLocalFile.title%"
+      },
+      {
+        "command": "vscodesync.bindLocalFolder",
+        "title": "%cmd.bindLocalFolder.title%"
+      },
+      {
+        "command": "vscodesync.renameLinkName",
+        "title": "%cmd.renameLinkName.title%"
       },
       {
         "command": "vscodesync.pushAll",
@@ -1881,6 +1884,11 @@
           "group": "1_sync@2"
         },
         {
+          "command": "vscodesync.bindLocalFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && !vscodeSync.activeFileTracked",
+          "group": "1_sync@3"
+        },
+        {
           "command": "vscodesync.sendQuickTransfer",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "1_sync@3"
@@ -1941,6 +1949,11 @@
           "command": "vscodesync.addToNewWorkspace",
           "when": "explorerResourceIsFolder",
           "group": "vscodesync@2"
+        },
+        {
+          "command": "vscodesync.bindLocalFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "vscodesync@3"
         },
         {
           "submenu": "vscodesync.submenu",

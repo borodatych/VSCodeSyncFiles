@@ -6,7 +6,7 @@
  * pull in Zod/Ajv here: the schema is small, JSON.stringify already serialises
  * fine, and adding a dep for one validator is over-engineering.
  */
-import type { CloudManifest, ManifestFile, MachineEntry } from "./cloudLayout.js";
+import type { BindingEntry, CloudManifest, ManifestFile, MachineEntry } from "./cloudLayout.js";
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
 
@@ -44,6 +44,12 @@ function validateMachine(m: unknown, ix: number): ValidationResult {
   return { ok: true };
 }
 
+/** A bindings path must stay inside the sync root: relative, no backslashes, no `..` segments. */
+function isSafeRelPosixPath(p: string): boolean {
+  if (p.length === 0 || p.includes("\\") || p.startsWith("/")) return false;
+  return !p.split("/").includes("..");
+}
+
 function validateFile(f: unknown, ix: number): ValidationResult {
   if (typeof f !== "object" || f === null) return fail(`files[${String(ix)}] not object`);
   const e = f as Partial<ManifestFile>;
@@ -51,6 +57,28 @@ function validateFile(f: unknown, ix: number): ValidationResult {
   if (e.path.includes("\\")) return fail(`files[${String(ix)}].path contains backslash`);
   if (!isStr(e.addedAt)) return fail(`files[${String(ix)}].addedAt not string`);
   if (!isNum(e.version)) return fail(`files[${String(ix)}].version not finite number`);
+  if (e.linkId !== undefined && (!isStr(e.linkId) || e.linkId.length === 0)) {
+    return fail(`files[${String(ix)}].linkId empty`);
+  }
+  if (e.linkName !== undefined && !isStr(e.linkName)) return fail(`files[${String(ix)}].linkName not string`);
+  if (e.bindings !== undefined) {
+    // Runtime input — the Partial<ManifestFile> cast must not narrow checks.
+    const rawBindings: unknown = e.bindings;
+    if (typeof rawBindings !== "object" || rawBindings === null || Array.isArray(rawBindings)) {
+      return fail(`files[${String(ix)}].bindings not object`);
+    }
+    for (const [machineId, entry] of Object.entries(rawBindings)) {
+      const rawEntry: unknown = entry;
+      if (typeof rawEntry !== "object" || rawEntry === null) {
+        return fail(`files[${String(ix)}].bindings[${machineId}] not object`);
+      }
+      const b = rawEntry as Partial<BindingEntry>;
+      if (!isStr(b.path) || !isSafeRelPosixPath(b.path)) {
+        return fail(`files[${String(ix)}].bindings[${machineId}].path unsafe`);
+      }
+      if (!isStr(b.boundAt)) return fail(`files[${String(ix)}].bindings[${machineId}].boundAt not string`);
+    }
+  }
   return { ok: true };
 }
 
@@ -92,5 +120,27 @@ export function validateManifestShape(m: unknown): ValidationResult {
     if (!r.ok) return r;
   }
   if (e.tags !== undefined && !isStringArray(e.tags)) return fail("tags not string[]");
+  if (e.folderBindings !== undefined) {
+    const raw: unknown = e.folderBindings;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return fail("folderBindings not object");
+    for (const [machineId, rules] of Object.entries(raw)) {
+      const rawRules: unknown = rules;
+      if (typeof rawRules !== "object" || rawRules === null || Array.isArray(rawRules)) {
+        return fail(`folderBindings[${machineId}] not object`);
+      }
+      for (const [prefix, entry] of Object.entries(rawRules)) {
+        if (!isSafeRelPosixPath(prefix)) return fail(`folderBindings[${machineId}] prefix unsafe`);
+        const rawEntry: unknown = entry;
+        if (typeof rawEntry !== "object" || rawEntry === null) {
+          return fail(`folderBindings[${machineId}][${prefix}] not object`);
+        }
+        const b = rawEntry as Partial<BindingEntry>;
+        if (!isStr(b.path) || !isSafeRelPosixPath(b.path)) {
+          return fail(`folderBindings[${machineId}][${prefix}].path unsafe`);
+        }
+        if (!isStr(b.boundAt)) return fail(`folderBindings[${machineId}][${prefix}].boundAt not string`);
+      }
+    }
+  }
   return { ok: true };
 }

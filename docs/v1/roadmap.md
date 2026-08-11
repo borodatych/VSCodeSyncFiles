@@ -599,6 +599,78 @@
 
 ---
 
+## Фаза 26 — гигиена пакета и онбординга (после 1.0.0)
+
+- [x] **Из `.vsix` убран инструментарий разработчика** — ✅ (2026-08-11, ветка `next`)
+      `.husky/**`, `.lintstagedrc.json` (`9e04e45`), `AGENTS.md` (`8594eec`),
+      `media/QR-Code.jpg` и `media/walkthroughs/README.md` (`eafe696`). QR-код README
+      подтягивает по ссылке с raw.githubusercontent — локальная копия ехала зря.
+- [x] **Битые видеоплееры в «Начало работы» устранены** — ✅ (2026-08-11, ветка `next`,
+      `b4ae535`) Три шага walkthrough ссылались на `.md` с `<video src="…mp4">`, сами
+      ролики в `.gitignore` и не записаны — уехало в v1.0.0 и v1.0.1. Наличие записи
+      стало данными спеки (`VideoSpec.hasRecording`), при `false` шаг отдаёт статичную
+      иконку. Регрессию держит гейт `tests/unit/walkthroughMediaIntegrity.test.ts` по
+      всем `media`-ссылкам манифеста и `src=` внутри markdown-тел.
+      Итог по пакету за фазу: **38 → 13 файлов, 498.22 → 453.08 KB**.
+- [x] **Онбординг описан в каталоге возможностей** — ✅ (2026-08-11, ветка `next`)
+      Секция «Первый запуск и онбординг» в `docs/functional.md`: мастер первого
+      запуска (имя машины → провайдер → способ входа → workspace → телеметрия),
+      его повторный вызов командой и walkthrough «Начало работы» как отдельная
+      точка входа. Раньше каталог не описывал ни то, ни другое.
+- [x] **Видео-заготовки в walkthrough свёрнуты** — ✅ (2026-08-11, ветка `next`)
+      `videoAddFirstFile` удалён как полный дубль шага `addFile` (тот же
+      `onCommand:vscodesync.addCurrentFile`). Два оставшихся доведены до
+      полноценных текстовых шагов `resolveConflict` и `timeTravel` — русское
+      описание и кнопка-команда, как у первых пяти: конфликты и Time-Travel
+      слайдер иначе исчезли бы из онбординга вовсе. Раскадровки будущих роликов
+      сохранены в `src/core/walkthroughVideoSpec.ts`; там же вскрылось, что
+      модуль не подключён к рантайму — записано в `docs/knowledge.md`.
+
+## Фаза 27 — Link Bindings: структура не обязана совпадать (после 1.0.0)
+
+> Дизайн: [docs/v2/linkBindings.md](../v2/linkBindings.md). Согласован владельцем
+> 2026-08-11 (проработка: 3 конкурирующих дизайна + 3 судьи; победил оверлей).
+
+- [x] **Этап 1 — ядро идентичности и привязки** — ✅ (2026-08-11, ветка `next`)
+      Манифест: `linkId` (детерминированный бэкфилл без bump version),
+      `linkName`, `bindings` (по-ключевой LWW-merge на `boundAt`),
+      `folderBindings` (пер-машинные папочные правила: работа `promed/**` ↔ дом
+      `php/**`, действуют и на будущие файлы через adopt/addFiles);
+      `schemaVersion` остаётся 1. Локально: `TrackedFile.manifestPath`/`linkId`,
+      единый `manifestKeyOf` + свип ~70 точек ключевания движка (меta/манифест/
+      blob/history/hash/locks) + гейт `tests/unit/manifestKeyUsage.test.ts`.
+      Честный статус `missing_local` по всем поверхностям (декорации — включая
+      старый баг «✓ у отсутствующего файла», дерево, панель, статус-бар, SCM,
+      дайджесты, explain). Команды `vscodesync.bindLocalFile` /
+      `vscodesync.bindLocalFolder` (+nls en/ru, меню). Анти-воскрешение bind в
+      tombstone. Локальный rename привязанного файла = rebind без модалки.
+      Потолок движка соблюдён выносами: deleteCloudFolder, directChildFolderIds
+      + listRemoteWorkspaceSummaries, planBlake3Backfill, planCloudScanRepair,
+      planWorkspaceMergeCfg, manifestCacheFields, touchManifestMachine,
+      verifyProviderContentDigest (DRY push/pull). Проверки: compile/typecheck/
+      lint чисто, 282 файла / 2398 тестов.
+- [x] **Этап 2 — размещение при pull и дедуп при добавлении** — ✅ (2026-08-11,
+      ветка `next`) Pull-QuickPick «Сюда / Выбрать папку и имя… / Привязать к
+      существующему…» в дереве и панели (общий `commands/_placementFlow.ts`),
+      батч-вопрос в Pull All, заметка о раскладке после attach,
+      `planAddDuplicates` + модалка/canPickMany в добавлении, linkName InputBox,
+      hash-подсказки в bind-пикере, row-action «Привязать…» в панели, бейдж
+      «⇄ канон» в дереве. Индекс подсказок — напрямую через провайдер
+      (`_cloudIndex.ts`), движок не растёт. 283 файла / 2404 теста.
+- [x] **Этап 3 — rename/rebind-потоки** — ✅ (2026-08-11, ветка `next`)
+      Модалка rename для непривязанных (в облаке для всех / только здесь;
+      case-only — рекомендация «только здесь»; привязанные ребиндятся молча),
+      «Файл переехал — перепривязать…» в промпте удаления, реплей чужого
+      rename без молчаливых переносов байтов (тост «Переместить у меня /
+      Оставить мою»), самолечение привязок раз за сессию
+      (`planBindingSelfHeal`), диагностика дубликата `linkId` + чистый
+      `repairDuplicateLinkIds`, `vscodesync.renameLinkName`. Потолок движка
+      соблюдён выносом `previewSyncPlan` → `syncPreview.ts`. 284 файла /
+      2411 тестов. Metadata-only guard не понадобился (guard уже считает
+      только tombstone-ы); запуск ремонта дубликатов из UI — полировка.
+
+---
+
 ## Ключевые архитектурные решения (зафиксировано)
 
 - **Один активный провайдер** глобально (v1). Несколько одновременных — v2+.

@@ -154,11 +154,12 @@ describe("SyncEngine — чекпоинт мутации", () => {
     const cfg = await WorkspaceConfigManager.load(root);
     expect(cfg.files.map((f) => f.localPath)).toEqual(["a.txt"]);
 
-    // The user applying the drift adopts the entry (status: needs pulling).
+    // The user applying the drift adopts the entry (absent on disk → honest
+    // missing_local; pull restores it).
     await user.applyTrackingFromCloud(wsId);
     const cfgAfter = await WorkspaceConfigManager.load(root);
     const adopted = cfgAfter.files.find((f) => f.localPath === "b.txt");
-    expect(adopted?.syncStatus).toBe("cloud_newer");
+    expect(adopted?.syncStatus).toBe("missing_local");
   });
 
   it("Push не скачивает cloud-newer поверх локального файла (B17)", async () => {

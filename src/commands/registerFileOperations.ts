@@ -24,6 +24,9 @@ import { resolveFileTarget, resolveFileTargetLoose as resolveFileTargetLooseRaw 
 import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { trackedAbsolutePathFor, trackedPosixRelFor } from "../core/trackedPathResolver.js";
+import { planAddDuplicates, type AddCandidate, type DuplicateMatch } from "../core/plan/planAddDuplicates.js";
+import { computeHash } from "../utils/hash.js";
+import { readCloudFileIndex } from "./_cloudIndex.js";
 
 async function runAddToNewWorkspaceImpl(
   runWithEngine: RunWithEngineFn,
@@ -277,13 +280,92 @@ export function registerFileOperationsCommands(
       ) {
         return;
       }
+
+      // Link Bindings (stage 2) — duplicate detection: the file may already
+      // live in the cloud (same content or name, possibly under another
+      // machine's structure). Advisory: offer binding, never force it.
+      const relOf = new Map<string, string>();
+      const candidates: AddCandidate[] = [];
+      for (const abs of expanded) {
+        const rel = (await trackedPosixRelFor(target.root, abs)) ?? path.basename(abs);
+        relOf.set(abs, rel);
+        candidates.push({
+          posixRel: rel,
+          hash: await computeHash(abs, { lineEnding: "lf" }).catch(() => ""),
+        });
+      }
+      const matches = planAddDuplicates(candidates, await readCloudFileIndex(registry, ws));
+      let toBind: DuplicateMatch[] = [];
+      if (matches.length > 0 && expanded.length === 1) {
+        const m = matches[0];
+        const kindText =
+          m.kind === "content" ? "содержимое" : m.kind === "name" ? "имя" : "имя и содержимое";
+        const choice = await vscode.window.showInformationMessage(
+          `Файл, похоже, уже есть в облаке: «${m.cloudLinkName ?? m.cloudPath}» (${m.cloudPath}) — совпадает ${kindText}.`,
+          { modal: true },
+          "Привязать к существующей записи",
+          "Добавить как новую",
+        );
+        if (choice === undefined) {
+          return;
+        }
+        if (choice === "Привязать к существующей записи") {
+          toBind = [m];
+        }
+      } else if (matches.length > 0) {
+        const picked = await vscode.window.showQuickPick(
+          matches.map((m) => ({
+            label: m.posixRel,
+            description: `⇄ ${m.cloudPath}`,
+            detail: m.kind === "content" ? "совпадает содержимое" : m.kind === "name" ? "совпадает имя" : "совпадают имя и содержимое",
+            picked: m.kind !== "name",
+            value: m,
+          })),
+          {
+            title: "Похоже, часть файлов уже есть в облаке",
+            placeHolder: "Отмеченные будут ПРИВЯЗАНЫ к существующим записям; остальные добавятся как новые",
+            canPickMany: true,
+          },
+        );
+        if (picked === undefined) {
+          return;
+        }
+        toBind = picked.map((p) => p.value);
+      }
+      const bindRels = new Set(toBind.map((m) => m.posixRel));
+      const toAdd = expanded.filter((abs) => !bindRels.has(relOf.get(abs) ?? abs));
+
+      // Link name for a single fresh file — the label the cloud entry carries.
+      let linkName: string | undefined;
+      if (toAdd.length === 1 && expanded.length === 1) {
+        linkName = await vscode.window.showInputBox({
+          title: "VSCodeSync — линковочное имя",
+          prompt: "Метка облачной записи (не влияет на пути; переименовать можно позже)",
+          value: path.basename(toAdd[0]),
+        });
+        if (linkName === undefined) {
+          return;
+        }
+      }
+
       await runWithEngine(async (engine) => {
-        await engine.addFiles(ws, expanded);
+        for (const m of toBind) {
+          const abs = expanded.find((a) => relOf.get(a) === m.posixRel);
+          if (abs !== undefined) {
+            await engine.bindLocalFile(ws, m.cloudPath, abs, { replaceExisting: true });
+          }
+        }
+        if (toAdd.length > 0) {
+          await engine.addFiles(ws, toAdd, linkName !== undefined && linkName !== "" ? { linkName } : undefined);
+        }
+        const boundNote = toBind.length > 0 ? `, привязано: ${String(toBind.length)}` : "";
         if (expanded.length === 1) {
-          void vscode.window.showInformationMessage("Файл добавлен и синхронизирован.");
+          void vscode.window.showInformationMessage(
+            toBind.length === 1 ? "Файл привязан к существующей облачной записи." : "Файл добавлен и синхронизирован.",
+          );
         } else {
           void vscode.window.showInformationMessage(
-            `${String(expanded.length)} файлов добавлено и синхронизировано.`,
+            `${String(toAdd.length)} файлов добавлено и синхронизировано${boundNote}.`,
           );
         }
       }, target.root);

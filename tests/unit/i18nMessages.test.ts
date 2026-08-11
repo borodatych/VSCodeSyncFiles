@@ -8,8 +8,8 @@ import {
 } from "../../src/ui/i18nMessages.js";
 
 describe("i18nMessages — central UI string table", () => {
-  it("syncStatusLabels has all 6 statuses", () => {
-    expect(Object.keys(syncStatusLabels)).toHaveLength(6);
+  it("syncStatusLabels has all 7 statuses", () => {
+    expect(Object.keys(syncStatusLabels)).toHaveLength(7);
   });
 
   it("autoSyncModeLabels has off/checkOnly", () => {

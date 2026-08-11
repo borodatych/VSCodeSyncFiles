@@ -36,7 +36,7 @@ export interface DigestSummary {
 }
 
 export function buildSmartPullDigest(files: DigestInputFile[]): DigestSummary {
-  const cloudNewer = files.filter((f) => f.syncStatus === "cloud_newer");
+  const cloudNewer = files.filter((f) => f.syncStatus === "cloud_newer" || f.syncStatus === "missing_local");
   const conflicts = files.filter((f) => f.syncStatus === "conflict");
   const byMachine = new Map<string, DigestGroup>();
   const byWorkspace = new Map<string, DigestGroup>();

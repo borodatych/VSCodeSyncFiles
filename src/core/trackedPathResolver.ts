@@ -21,7 +21,22 @@ import {
   absoluteToTrackedPosix,
   trackedLocalAbsolutePath,
 } from "./pathMapping.js";
+import type { TrackedFile } from "./types.js";
 import { WorkspaceConfigManager } from "./workspaceConfigManager.js";
+
+/**
+ * Link Bindings (docs/v2/linkBindings.md): the one way to key a tracked file
+ * into the cloud manifest (`ManifestFile.path`), `_meta.json` and blob paths.
+ *
+ * `manifestPath` is set only when this machine's placement differs from the
+ * canonical path; its absence means "bound at the canonical path", so every
+ * pre-bindings `vscodesync.json` stays valid unchanged. Keying by `localPath`
+ * directly is a data-corruption bug on bound files (duplicate blob under the
+ * local placement) — `manifestKeyUsage` gate enumerates the converted sites.
+ */
+export function manifestKeyOf(f: Pick<TrackedFile, "localPath" | "manifestPath">): string {
+  return f.manifestPath ?? f.localPath;
+}
 
 type MachineNameProvider = () => Promise<string>;
 

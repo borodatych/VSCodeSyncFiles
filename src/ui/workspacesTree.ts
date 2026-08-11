@@ -42,6 +42,8 @@ export type SyncTreeElement =
       workspaceId: string;
       workspaceNote: string;
       localPath: string;
+      /** Link Bindings: canonical manifest key when it differs from localPath. */
+      manifestPath?: string;
       /** Resolved path with pathMapping (when known). */
       resolvedFsPath?: string;
       syncStatus?: string;
@@ -481,10 +483,25 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       item.iconPath = new vscode.ThemeIcon("arrow-down");
       item.tooltip = `${element.workspaceNote}\n${element.localPath}\n\nОблако содержит более новую версию.\nНажмите ПКМ → «Получить файл» для обновления.`;
       item.contextValue = "vscodeSync.file";
+    } else if (st === "missing_local") {
+      // Link Bindings: tracked, absent on disk — an honest state of its own.
+      // The `vscodeSync.file` prefix keeps the shared menu (Pull works; Push
+      // errors politely); binding row-actions target `fileMissing` explicitly.
+      item.description = "нет на диске";
+      item.iconPath = new vscode.ThemeIcon("close");
+      item.contextValue = "vscodeSync.fileMissing";
     } else {
       item.contextValue = "vscodeSync.file";
     }
-    item.tooltip = `${element.workspaceNote}\n${element.localPath}`;
+    const bound = element.manifestPath !== undefined && element.manifestPath !== element.localPath;
+    if (bound) {
+      // Link Bindings badge: without it "rename in cloud" asking about every
+      // machine reads as a bug — the canonical name must be visible.
+      item.description = [item.description, `⇄ ${element.manifestPath ?? ""}`].filter(Boolean).join(" · ");
+    }
+    item.tooltip = bound
+      ? `${element.workspaceNote}\n${element.localPath}\n⇄ в облаке: ${element.manifestPath ?? ""}`
+      : `${element.workspaceNote}\n${element.localPath}`;
     item.command = {
       command: "vscode.open",
       title: "Open",
@@ -649,6 +666,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         workspaceId: ws.workspaceId,
         workspaceNote: note,
         localPath: f.localPath,
+        manifestPath: f.manifestPath,
         resolvedFsPath,
         syncStatus: f.syncStatus,
         editingBy: f.editingBy,

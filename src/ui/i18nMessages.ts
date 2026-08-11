@@ -16,6 +16,8 @@ export interface SyncStatusLabels {
   ok: string;
   pendingPush: string;
   cloudNewer: string;
+  /** Link Bindings: tracked, absent on disk (pull or bind restores it). */
+  missingLocal: string;
   conflict: string;
   syncing: string;
   paused: string;
@@ -25,6 +27,7 @@ export const syncStatusLabels: SyncStatusLabels = {
   ok: "Синхронизирован",
   pendingPush: "Ожидает push",
   cloudNewer: "Облако новее",
+  missingLocal: "Нет на диске",
   conflict: "Конфликт",
   syncing: "Синхронизация…",
   paused: "На паузе",

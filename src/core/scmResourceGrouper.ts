@@ -52,6 +52,7 @@ export function groupTrackedFilesForScm(
         pendingPush.push(f);
         break;
       case "cloud_newer":
+      case "missing_local":
         cloudNewer.push(f);
         break;
       default:

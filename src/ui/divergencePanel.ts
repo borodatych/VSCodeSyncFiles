@@ -41,6 +41,8 @@ export interface DivergencePanelHandlers {
   compare: (row: DivergenceRow) => Promise<void>;
   /** Offer the conflict resolution choices for one row. */
   resolve: (row: DivergenceRow) => Promise<void>;
+  /** Link Bindings: placement chooser for a row absent on disk. */
+  bind: (row: DivergenceRow) => Promise<void>;
 }
 
 let panel: vscode.WebviewPanel | undefined;
@@ -169,6 +171,9 @@ function buildHtml(nonce: string, cspSource: string): string {
           var acts = '<button type="button" data-act="compare" data-key="' + esc(k) + '">Сравнить</button>' +
             (r.direction === 'conflict'
               ? '<button type="button" data-act="resolve" data-key="' + esc(k) + '">Разрешить</button>'
+              : '') +
+            (r.missingLocal
+              ? '<button type="button" data-act="bind" data-key="' + esc(k) + '">Привязать…</button>'
               : '');
           return '<div class="row">' +
             '<input type="checkbox" data-key="' + esc(k) + '"' +
@@ -335,6 +340,9 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
           if (row === undefined) return;
           if (req.kind === "compare") {
             await handlers.compare(row);
+          } else if (req.kind === "bind") {
+            await handlers.bind(row);
+            updateDivergencePanel(await handlers.refresh());
           } else {
             await handlers.resolve(row);
             updateDivergencePanel(await handlers.refresh());

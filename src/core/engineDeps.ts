@@ -249,6 +249,19 @@ export interface EngineEvents {
     toPrune: readonly string[];
   }) => void;
   /**
+   * Link Bindings (stage 3): another machine renamed a file canonically while
+   * this machine keeps its own placement. The engine re-associated the row
+   * (metadata only; the bytes stayed at `localPlacement`) — the UI offers
+   * "переместить у меня" as an explicit user action.
+   */
+  onCanonicalRenameReplayed?: (info: {
+    workspaceId: string;
+    from: string;
+    to: string;
+    /** Where the file still lives on this machine. */
+    localPlacement: string;
+  }) => void;
+  /**
    * Called after a file is successfully written to disk during pull.
    * Provides old and new UTF-8 content for diff/notification purposes.
    * `oldContent` is null when the file did not exist locally before pull.

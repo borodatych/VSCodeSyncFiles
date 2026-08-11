@@ -12,6 +12,10 @@ export type ActivityKind =
   | "pull"
   | "conflict"
   | "add"
+  // Link Bindings (docs/v2/linkBindings.md): local file bound to a manifest
+  // row — metadata only, no content moved. Old readers render unknown kinds
+  // as raw strings, so no schema bump.
+  | "bind"
   | "remove"
   | "resolve_keep_mine"
   | "resolve_take_theirs"

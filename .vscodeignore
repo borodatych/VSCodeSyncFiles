@@ -10,8 +10,11 @@ references/**
 .cursor/**
 *.plan.md
 CLAUDE.md
+AGENTS.md
 
 # Dev configs
+.husky/**
+.lintstagedrc.json
 .github/**
 .vscode-test/**
 esbuild.mjs
@@ -51,3 +54,11 @@ cli/**
 # bundle is no longer built (see docs/v2/deferredWiring.md). Shipping the
 # source of a disabled feature only inflates the package.
 media/duckdb-bridge.src.js
+
+# Donation QR — README links it by raw.githubusercontent URL, nothing reads the
+# local copy. The file stays in git; it just has no reason to ship.
+media/QR-Code.jpg
+
+# Developer note about recording the walkthrough clips — the manifest wires up
+# only the three markdown wrappers next to it.
+media/walkthroughs/README.md

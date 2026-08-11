@@ -21,10 +21,19 @@ interface CloudManifest {
   updatedAt: string;       // ISO 8601
   machines: MachineEntry[];
   files: ManifestFile[];
+  // Link Bindings (docs/v2/linkBindings.md): пер-машинные ПАПОЧНЫЕ правила —
+  // machineId → канонический префикс → { path: локальный префикс, boundAt }.
+  // Merge: по-(машина, префикс) LWW на boundAt, Lamport не участвует.
+  folderBindings?: Record<string, Record<string, BindingEntry>>;
+}
+
+interface BindingEntry {
+  path: string;            // локальное размещение (posix, относительно sync root машины)
+  boundAt: string;         // LWW-ключ merge
 }
 
 interface ManifestFile {
-  path: string;            // нормализован к "/"
+  path: string;            // КАНОНИЧЕСКИЙ путь: ключ merge и адрес blob; нормализован к "/"
   addedAt: string;
   version: number;         // Lamport timestamp
   removedAt?: string;      // null если активен
@@ -33,6 +42,13 @@ interface ManifestFile {
   hasSyncignoreMarkers: boolean;
   editingBy?: string;      // machineId если открыт для редактирования (Soft Lock)
   editingSince?: string;
+  // Link Bindings — все три поля необязательные, schemaVersion не бампался:
+  linkId?: string;         // стабильная идентичность (16 hex); легаси-строки — детерминированный
+                           // бэкфилл sha256(path+"\0"+addedAt) на write-path, БЕЗ bump version
+  linkName?: string;       // линковочное имя — человеческая метка, не ключ, коллизии допустимы
+  bindings?: Record<string, BindingEntry>; // machineId → размещение файла на той машине;
+                           // merge по-ключевой (LWW на boundAt); отвязка = запись канонического
+                           // значения, НЕ удаление ключа (union воскресил бы его)
 }
 
 interface MachineEntry {

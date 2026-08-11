@@ -9,8 +9,11 @@
  *
  * Real `.mp4` files live in `media/walkthroughs/*.mp4`. The repo currently
  * only carries the `README.md` recording brief — actual recordings are a
- * blocked deliverable (need real screen captures). The walkthrough JSON in
- * `package.json` is wired up so the moment binaries land they're picked up.
+ * blocked deliverable (need real screen captures). Until a clip exists its
+ * spec carries `hasRecording: false`, and both helpers below degrade to the
+ * static-image step every other walkthrough step already uses. Never emit a
+ * `<video>` pointing at a file that is not in the package: the player renders
+ * as a broken box in the Getting Started panel.
  */
 
 export interface VideoSpec {
@@ -29,7 +32,17 @@ export interface VideoSpec {
   readonly storyboard: readonly string[];
   /** Walkthrough event id that signals "user completed this step". */
   readonly completionCommandId?: string;
+  /**
+   * Whether `media/walkthroughs/<id>.mp4` actually ships with the extension.
+   * Flip to `true` in the same commit that adds the recording — nothing else
+   * has to change.
+   */
+  readonly hasRecording: boolean;
 }
+
+/** Stand-in artwork for steps whose clip has not been recorded yet. */
+const PLACEHOLDER_IMAGE = "media/vscodesync.png";
+const PLACEHOLDER_ALT_TEXT = "VSCodeSync logo";
 
 export const ONBOARDING_VIDEO_SPECS: readonly VideoSpec[] = [
   {
@@ -47,6 +60,7 @@ export const ONBOARDING_VIDEO_SPECS: readonly VideoSpec[] = [
       "25–30 s: Title card 'You can now edit it from any machine'.",
     ],
     completionCommandId: "vscodesync.addCurrentFile",
+    hasRecording: false,
   },
   {
     id: "resolve-conflict",
@@ -63,6 +77,7 @@ export const ONBOARDING_VIDEO_SPECS: readonly VideoSpec[] = [
       "28–30 s: Title card 'No more lost changes'.",
     ],
     completionCommandId: "vscodesync.resolveConflicts",
+    hasRecording: false,
   },
   {
     id: "time-travel",
@@ -79,47 +94,56 @@ export const ONBOARDING_VIDEO_SPECS: readonly VideoSpec[] = [
       "28–30 s: Title card 'Every change, recoverable'.",
     ],
     completionCommandId: "vscodesync.openTimeTravelScrubber",
+    hasRecording: false,
   },
 ];
+
+export type WalkthroughStepMedia =
+  | { readonly markdown: string }
+  | { readonly image: string; readonly altText: string };
 
 export interface WalkthroughVideoStep {
   readonly id: string;
   readonly title: string;
   readonly description: string;
-  readonly media: { readonly markdown: string };
+  readonly media: WalkthroughStepMedia;
   readonly completionEvents?: readonly string[];
 }
 
 /**
- * Renders the walkthrough step body that VS Code embeds. The `markdown`
- * field is a relative path to a `.md` file shipped with the extension —
- * caller writes that file to disk with `renderVideoMarkdownBody(spec)`.
+ * Builds the walkthrough step VS Code embeds. With a recording in hand the
+ * step points at the generated `.md` wrapper (written to disk with
+ * `renderVideoMarkdownBody`); without one it falls back to the static image,
+ * matching the non-video steps of the same walkthrough.
  */
 export function buildWalkthroughVideoStep(spec: VideoSpec): WalkthroughVideoStep {
   const completion = spec.completionCommandId
     ? [`onCommand:${spec.completionCommandId}`]
     : undefined;
+  const media: WalkthroughStepMedia = spec.hasRecording
+    ? { markdown: `media/walkthroughs/${spec.id}.md` }
+    : { image: PLACEHOLDER_IMAGE, altText: PLACEHOLDER_ALT_TEXT };
   return {
     id: spec.id,
     title: spec.title,
     description: spec.description,
-    media: { markdown: `media/walkthroughs/${spec.id}.md` },
+    media,
     ...(completion ? { completionEvents: completion } : {}),
   };
 }
 
 /**
- * Markdown body that wraps the MP4 with a captioning paragraph. VS Code's
- * walkthrough markdown supports a tight subset of HTML, including `<video>`.
+ * Markdown body for a recorded clip. VS Code's walkthrough markdown supports
+ * a tight subset of HTML, including `<video>`. Specs without a recording get
+ * the heading and description only — an empty player is worse than no player.
  */
 export function renderVideoMarkdownBody(spec: VideoSpec): string {
-  const lines: string[] = [];
-  lines.push(`# ${spec.title}`, "");
-  lines.push(spec.description, "");
-  lines.push(
-    `<video controls width="${String(spec.width)}" height="${String(spec.height)}" src="${spec.id}.mp4"></video>`,
-    "",
-  );
-  lines.push(`*Длина клипа: ≤ ${String(spec.maxDurationSec)} с.*`);
+  const lines: string[] = [`# ${spec.title}`, "", spec.description];
+  if (spec.hasRecording) {
+    lines.push(
+      "",
+      `<video controls width="${String(spec.width)}" height="${String(spec.height)}" src="${spec.id}.mp4"></video>`,
+    );
+  }
   return lines.join("\n");
 }
