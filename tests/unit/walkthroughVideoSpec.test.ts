@@ -6,6 +6,7 @@ import {
   buildWalkthroughVideoStep,
   ONBOARDING_VIDEO_SPECS,
   renderVideoMarkdownBody,
+  type VideoSpec,
 } from "../../src/core/walkthroughVideoSpec.js";
 
 describe("ONBOARDING_VIDEO_SPECS", () => {
@@ -28,10 +29,31 @@ describe("ONBOARDING_VIDEO_SPECS", () => {
   });
 });
 
+const RECORDED: VideoSpec = {
+  id: "add-first-file",
+  title: "Add a file to sync",
+  description: "D",
+  maxDurationSec: 30,
+  width: 1280,
+  height: 720,
+  storyboard: ["s"],
+  completionCommandId: "vscodesync.addCurrentFile",
+  hasRecording: true,
+};
+
 describe("buildWalkthroughVideoStep", () => {
-  it("emits a media.markdown reference + completion event when commandId set", () => {
-    const step = buildWalkthroughVideoStep(ONBOARDING_VIDEO_SPECS[0]);
-    expect(step.media.markdown).toMatch(/^media\/walkthroughs\/.+\.md$/);
+  it("emits a media.markdown reference + completion event once recorded", () => {
+    const step = buildWalkthroughVideoStep(RECORDED);
+    expect(step.media).toEqual({ markdown: "media/walkthroughs/add-first-file.md" });
+    expect(step.completionEvents).toEqual(["onCommand:vscodesync.addCurrentFile"]);
+  });
+
+  it("falls back to the static image while the clip is unrecorded", () => {
+    const step = buildWalkthroughVideoStep({ ...RECORDED, hasRecording: false });
+    expect(step.media).toEqual({
+      image: "media/vscodesync.png",
+      altText: "VSCodeSync logo",
+    });
     expect(step.completionEvents).toEqual(["onCommand:vscodesync.addCurrentFile"]);
   });
 
@@ -44,16 +66,22 @@ describe("buildWalkthroughVideoStep", () => {
       width: 800,
       height: 600,
       storyboard: ["s"],
+      hasRecording: false,
     });
     expect(step.completionEvents).toBeUndefined();
   });
 });
 
 describe("renderVideoMarkdownBody", () => {
-  it("embeds a <video> tag with the right src", () => {
-    const md = renderVideoMarkdownBody(ONBOARDING_VIDEO_SPECS[0]);
+  it("embeds a <video> tag with the right src once recorded", () => {
+    const md = renderVideoMarkdownBody(RECORDED);
     expect(md).toContain('src="add-first-file.mp4"');
     expect(md).toContain("# Add a file to sync");
-    expect(md).toContain("≤ 30 с");
+  });
+
+  it("never emits a <video> for a clip that does not exist yet", () => {
+    for (const spec of ONBOARDING_VIDEO_SPECS.filter((s) => !s.hasRecording)) {
+      expect(renderVideoMarkdownBody(spec)).not.toContain("<video");
+    }
   });
 });
