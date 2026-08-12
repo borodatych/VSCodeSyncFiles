@@ -13,7 +13,6 @@ import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./io/workspa
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
   EMPTY_META_JSON,
-  historyDirForFile,
   manifestCloudPath,
   metaCloudPath,
   SUPPORTED_MANIFEST_SCHEMA,
@@ -28,6 +27,8 @@ import {
   rebuildManifestFilesFromTracked,
   type DuplicateLinkIdGroup,
 } from "./linkIdentity.js";
+import { priorCanonicalKeys } from "./linkKeyChain.js";
+import { historyPathOwnedByChain, listHistoryAcrossKeys } from "./io/historyChainReader.js";
 import {
   clearStaleManifestLocks,
   listStaleManifestLocks,
@@ -1888,6 +1889,7 @@ export class SyncEngine {
         relPath: posixRel,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(rowLinkId !== undefined ? { linkId: rowLinkId } : {}),
       });
     }
     let diskCfg = await this.loadCfg();
@@ -1987,6 +1989,7 @@ export class SyncEngine {
       relPath: localPosixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(plan.tracked.linkId !== undefined ? { linkId: plan.tracked.linkId } : {}),
     });
     return { localPosixRel, contentMatches: plan.contentMatches };
   }
@@ -2150,7 +2153,7 @@ export class SyncEngine {
     // Pass 1 computes what the manifest would become and asks; pass 2 deletes.
     // Link Bindings: `key` is the canonical manifest/_meta/blob key; `posixRel`
     // stays the local placement (matches cfg.files[].localPath below).
-    const plannedRemovals: { posixRel: string; key: string; cloudPath: string }[] = [];
+    const plannedRemovals: { posixRel: string; key: string; cloudPath: string; linkId?: string }[] = [];
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
       const tracked = this.findTracked(cfg, workspaceId, posixRel);
@@ -2158,7 +2161,7 @@ export class SyncEngine {
       const cloudPath =
         tracked?.cloudPath ??
         blobCloudPath(workspaceId, key, meta.files[key]?.wireGzip === true);
-      plannedRemovals.push({ posixRel, key, cloudPath });
+      plannedRemovals.push({ posixRel, key, cloudPath, ...(tracked?.linkId !== undefined ? { linkId: tracked.linkId } : {}) });
     }
 
     for (const { key } of plannedRemovals) {
@@ -2178,7 +2181,7 @@ export class SyncEngine {
       }
     }
 
-    for (const { posixRel, key, cloudPath } of plannedRemovals) {
+    for (const { posixRel, key, cloudPath, linkId } of plannedRemovals) {
       try {
         await this.deps.provider.deleteFile(cloudPath);
       } catch (e) {
@@ -2196,6 +2199,7 @@ export class SyncEngine {
         relPath: posixRel,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(linkId !== undefined ? { linkId } : {}),
       });
     }
 
@@ -2645,6 +2649,7 @@ export class SyncEngine {
       relPath: posixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
     });
   }
 
@@ -2708,6 +2713,7 @@ export class SyncEngine {
       relPath: posixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       meta: { rule: "keep-both", theirsRel: plan.theirsRel },
     });
   }
@@ -3246,6 +3252,7 @@ export class SyncEngine {
         relPath: file.localPath,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       });
     }
   }
@@ -3373,6 +3380,7 @@ export class SyncEngine {
       relPath: file.localPath,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
     });
     return false;
   }
@@ -3786,6 +3794,7 @@ export class SyncEngine {
           relPath: posixRel,
           machineName: this.deps.machineName,
           provider: this.deps.provider.type,
+          ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
           meta: activityMeta,
         });
         this.emitTransfer({ direction: "upload", bytes: uploadBuf.length });
@@ -3819,6 +3828,7 @@ export class SyncEngine {
             machineName: this.deps.machineName,
             provider: this.deps.provider.type,
             detail: "precondition_failed",
+            ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
           });
           return;
         }
@@ -4031,6 +4041,7 @@ export class SyncEngine {
     await this.persistMutatedCfg(cfg);
     this.fireActivity({
       kind: "pull",
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       workspaceId,
       workspaceNote: ent.workspaceNote,
       relPath: posixRel,
@@ -4043,20 +4054,29 @@ export class SyncEngine {
     });
   }
 
-  /** Снимки в `.history/` для файла (новые первыми). */
+  /**
+   * Снимки в `.history/` для файла (новые первыми) — включая снимки под
+   * прежними каноническими именами: история следует за файлом сквозь
+   * переименования (цепочка ключей по `renamedFrom`, linkKeyChain.ts).
+   */
   async listCloudHistoryForTrackedFile(posixRel: string): Promise<FileMetadata[]> {
     const cfg = await this.loadCfg();
     const hit = cfg.files.find((f) => f.localPath === posixRel);
     if (!hit) {
       throw new Error("not tracked");
     }
-    const dir = historyDirForFile(hit.workspaceId, manifestKeyOf(hit));
-    const items = await this.deps.provider.listFolder(dir);
-    const baseName = (p: string): string => {
-      const i = p.lastIndexOf("/");
-      return i >= 0 ? p.slice(i + 1) : p;
-    };
-    return [...items].sort((a, b) => baseName(b.cloudPath).localeCompare(baseName(a.cloudPath)));
+    return listHistoryAcrossKeys(this.deps.provider, hit.workspaceId, await this.historyKeyChain(hit));
+  }
+
+  /** Current canonical key + prior chain keys; degrades to the current key alone offline. */
+  private async historyKeyChain(hit: TrackedFile): Promise<string[]> {
+    const key = manifestKeyOf(hit);
+    const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === hit.workspaceId);
+    if (!entry) {
+      return [key];
+    }
+    const m = await this.downloadManifest(hit.workspaceId, entry.manifestEtag).catch(() => null);
+    return m ? [key, ...priorCanonicalKeys(m.files, key)] : [key];
   }
 
   /**
@@ -4092,15 +4112,14 @@ export class SyncEngine {
     return dl.body;
   }
 
-  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла. Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
+  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла (включая прежние канонические имена цепочки). Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
   async downloadHistorySnapshotIfOwned(posixRel: string, historyCloudPath: string): Promise<Buffer> {
-    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
-    const prefix = `${historyDirForFile(hit.workspaceId, key)}/`;
-    const norm = historyCloudPath.replace(/\/$/, "");
-    if (!norm.startsWith(prefix)) {
+    const { hit, wireGzip } = await this.trackedReadContext(posixRel);
+    const chain = await this.historyKeyChain(hit);
+    if (!historyPathOwnedByChain(hit.workspaceId, chain, historyCloudPath)) {
       throw new Error("not a history path for this file");
     }
-    return this.decodeCloudBlob(await this.downloadCloudBytes(norm), wireGzip);
+    return this.decodeCloudBlob(await this.downloadCloudBytes(historyCloudPath.replace(/\/$/, "")), wireGzip);
   }
 
   /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
