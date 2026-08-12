@@ -24,6 +24,7 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { trackedLocalAbsolutePath } from "../core/pathMapping.js";
 import { guardPathsBeforeAdd } from "../ui/syncGuards.js";
 import { pickRoot } from "../commands/_shared.js";
+import { confirmAndRunCanonicalRename } from "../commands/registerCanonicalRename.js";
 import { ensureProvider } from "../commands/_providerFactory.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
@@ -89,6 +90,22 @@ export function registerWorkspaceTreeWiring(
         );
         // Drag-and-drop in the workspaces tree — a direct user gesture.
       }, folderRoot, { trigger: "user" });
+    },
+    // A drop INSIDE one workspace edits canonical paths (keys move, bytes
+    // stay) — same preview + confirm flow as the rename commands.
+    onCanonicalMove: async ({ folderRoot, workspaceId, requests }) => {
+      await confirmAndRunCanonicalRename(
+        {
+          context,
+          runWithEngine,
+          refreshUi: () => {
+            workspacesTree.refresh();
+          },
+        },
+        folderRoot,
+        workspaceId,
+        [...requests],
+      );
     },
   });
 

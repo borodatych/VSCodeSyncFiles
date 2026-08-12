@@ -21,8 +21,11 @@ export interface FolderActionsDeps {
   refreshUi: () => void | Promise<void>;
 }
 
-/** Canonical prefix of a folder node: the badge when bound, the local path otherwise. */
+/** Canonical prefix of a folder node, whichever space the tree groups by. */
 function canonicalPrefixOf(el: Extract<SyncTreeElement, { kind: "fileFolder" }>): string {
+  if (el.space === "canonical") {
+    return el.localPrefix;
+  }
   return el.canonicalPrefix ?? el.localPrefix;
 }
 
@@ -197,8 +200,11 @@ export function registerFolderActionsCommands(deps: FolderActionsDeps): vscode.D
       const root = el.folderRoot.fsPath;
       const cfg = await WorkspaceConfigManager.load(root);
       const prefix = `${el.localPrefix}/`;
+      // The node's prefix lives in whichever space the tree groups by.
+      const rowKey = (f: (typeof cfg.files)[number]): string =>
+        el.space === "canonical" ? manifestKeyOf(f) : f.localPath;
       const rows = cfg.files.filter(
-        (f) => f.workspaceId === el.workspaceId && f.localPath.startsWith(prefix),
+        (f) => f.workspaceId === el.workspaceId && rowKey(f).startsWith(prefix),
       );
       if (rows.length === 0) {
         void vscode.window.showInformationMessage("VSCodeSync: в этой папке нечего скачивать.");

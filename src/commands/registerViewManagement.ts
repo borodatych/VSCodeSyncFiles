@@ -153,5 +153,18 @@ export function registerViewManagementCommands(
       await context.globalState.update(WORKSPACES_SHOW_ARCHIVED_KEY, workspacesTree.getShowArchived());
       await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
     }),
+
+    // Canonical path editing: flip the tree between this machine's placement
+    // and the cloud structure — the space the path edits live in.
+    vscode.commands.registerCommand("vscodesync.toggleTreeCanonicalMode", () => {
+      const next = !workspacesTree.getCanonicalMode();
+      workspacesTree.setCanonicalMode(next);
+      vscode.window.setStatusBarMessage(
+        next
+          ? "VSCodeSync: дерево показывает канонические (облачные) пути"
+          : "VSCodeSync: дерево показывает локальное размещение",
+        4000,
+      );
+    }),
   ];
 }

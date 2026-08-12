@@ -891,6 +891,31 @@
         "title": "%cmd.treeFolderBind.title%"
       },
       {
+        "command": "vscodesync.treeEditCanonicalPath",
+        "title": "%cmd.treeEditCanonicalPath.title%"
+      },
+      {
+        "command": "vscodesync.toggleTreeCanonicalMode",
+        "title": "%cmd.toggleTreeCanonicalMode.title%",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "vscodesync.treeRenameCloudFolder",
+        "title": "%cmd.treeRenameCloudFolder.title%"
+      },
+      {
+        "command": "vscodesync.editWorkspacePaths",
+        "title": "%cmd.editWorkspacePaths.title%"
+      },
+      {
+        "command": "vscodesync.applyWorkspacePathsEdit",
+        "title": "%cmd.applyWorkspacePathsEdit.title%"
+      },
+      {
+        "command": "vscodesync.resumeCanonicalRename",
+        "title": "%cmd.resumeCanonicalRename.title%"
+      },
+      {
         "command": "vscodesync.treeFolderPull",
         "title": "%cmd.treeFolderPull.title%"
       },
@@ -1556,6 +1581,18 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "vscodesync.treeEditCanonicalPath",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeRenameCloudFolder",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.editWorkspacePaths",
+          "when": "false"
+        },
+        {
           "command": "vscodesync.treeWorkspacePushAll",
           "when": "false"
         },
@@ -1705,6 +1742,11 @@
           "command": "vscodesync.refreshWorkspacesView",
           "when": "view == vscodesync.workspaces",
           "group": "navigation@1"
+        },
+        {
+          "command": "vscodesync.toggleTreeCanonicalMode",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@1.5"
         },
         {
           "command": "vscodesync.filterWorkspaces",
@@ -1897,6 +1939,21 @@
           "command": "vscodesync.treeFolderBind",
           "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
           "group": "manage@1"
+        },
+        {
+          "command": "vscodesync.treeRenameCloudFolder",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.treeEditCanonicalPath",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
+          "group": "file@2.7"
+        },
+        {
+          "command": "vscodesync.editWorkspacePaths",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended)(Archived)?$/",
+          "group": "manage@4"
         }
       ],
       "vscodesync.submenu": [

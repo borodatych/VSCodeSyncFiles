@@ -1,7 +1,6 @@
 {
   "displayName": "VSCodeSyncFiles",
   "description": "Sync individual files between machines via OneDrive / Google Drive / Dropbox / Yandex.Disk",
-
   "cmd.pushAll.title": "VSCodeSync: Push all files",
   "cmd.bulkPush.title": "VSCodeSync: Bulk Push wizard (pick workspaces → push)",
   "cmd.pullAll.title": "VSCodeSync: Pull all files",
@@ -164,7 +163,6 @@
   "cmd.mergeWorkspaces.title": "VSCodeSync: Merge workspaces",
   "cmd.checkBlake3Migration.title": "VSCodeSync: Check BLAKE3 migration status",
   "cmd.completeBlake3Migration.title": "VSCodeSync: Backfill BLAKE3 hashes (complete migration)",
-
   "cfg.notificationLevel.description": "Notification verbosity (minimal / normal / verbose)",
   "cfg.notifications.emojiFree.description": "Replace emoji in notifications with text markers ([ok], [warn], [err]) — for corporate chats and accessibility tools.",
   "cfg.maxFileSizeMB.description": "Maximum size of a single synced file in MB. 0 = unlimited",
@@ -264,5 +262,11 @@
   "cmd.exportConflictsToSarif.title": "VSCodeSync: Export Conflicts to SARIF",
   "cmd.showWorkspaceReadme.title": "VSCodeSync: Show Workspace README",
   "cmd.exportEncryptedBundle.title": "VSCodeSync: Export Encrypted Bundle",
-  "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace"
+  "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace",
+  "cmd.treeEditCanonicalPath.title": "Edit cloud path…",
+  "cmd.treeRenameCloudFolder.title": "Rename cloud folder…",
+  "cmd.editWorkspacePaths.title": "Edit workspace paths…",
+  "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Apply workspace path edits",
+  "cmd.resumeCanonicalRename.title": "VSCodeSync: Resume interrupted path move",
+  "cmd.toggleTreeCanonicalMode.title": "Toggle tree: local placement ⇄ canonical paths"
 }

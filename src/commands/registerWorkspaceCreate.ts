@@ -196,16 +196,21 @@ export function registerWorkspaceCreateCommands(
             /* non-fatal: overlap check failed (network), proceed anyway */
           }
           try {
-            await engine.attachCloudWorkspace(pick.workspaceId);
+            // Link Bindings: no silent placement decision — the intake prompt
+            // runs BEFORE the initial adopt/pull, so the rules it writes govern
+            // where the existing files land, not only future ones.
+            let boundFolders = 0;
+            await engine.attachCloudWorkspace(pick.workspaceId, {
+              beforeInitialAdopt: async () => {
+                boundFolders = await promptFolderIntakeAfterAttach(
+                  runWithEngine,
+                  root,
+                  pick.workspaceId,
+                  pick.label,
+                );
+              },
+            });
             connected++;
-            // Link Bindings: no silent placement decision — offer each cloud
-            // folder «as is» or «into my folder» before anything is pulled.
-            const boundFolders = await promptFolderIntakeAfterAttach(
-              runWithEngine,
-              root,
-              pick.workspaceId,
-              pick.label,
-            );
             if (boundFolders === 0) {
               void vscode.window.showInformationMessage(
                 `«${pick.label}»: файлы разложатся по структуре отправителя. ` +

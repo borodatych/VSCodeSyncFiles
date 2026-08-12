@@ -262,5 +262,11 @@
   "cfg.yandex.lockedRetryDelayMs.description": "Пауза (мс) перед повторной попыткой при HTTP 423 Locked от Yandex.Disk.",
   "cfg.diagnostics.profileSync.description": "Включить сбор тайминга push/pull (hash ms / network ms / verify ms) для команды «VSCodeSync: Профиль синка». Минимальный оверхед, выкл по умолчанию.",
   "cfg.providerHashVerify.description": "После загрузки сравнивать дайджест файла, сообщённый провайдером (md5 у GDrive/Yandex, content_hash у Dropbox, sha256 у OneDrive), с локально вычисленным. При несовпадении — `INTEGRITY_FAILED`. Доп. round-trip к `getMetadata`. Пропускается для зашифрованных и gzip-сжатых загрузок.",
-  "cfg.hints.enabled.description": "Показывать контекстуальные подсказки при возврате фокуса в окно (много конфликтов, переполненная квота, долгое отсутствие синхронизации). Однократно в 6 часов на каждый тип хинта."
+  "cfg.hints.enabled.description": "Показывать контекстуальные подсказки при возврате фокуса в окно (много конфликтов, переполненная квота, долгое отсутствие синхронизации). Однократно в 6 часов на каждый тип хинта.",
+  "cmd.treeEditCanonicalPath.title": "Изменить путь в облаке…",
+  "cmd.treeRenameCloudFolder.title": "Переименовать облачную папку…",
+  "cmd.editWorkspacePaths.title": "Редактировать пути воркспейса…",
+  "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Применить правки путей воркспейса",
+  "cmd.resumeCanonicalRename.title": "VSCodeSync: Возобновить прерванный перенос путей",
+  "cmd.toggleTreeCanonicalMode.title": "Дерево: локальное размещение ⇄ канонические пути"
 }

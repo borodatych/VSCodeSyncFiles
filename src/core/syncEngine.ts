@@ -789,8 +789,13 @@ export class SyncEngine {
   /**
    * Подключить workspace с облака: локальный `activeWorkspaces`, регистрация машины в манифесте,
    * трекинг файлов из манифеста и sync (pull при необходимости).
+   * `beforeInitialAdopt`: the intake prompt must write its folder rules BEFORE
+   * files materialise — otherwise the rules only govern future files.
    */
-  async attachCloudWorkspace(workspaceId: string): Promise<void> {
+  async attachCloudWorkspace(
+    workspaceId: string,
+    opts?: { beforeInitialAdopt?: () => Promise<void> },
+  ): Promise<void> {
     this.assertMayMutate("attachCloudWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const cfg0 = await this.loadCfg();
@@ -859,6 +864,7 @@ export class SyncEngine {
     };
     await this.putManifest(workspaceId, withMachine, manifestDl.etag);
 
+    await opts?.beforeInitialAdopt?.();
     await this.adoptManifestFilesFromCloud(workspaceId);
     await this.syncWorkspace(workspaceId);
     // Initial attach: materialise cloud-newer files on disk so the user lands
@@ -921,8 +927,8 @@ export class SyncEngine {
       trackedLinkIdOf: (key: string) => trackedLinkIds.get(key),
     });
 
-    // Disk existence for the rename branch, resolved up front — the applier
-    // stays free of I/O. Replay contract lives with `applyTrackingDiff`.
+    // Disk existence resolved up front — the applier (`applyTrackingDiff`,
+    // which owns the replay contract) stays free of I/O.
     const bytesAt = new Map<string, boolean>();
     for (const r of diff.rename) {
       const row = cfg.files.find((f) => f.workspaceId === workspaceId && manifestKeyOf(f) === r.from);
@@ -2395,10 +2401,9 @@ export class SyncEngine {
       await this.saveCfg(rebindCfg);
       return;
     }
-    // Canonical branch: the bytes already moved on disk (fs rename), so after
-    // the shared cloud-side key move the row follows to its new local path.
-    // No live manifest row (drifted state) — the local row alone moves and the
-    // next push re-registers the file under its new key.
+    // Canonical branch: the bytes already moved on disk (fs rename) — the row
+    // follows the shared cloud-side key move to its new local path. No live
+    // manifest row (drift) — local row alone moves; next push re-registers.
     const hasLiveRow = remoteManifest.files.some((f) => f.path === oldRel && !f.removedAt);
     if (hasLiveRow) {
       await this.relocateCanonicalKeys(workspaceId, [{ scope: "file", from: oldRel, to: newRel }]);
@@ -2431,11 +2436,7 @@ export class SyncEngine {
     return this.relocateCanonicalKeys(workspaceId, requests);
   }
 
-  /**
-   * The shared key-move machinery behind `renameCanonicalKeys` /
-   * `renameTrackedFile` — orchestration lives in `io/canonicalRelocation.ts`
-   * (engine line ceiling), this wires the engine's I/O closures in.
-   */
+  /** Key-move machinery behind `renameCanonicalKeys` / `renameTrackedFile`; orchestration — `io/canonicalRelocation.ts`. */
   private async relocateCanonicalKeys(
     workspaceId: string,
     requests: CanonicalRenameRequest[],

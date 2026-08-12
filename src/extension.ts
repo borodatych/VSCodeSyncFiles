@@ -49,6 +49,7 @@ import { registerConflictsCommands } from "./commands/registerConflicts.js";
 import { registerFileOperationsCommands } from "./commands/registerFileOperations.js";
 import { registerLinkBindingsCommands } from "./commands/registerLinkBindings.js";
 import { registerFolderActionsCommands } from "./commands/registerFolderActions.js";
+import { offerResumePendingCanonicalRename, registerCanonicalRenameCommands } from "./commands/registerCanonicalRename.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
 import { registerDivergenceNotice, registerDivergencesCommands, type DivergencesCommandsDeps } from "./commands/registerDivergences.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
@@ -465,6 +466,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Activity-feed saved searches and panel webviews — registered via per-area
   // command modules (см. v2.6 декомпозицию `extension.ts`).
+  const refreshTree = (): void => {
+    workspacesTree.refresh();
+  };
   context.subscriptions.push(
     ...registerActivitySearchCommands({ context }),
     ...registerPanelCommands({ context, storageDir: globalConfig.getStorageDir() }),
@@ -476,13 +480,10 @@ export function activate(context: vscode.ExtensionContext): void {
       runWithEngine,
     }),
     ...registerLinkBindingsCommands({ runWithEngine, registry }),
-    ...registerFolderActionsCommands({
-      runWithEngine,
-      refreshUi: () => {
-        workspacesTree.refresh();
-      },
-    }),
+    ...registerFolderActionsCommands({ runWithEngine, refreshUi: refreshTree }),
+    ...registerCanonicalRenameCommands({ context, runWithEngine, refreshUi: refreshTree }),
   );
+  offerResumePendingCanonicalRename(context);
 
   registerObservers({ context, globalConfig, registry });
   registerScheduledSnapshotsWiring({ context, globalConfig, registry });
