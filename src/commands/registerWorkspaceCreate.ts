@@ -16,6 +16,7 @@
 import * as vscode from "vscode";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { writeSyncPreviewOutput } from "../ui/syncPreviewUi.js";
+import { promptFolderIntakeAfterAttach } from "../ui/folderIntakePrompt.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 const CFG_SECTION = "vscodesync";
@@ -197,12 +198,20 @@ export function registerWorkspaceCreateCommands(
           try {
             await engine.attachCloudWorkspace(pick.workspaceId);
             connected++;
-            // Link Bindings: no silent placement decision — say where files
-            // land and that any of them can be re-bound afterwards.
-            void vscode.window.showInformationMessage(
-              `«${pick.label}»: файлы будут разложены по структуре отправителя (или по вашим папочным привязкам). ` +
-                "Отдельный файл можно перепривязать: ПКМ в дереве → Pull → «Выбрать папку и имя…».",
+            // Link Bindings: no silent placement decision — offer each cloud
+            // folder «as is» or «into my folder» before anything is pulled.
+            const boundFolders = await promptFolderIntakeAfterAttach(
+              runWithEngine,
+              root,
+              pick.workspaceId,
+              pick.label,
             );
+            if (boundFolders === 0) {
+              void vscode.window.showInformationMessage(
+                `«${pick.label}»: файлы разложатся по структуре отправителя. ` +
+                  "Папку можно перепривязать в дереве: ПКМ → «Привязать папку к другому локальному пути…».",
+              );
+            }
             void (async () => {
               const { maybePromptPathMapperAfterAttach } = await import("../ui/aiPathMapperCommand.js");
               await maybePromptPathMapperAfterAttach(context, pick.workspaceId);

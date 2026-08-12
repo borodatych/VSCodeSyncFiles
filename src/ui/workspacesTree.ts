@@ -9,6 +9,7 @@ import {
 } from "./workspaceHealthLocal.js";
 import { workspaceHealthThemeColor } from "./workspaceHealthThemeColor.js";
 import { workspaceTreeContextValue } from "./workspaceTreeContext.js";
+import { planFileTreeChildren } from "../core/plan/planFileTree.js";
 import type { ManifestMachineCacheEntry, ProviderType, WorkspaceSyncState } from "../core/types.js";
 import { formatMachinePresenceLines } from "./workspaceMachinePresence.js";
 
@@ -37,6 +38,23 @@ export type SyncTreeElement =
       workspaceNote: string;
     }
   | {
+      /**
+       * Folder node of the tracked-file tree (docs/v2/linkBindings.md). Exists
+       * so folder-level actions — bind, pull, exclude — have something to hang
+       * on, and so a 60-file workspace reads as the structure the user knows.
+       */
+      kind: "fileFolder";
+      folderRoot: vscode.Uri;
+      workspaceId: string;
+      workspaceNote: string;
+      /** Local posix prefix, no trailing slash. */
+      localPrefix: string;
+      name: string;
+      fileCount: number;
+      missingCount: number;
+      canonicalPrefix?: string;
+    }
+  | {
       kind: "file";
       folderRoot: vscode.Uri;
       workspaceId: string;
@@ -54,6 +72,14 @@ export type SyncTreeElement =
 
 function shortWorkspaceId(id: string): string {
   return id.length <= 8 ? id : `${id.slice(0, 8)}…`;
+}
+
+/**
+ * Tracked files render as a folder tree by default; the flat list stays one
+ * setting away for anyone who prefers seeing everything at once.
+ */
+function treeGroupingEnabled(): boolean {
+  return vscode.workspace.getConfiguration("vscodesync").get<boolean>("tree.groupFilesByFolder", true);
 }
 
 export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeElement>, vscode.Disposable {
@@ -366,6 +392,32 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
   }
 
   getTreeItem(element: SyncTreeElement): vscode.TreeItem {
+    if (element.kind === "fileFolder") {
+      const item = new vscode.TreeItem(element.name, vscode.TreeItemCollapsibleState.Collapsed);
+      item.id = `dir:${element.folderRoot.fsPath}:${element.workspaceId}:${element.localPrefix}`;
+      item.iconPath = new vscode.ThemeIcon("folder");
+      item.resourceUri = vscode.Uri.file(
+        path.join(element.folderRoot.fsPath, ...element.localPrefix.split("/")),
+      );
+      // One badge per folder instead of one per file: `⇄ canonical/prefix`
+      // explains at a glance why this folder syncs under another name.
+      const parts = [`${String(element.fileCount)} файл(ов)`];
+      if (element.missingCount > 0) {
+        parts.push(`${String(element.missingCount)} нет на диске`);
+      }
+      if (element.canonicalPrefix !== undefined) {
+        parts.push(`⇄ ${element.canonicalPrefix}`);
+      }
+      item.description = parts.join(" · ");
+      item.tooltip =
+        element.canonicalPrefix !== undefined
+          ? `${element.workspaceNote}\n${element.localPrefix}\n⇄ в облаке: ${element.canonicalPrefix}`
+          : `${element.workspaceNote}\n${element.localPrefix}`;
+      item.contextValue =
+        element.canonicalPrefix !== undefined ? "vscodeSync.fileFolderBound" : "vscodeSync.fileFolder";
+      return item;
+    }
+
     if (element.kind === "rootFolder") {
       const item = new vscode.TreeItem(element.folder.name, vscode.TreeItemCollapsibleState.Expanded);
       item.iconPath = new vscode.ThemeIcon("folder");
@@ -539,6 +591,23 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       return await this.filesUnderWorkspace(element);
     }
 
+    if (element.kind === "fileFolder") {
+      return await this.filesUnderWorkspace(
+        {
+          kind: "workspace",
+          folderRoot: element.folderRoot,
+          workspaceId: element.workspaceId,
+          note: element.workspaceNote,
+          tags: [],
+          manifestMachines: [],
+          // Only `folderRoot`/`workspaceId`/`note` are read below; health is a
+          // required field of the workspace shape, never rendered from here.
+          health: { level: "noData", summaryLines: [] },
+        },
+        element.localPrefix,
+      );
+    }
+
     if (element.kind === "cloudSection") {
       return element.offers.map((o) => ({
         kind: "remoteOffer" as const,
@@ -648,15 +717,24 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
     });
   }
 
-  private async filesUnderWorkspace(ws: Extract<SyncTreeElement, { kind: "workspace" }>): Promise<SyncTreeElement[]> {
+  /**
+   * Children of a workspace (`parentPrefix === undefined`) or of a folder node.
+   * Grouping lives in `planFileTreeChildren` (pure); this only turns nodes into
+   * tree elements. Flat mode keeps the pre-tree rendering for anyone who wants
+   * the whole list at once.
+   */
+  private async filesUnderWorkspace(
+    ws: Extract<SyncTreeElement, { kind: "workspace" }>,
+    parentPrefix?: string,
+  ): Promise<SyncTreeElement[]> {
     const wc = await WorkspaceConfigManager.load(ws.folderRoot.fsPath);
     const rows = wc.files.filter((f) => f.workspaceId === ws.workspaceId);
     const note = wc.activeWorkspaces.find((a) => a.workspaceId === ws.workspaceId)?.workspaceNote ?? ws.note;
     const mn = this._machineName ?? "";
-    return rows.map((f) => {
+    const toFileElement = (localPath: string, src: (typeof rows)[number] | undefined): SyncTreeElement => {
       let resolvedFsPath: string | undefined;
       try {
-        resolvedFsPath = trackedLocalAbsolutePath(ws.folderRoot.fsPath, wc.pathMapping, mn, f.localPath);
+        resolvedFsPath = trackedLocalAbsolutePath(ws.folderRoot.fsPath, wc.pathMapping, mn, localPath);
       } catch {
         resolvedFsPath = undefined;
       }
@@ -665,13 +743,34 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         folderRoot: ws.folderRoot,
         workspaceId: ws.workspaceId,
         workspaceNote: note,
-        localPath: f.localPath,
-        manifestPath: f.manifestPath,
+        localPath,
+        manifestPath: src?.manifestPath,
         resolvedFsPath,
-        syncStatus: f.syncStatus,
-        editingBy: f.editingBy,
-        editingByName: f.editingByName,
+        syncStatus: src?.syncStatus,
+        editingBy: src?.editingBy,
+        editingByName: src?.editingByName,
       };
-    });
+    };
+
+    if (parentPrefix === undefined && !treeGroupingEnabled()) {
+      return rows.map((f) => toFileElement(f.localPath, f));
+    }
+
+    const byPath = new Map(rows.map((f) => [f.localPath, f]));
+    return planFileTreeChildren(rows, parentPrefix ?? "").map((node) =>
+      node.kind === "file"
+        ? toFileElement(node.localPath, byPath.get(node.localPath))
+        : {
+            kind: "fileFolder" as const,
+            folderRoot: ws.folderRoot,
+            workspaceId: ws.workspaceId,
+            workspaceNote: note,
+            localPrefix: node.localPrefix,
+            name: node.name,
+            fileCount: node.fileCount,
+            missingCount: node.missingCount,
+            canonicalPrefix: node.canonicalPrefix,
+          },
+    );
   }
 }

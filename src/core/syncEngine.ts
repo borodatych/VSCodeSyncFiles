@@ -41,8 +41,7 @@ import { planCloudScanRepair } from "./plan/planCloudScanRepair.js";
 import { applyWorkspaceMergeToCfg } from "./plan/planWorkspaceMergeCfg.js";
 import { entryPatchFromManifest, manifestMachineCache } from "./manifestCacheFields.js";
 import { runBlake3BackfillTasks } from "./plan/planBlake3Backfill.js";
-import { planBindingSelfHeal } from "./plan/planBindingSelfHeal.js";
-import { shouldAttemptBindingSelfHeal } from "./bindingSelfHealState.js";
+import { runBindingSelfHeal } from "./bindingSelfHealState.js";
 import { buildSyncPreview } from "./syncPreview.js";
 import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
@@ -2053,6 +2052,7 @@ export class SyncEngine {
     workspaceId: string,
     canonicalDirPrefix: string,
     localAbsDir: string,
+    opts?: { localDirRel?: string },
   ): Promise<{ localDirRel: string; reboundTracked: number }> {
     this.assertMayMutate("bindLocalFolder");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
@@ -2062,7 +2062,14 @@ export class SyncEngine {
       throw new Error("workspace not active");
     }
     const canonPrefix = normalizeDirPrefix(canonicalDirPrefix);
-    const localDirRel = normalizeDirPrefix(this.posixRel(cfg, localAbsDir));
+    // A folder that does not exist yet is a legal target: the rule decides
+    // where FUTURE files land, and the first pull creates the directory. So
+    // the caller may pass the relative path directly instead of an existing
+    // absolute one.
+    const localDirRel =
+      opts?.localDirRel !== undefined
+        ? normalizeDirPrefix(opts.localDirRel)
+        : normalizeDirPrefix(this.posixRel(cfg, localAbsDir));
     if (canonPrefix === "" || localDirRel === "") {
       throw new Error("empty folder prefix");
     }
@@ -2937,28 +2944,19 @@ export class SyncEngine {
     const meta = await this.pullMeta(workspaceId, entInit.metaEtag);
 
     // Link Bindings self-heal: re-assert this machine's bindings a v1 merge
-    // may have dropped. User passes only, at most once per workspace per
-    // session (planBindingSelfHeal / bindingSelfHealState).
-    if (this.mayMutate("putManifest") && shouldAttemptBindingSelfHeal(this.deps.workspaceRoot, workspaceId)) {
-      const { healedRows } = planBindingSelfHeal({
+    // may have dropped. User passes only (bindingSelfHealState owns the
+    // once-per-session rate limit).
+    if (this.mayMutate("putManifest")) {
+      await runBindingSelfHeal({
+        workspaceRoot: this.deps.workspaceRoot,
+        workspaceId,
         machineId: this.deps.machineId,
+        manifest,
         trackedFiles,
-        manifestFiles: manifest.files,
-        folderRules: manifest.folderBindings?.[this.deps.machineId],
         nextVersion: this.nextManifestVersion(manifest.files),
         nowIso: new Date().toISOString(),
+        putManifest: (m) => this.putManifest(workspaceId, m, entInit.manifestEtag),
       });
-      if (healedRows.size > 0) {
-        try {
-          await this.putManifest(
-            workspaceId,
-            { ...manifest, files: manifest.files.map((m) => healedRows.get(m.path) ?? m) },
-            entInit.manifestEtag,
-          );
-        } catch (e) {
-          warnLog("syncEngine", `binding self-heal failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
     }
 
     return { cfg: cfgSync, manifest, trackedFiles, meta };

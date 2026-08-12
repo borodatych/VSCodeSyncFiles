@@ -537,6 +537,12 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     "minimum": 1
   },
   {
+    "key": "tree.groupFilesByFolder",
+    "type": "boolean",
+    "description": "Группировать отслеживаемые файлы в дерево папок в панели «Воркспейсы». Выключено — плоский список всех файлов, как раньше.",
+    "default": true
+  },
+  {
     "key": "verifyRetries",
     "type": "number",
     "description": "Сколько раз перепроверять хэш blob'а после загрузки в режиме `verifyUploadHash = plaintext-only` до того, как признать рассинхрон.",

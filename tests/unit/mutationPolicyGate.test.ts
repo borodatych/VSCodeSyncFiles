@@ -166,6 +166,7 @@ const COMMAND_MODULES = [
   "src/commands/registerConflicts.ts",
   "src/commands/registerFileOperations.ts",
   "src/commands/registerFileTreeContext.ts",
+  "src/commands/registerFolderActions.ts",
   "src/commands/registerHeavyMisc.ts",
   "src/commands/registerLinkBindings.ts",
   "src/commands/registerPhase21Commands.ts",

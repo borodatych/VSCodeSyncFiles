@@ -524,6 +524,11 @@
           "maximum": 10,
           "markdownDescription": "%cfg.verifyRetries.description%"
         },
+        "vscodesync.tree.groupFilesByFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.tree.groupFilesByFolder.description%"
+        },
         "vscodesync.softLock.enabled": {
           "type": "boolean",
           "default": false,
@@ -880,6 +885,14 @@
       {
         "command": "vscodesync.renameLinkName",
         "title": "%cmd.renameLinkName.title%"
+      },
+      {
+        "command": "vscodesync.treeFolderBind",
+        "title": "%cmd.treeFolderBind.title%"
+      },
+      {
+        "command": "vscodesync.treeFolderPull",
+        "title": "%cmd.treeFolderPull.title%"
       },
       {
         "command": "vscodesync.pushAll",
@@ -1870,6 +1883,16 @@
           "command": "vscodesync.treeFileForceSync",
           "when": "view == vscodesync.workspaces && viewItem == vscodeSync.fileLocked",
           "group": "conflict@1"
+        },
+        {
+          "command": "vscodesync.treeFolderPull",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
+          "group": "sync@1"
+        },
+        {
+          "command": "vscodesync.treeFolderBind",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
+          "group": "manage@1"
         }
       ],
       "vscodesync.submenu": [
