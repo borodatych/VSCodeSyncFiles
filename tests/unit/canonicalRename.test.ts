@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { CloudManifest, ManifestFile } from "../../src/core/cloudLayout.js";
 import {
   expandPrefixMove,
+  inferCommonPrefixMove,
   manifestWithRenamedKeys,
   migrateFolderBindingsForPrefixMoves,
   remapKeyThroughPrefixMoves,
@@ -181,5 +182,27 @@ describe("remapKeyThroughPrefixMoves", () => {
     expect(remapKeyThroughPrefixMoves("src/deep/c.ts", moves)).toBe("core/c.ts");
     expect(remapKeyThroughPrefixMoves("src", moves)).toBe("lib");
     expect(remapKeyThroughPrefixMoves("other/x.ts", moves)).toBe("other/x.ts");
+  });
+});
+
+describe("inferCommonPrefixMove", () => {
+  it("однородный папочный переезд сворачивается в одну пару", () => {
+    expect(
+      inferCommonPrefixMove([
+        { from: "src/a.ts", to: "lib/a.ts" },
+        { from: "src/deep/b.ts", to: "lib/deep/b.ts" },
+      ]),
+    ).toEqual({ from: "src", to: "lib" });
+  });
+
+  it("смешанные правки и чистое переименование файла — null", () => {
+    expect(
+      inferCommonPrefixMove([
+        { from: "src/a.ts", to: "lib/a.ts" },
+        { from: "docs/x.md", to: "notes/x.md" },
+      ]),
+    ).toBeNull();
+    expect(inferCommonPrefixMove([{ from: "src/a.ts", to: "src/b.ts" }])).toBeNull();
+    expect(inferCommonPrefixMove([])).toBeNull();
   });
 });

@@ -245,6 +245,39 @@ export function manifestWithRenamedKeys(input: {
 }
 
 /**
+ * The single dir-prefix move that explains EVERY pair, if one exists — lets
+ * the receiving side show «папка X → Y (N файлов)» instead of N per-file
+ * toasts. Derived by stripping the longest common path suffix of each pair;
+ * `null` when the pairs do not share one transformation (mixed edits).
+ */
+export function inferCommonPrefixMove(
+  moves: readonly CanonicalMove[],
+): CanonicalMove | null {
+  if (moves.length === 0) return null;
+  let candidate: CanonicalMove | null | undefined;
+  for (const m of moves) {
+    const from = m.from.split("/");
+    const to = m.to.split("/");
+    let shared = 0;
+    while (
+      shared < from.length - 1 &&
+      shared < to.length - 1 &&
+      from[from.length - 1 - shared] === to[to.length - 1 - shared]
+    ) {
+      shared++;
+    }
+    if (shared === 0) return null;
+    const pair: CanonicalMove = {
+      from: from.slice(0, from.length - shared).join("/"),
+      to: to.slice(0, to.length - shared).join("/"),
+    };
+    if (candidate === undefined) candidate = pair;
+    else if (candidate?.from !== pair.from || candidate.to !== pair.to) return null;
+  }
+  return candidate ?? null;
+}
+
+/**
  * Remap one canonical key through a set of prefix moves (longest match wins) —
  * used for local `syncScopes` after a folder rename. Returns the key unchanged
  * when no prefix matches.

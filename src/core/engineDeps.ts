@@ -249,18 +249,31 @@ export interface EngineEvents {
     toPrune: readonly string[];
   }) => void;
   /**
-   * Link Bindings (stage 3): another machine renamed a file canonically while
-   * this machine keeps its own placement. The engine re-associated the row
-   * (metadata only; the bytes stayed at `localPlacement`) — the UI offers
-   * "переместить у меня" as an explicit user action.
+   * Canonical path editing: another machine renamed files canonically while
+   * this machine keeps its own placement. The engine re-associated the rows
+   * (metadata only; the bytes stayed at each `localPlacement`) — the UI offers
+   * "переместить у меня" as an explicit user action. ONE call per adopt pass
+   * with every replayed rename, so a folder move of N files makes one toast,
+   * not N.
    */
-  onCanonicalRenameReplayed?: (info: {
-    workspaceId: string;
-    from: string;
-    to: string;
-    /** Where the file still lives on this machine. */
-    localPlacement: string;
-  }) => void;
+  onCanonicalRenamesReplayed?: (
+    workspaceId: string,
+    notices: readonly {
+      from: string;
+      to: string;
+      /** Where the file still lives on this machine. */
+      localPlacement: string;
+    }[],
+  ) => void;
+  /**
+   * Canonical path editing: this machine's rename batch lost a concurrent
+   * race — after the 412-merge some heirs are no longer live (another
+   * machine's rename won). Silence here would silently discard user intent.
+   */
+  onCanonicalRenameOverridden?: (
+    workspaceId: string,
+    moves: readonly { from: string; to: string }[],
+  ) => void;
   /**
    * Called after a file is successfully written to disk during pull.
    * Provides old and new UTF-8 content for diff/notification purposes.

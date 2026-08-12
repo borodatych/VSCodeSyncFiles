@@ -114,8 +114,12 @@ export interface CanonicalRelocationDeps {
   pullMeta: () => Promise<MetaJson>;
   /** Owns the etag bookkeeping (`currentManifestEtag` + 412-merge cycle). */
   putManifest: (manifest: CloudManifest) => Promise<void>;
+  /** The manifest as finally written (post 412-merge), if cached. */
+  peekManifest: () => CloudManifest | undefined;
   /** Owns the meta etag reload. */
   pushMeta: (meta: MetaJson) => Promise<void>;
+  /** Some of this batch's heirs lost a concurrent race — surface, never swallow. */
+  onOverridden?: (moves: readonly CanonicalMove[]) => void;
   nextManifestVersion: (files: ManifestFile[]) => number;
   touchMachines: (machines: CloudManifest["machines"], now: string) => CloudManifest["machines"];
   decode: (body: Buffer, wireGzip: boolean) => Buffer;
@@ -182,6 +186,17 @@ export async function runCanonicalKeyRelocation(deps: CanonicalRelocationDeps): 
     touchMachines: deps.touchMachines,
   });
   await deps.putManifest(renamed.manifest);
+  // A 412-merge inside putManifest may have decided against some of this
+  // batch's heirs (a concurrent rename won by Lamport, the duplicate-linkId
+  // repair tombstoned ours). Losing silently would discard user intent.
+  const finalManifest = deps.peekManifest();
+  if (finalManifest && deps.onOverridden) {
+    const liveFinal = new Set(finalManifest.files.filter((f) => !f.removedAt).map((f) => f.path));
+    const overridden = renamed.applied.filter((m) => !liveFinal.has(m.to));
+    if (overridden.length > 0) {
+      deps.onOverridden(overridden);
+    }
+  }
   await deps.pushMeta(meta);
 
   // Old blobs go last: an interrupted job may leave orphan copies (resumable,

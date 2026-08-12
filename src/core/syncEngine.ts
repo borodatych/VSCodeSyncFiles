@@ -23,7 +23,7 @@ import {
 import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
 import { defaultLinkName, findDuplicateLinkIds, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
 import { touchManifestMachine } from "./machineRegistry.js";
-import { manifestKeyOf } from "./trackedPathResolver.js";
+import { manifestKeyOf, trackedLinkIdMap } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
 import { copyCloudFileBetweenProviders } from "./cloudMigration.js";
 import { createWorkspaceSnapshot, type SnapshotCrypto } from "./snapshotsEngine.js";
@@ -904,6 +904,7 @@ export class SyncEngine {
     for (const posixRel of candidatePaths) {
       if (await fileExists(this.localAbs(cfg, placementOf(posixRel)))) existing.add(posixRel);
     }
+    const trackedLinkIds = trackedLinkIdMap(cfg.files, workspaceId);
     const diff = planTrackingDiff({
       workspaceId,
       // Out-of-scope rows are invisible to the planner: neither adopted nor
@@ -917,6 +918,7 @@ export class SyncEngine {
       metaHashFor: (rel: string) => meta.files[rel]?.hash,
       wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
       existsLocally: (rel: string) => existing.has(rel),
+      trackedLinkIdOf: (key: string) => trackedLinkIds.get(key),
     });
 
     // Disk existence for the rename branch, resolved up front — the applier
@@ -937,8 +939,8 @@ export class SyncEngine {
       blobPathOf: (posixRel, wireGzip) => blobCloudPath(workspaceId, posixRel, wireGzip),
       nowIso: stamp,
     });
-    for (const notice of replayed) {
-      this.deps.onCanonicalRenameReplayed?.({ workspaceId, ...notice });
+    if (replayed.length > 0) {
+      this.deps.onCanonicalRenamesReplayed?.(workspaceId, replayed);
     }
     if (changed) {
       await this.saveCfg(cfg);
@@ -2240,20 +2242,13 @@ export class SyncEngine {
     }
     const cfg = await this.loadCfg();
     const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
-    // Unbinding convention (docs/v2/linkBindings.md): a machine letting go of a
-    // bound row writes the CANONICAL path back into its bindings key — never a
-    // deletion, which union-merge would resurrect. Without this the cloud keeps
-    // asserting a placement this machine no longer tracks, and a later re-adopt
-    // ("повторный засев") would land on the stale binding instead of the
-    // current canonical path.
+    // Unbinding convention (docs/v2/linkBindings.md): write the CANONICAL path
+    // back into this machine's bindings key — never delete (union-merge would
+    // resurrect), never leave stale (re-adopt would land on the old binding
+    // instead of the current canonical path). See `manifestWithBindingsReset`.
     const unboundKeys = cfg.files
-      .filter(
-        (f) =>
-          f.workspaceId === workspaceId &&
-          relSet.has(f.localPath) &&
-          f.manifestPath !== undefined &&
-          f.manifestPath !== f.localPath,
-      )
+      .filter((f) => f.workspaceId === workspaceId && relSet.has(f.localPath))
+      .filter((f) => f.manifestPath !== undefined && f.manifestPath !== f.localPath)
       .map((f) => manifestKeyOf(f));
     cfg.files = cfg.files.filter((f) => !(f.workspaceId === workspaceId && relSet.has(f.localPath)));
     await this.saveCfg(cfg);
@@ -2465,6 +2460,8 @@ export class SyncEngine {
           await this.currentManifestEtag(workspaceId, entry.manifestEtag),
         );
       },
+      peekManifest: () => this.manifestStore.peek(workspaceId),
+      onOverridden: (moves) => this.deps.onCanonicalRenameOverridden?.(workspaceId, moves),
       pushMeta: async (meta) => {
         const fresh = await this.loadCfg();
         const entAfterPut = fresh.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
@@ -2969,6 +2966,7 @@ export class SyncEngine {
     // Same planner the adoption uses, so the notification cannot promise a
     // different set of changes than the action would apply. `existsLocally` is
     // irrelevant to the counts, so the detector answers it cheaply.
+    const driftLinkIds = trackedLinkIdMap(cfg.files, workspaceId);
     const diff = planTrackingDiff({
       workspaceId,
       // Same scope filter as the adoption pass: a folder this machine does not
@@ -2982,6 +2980,7 @@ export class SyncEngine {
       metaHashFor: () => undefined,
       wireGzipFor: () => false,
       existsLocally: () => false,
+      trackedLinkIdOf: (key: string) => driftLinkIds.get(key),
     });
     const toAdopt = [...diff.adopt.map((a) => a.posixRel), ...diff.rename.map((r) => r.to)];
     const toPrune = diff.prune;

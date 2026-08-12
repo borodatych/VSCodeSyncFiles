@@ -38,6 +38,23 @@ export function manifestKeyOf(f: Pick<TrackedFile, "localPath" | "manifestPath">
   return f.manifestPath ?? f.localPath;
 }
 
+/**
+ * Tracked key → cached `linkId` for one workspace — feeds the identity-pairing
+ * phase of `planTrackingDiff` (adopt pass and drift report build the same map).
+ */
+export function trackedLinkIdMap(
+  files: readonly Pick<TrackedFile, "localPath" | "manifestPath" | "workspaceId" | "linkId">[],
+  workspaceId: string,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of files) {
+    if (f.workspaceId === workspaceId && f.linkId !== undefined) {
+      out.set(manifestKeyOf(f), f.linkId);
+    }
+  }
+  return out;
+}
+
 type MachineNameProvider = () => Promise<string>;
 
 let machineNameProvider: MachineNameProvider | undefined;

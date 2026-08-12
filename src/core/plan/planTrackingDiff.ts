@@ -32,6 +32,11 @@ export interface TrackingDiffInput {
   wireGzipFor: (posixRel: string) => boolean;
   /** Whether the file is present on this disk right now. */
   existsLocally: (posixRel: string) => boolean;
+  /**
+   * Locally cached `linkId` of a tracked key — feeds the identity-pairing
+   * phase. Optional: without it renames are detected by `renamedFrom` only.
+   */
+  trackedLinkIdOf?: (trackedKey: string) => string | undefined;
 }
 
 export interface AdoptedFilePlan {
@@ -214,7 +219,52 @@ export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
   // A path that is only leaving under its old name because of a rename is not
   // "pruned" — the entry moves.
   const renamedAway = new Set(rename.map((r) => r.from));
-  const prune = [...tracked].filter((p) => !activePaths.has(p) && !renamedAway.has(p));
+  let prune = [...tracked].filter((p) => !activePaths.has(p) && !renamedAway.has(p));
+
+  // Phase 2 — identity pairing. `renamedFrom` is one-step and purged after 30
+  // days: a machine returning from long offline, or one that slept through a
+  // chain a→b→c, would see "prune + adopt" and duplicate the file on disk.
+  // The cached linkId still names the row, so an unambiguous (1 leaving key ↔
+  // 1 arriving row) identity match converts the pair into a rename. Ambiguous
+  // identities (duplicate carriers pending repair) are left alone.
+  if (input.trackedLinkIdOf && prune.length > 0 && adopt.length > 0) {
+    const leavingByLinkId = new Map<string, string[]>();
+    for (const p of prune) {
+      const id = input.trackedLinkIdOf(p);
+      if (id === undefined) continue;
+      const paths = leavingByLinkId.get(id);
+      if (paths) paths.push(p);
+      else leavingByLinkId.set(id, [p]);
+    }
+    const arrivingByLinkId = new Map<string, AdoptedFilePlan[]>();
+    for (const a of adopt) {
+      if (a.linkId === undefined) continue;
+      const plans = arrivingByLinkId.get(a.linkId);
+      if (plans) plans.push(a);
+      else arrivingByLinkId.set(a.linkId, [a]);
+    }
+    const pairedAdopts = new Set<AdoptedFilePlan>();
+    const pairedPrunes = new Set<string>();
+    for (const [linkId, leaving] of leavingByLinkId) {
+      const arriving = arrivingByLinkId.get(linkId);
+      if (!arriving || leaving.length !== 1 || arriving.length !== 1) continue;
+      rename.push({
+        from: leaving[0],
+        to: arriving[0].posixRel,
+        wireGzip: arriving[0].wireGzip,
+        localHash: input.metaHashFor(arriving[0].posixRel) ?? "",
+        linkId,
+      });
+      pairedAdopts.add(arriving[0]);
+      pairedPrunes.add(leaving[0]);
+    }
+    if (pairedAdopts.size > 0) {
+      const keptAdopt = adopt.filter((a) => !pairedAdopts.has(a));
+      adopt.length = 0;
+      adopt.push(...keptAdopt);
+      prune = prune.filter((p) => !pairedPrunes.has(p));
+    }
+  }
 
   return { adopt, rename, prune };
 }
