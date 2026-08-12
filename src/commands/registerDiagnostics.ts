@@ -128,6 +128,9 @@ export function registerDiagnosticsCommands(
       if (report.staleLockTargets.length > 0 && provider) {
         actions.push("Починить stale lock");
       }
+      if (report.duplicateLinkIdTargets.length > 0 && provider) {
+        actions.push("Починить дубликаты linkId");
+      }
       actions.push("Закрыть");
 
       const picked = await vscode.window.showInformationMessage(
@@ -166,6 +169,31 @@ export function registerDiagnosticsCommands(
         if (total === 0 && report.staleLockTargets.length > 0) {
           void vscode.window.showInformationMessage(
             "VSCodeSync: устаревших soft lock не осталось (уже сброшены или порог времени изменился). Перезапустите Health Check.",
+          );
+        }
+      }
+
+      if (picked === "Починить дубликаты linkId" && provider) {
+        let groups = 0;
+        for (const t of report.duplicateLinkIdTargets) {
+          try {
+            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, "user");
+            groups += await eng.repairWorkspaceDuplicateLinkIds(t.workspaceId);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            await vscode.window.showErrorMessage(`VSCodeSync: ремонт дубликатов — ${t.workspaceNote}: ${msg}`);
+            groups = -1;
+            break;
+          }
+        }
+        if (groups > 0) {
+          void vscode.window.showInformationMessage(
+            `VSCodeSync: починено групп дубликатов linkId: ${String(groups)}. Выживает новейший носитель, привязки слиты.`,
+          );
+        }
+        if (groups === 0 && report.duplicateLinkIdTargets.length > 0) {
+          void vscode.window.showInformationMessage(
+            "VSCodeSync: дубликатов не осталось (уже починены — например, авторемонтом при слиянии). Перезапустите Health Check.",
           );
         }
       }

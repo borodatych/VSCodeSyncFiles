@@ -39,6 +39,8 @@ export interface StaleLockTarget {
 export interface HealthCheckReport {
   lines: string[];
   staleLockTargets: StaleLockTarget[];
+  /** Workspaces with live duplicate-linkId carriers — repair-button targets. */
+  duplicateLinkIdTargets: StaleLockTarget[];
   machinesRegistryStale: boolean;
 }
 
@@ -54,6 +56,7 @@ export async function buildHealthCheckReport(ctx: {
 }): Promise<HealthCheckReport> {
   const lines: string[] = [];
   const staleLockTargets: StaleLockTarget[] = [];
+  const duplicateLinkIdTargets: StaleLockTarget[] = [];
   const staleSeen = new Set<string>();
   let machinesRegistryStale = false;
 
@@ -172,6 +175,19 @@ export async function buildHealthCheckReport(ctx: {
           });
         }
       }
+      // The "⚠" marker matters: the weekly auto-check only notifies on lines
+      // carrying it, and a lingering duplicate identity deserves a nudge.
+      const dupes = await engine.listDuplicateLinkIds(aw.workspaceId);
+      for (const g of dupes) {
+        lines.push(`    ⚠ дубликат идентичности (linkId ${g.linkId}): ${g.paths.join(" ↔ ")}`);
+      }
+      if (dupes.length > 0) {
+        duplicateLinkIdTargets.push({
+          folderRoot: root,
+          workspaceId: aw.workspaceId,
+          workspaceNote: aw.workspaceNote,
+        });
+      }
     }
     lines.push("");
   }
@@ -180,5 +196,5 @@ export async function buildHealthCheckReport(ctx: {
   // support bundle reads this back, and the report itself only ever went to a
   // write-only output channel.
   setLastHealthReport(lines);
-  return { lines, staleLockTargets, machinesRegistryStale };
+  return { lines, staleLockTargets, duplicateLinkIdTargets, machinesRegistryStale };
 }

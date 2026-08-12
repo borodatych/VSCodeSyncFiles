@@ -102,6 +102,7 @@ export const MUTATION_OPS = [
   "repairLocalStateFromCloud",
   "applyHashBlake3Backfill",
   "clearStaleManifestEditingLocks",
+  "repairWorkspaceDuplicateLinkIds",
   // --- Locks and history -----------------------------------------------
   "setSoftLock",
   "clearSoftLock",

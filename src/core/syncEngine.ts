@@ -21,7 +21,14 @@ import {
   workspaceRootPath,
 } from "./cloudLayout.js";
 import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
-import { defaultLinkName, findDuplicateLinkIds, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
+import {
+  defaultLinkName,
+  findDuplicateLinkIds,
+  newLinkId,
+  rebuildManifestFilesFromTracked,
+  repairDuplicateLinkIds,
+  type DuplicateLinkIdGroup,
+} from "./linkIdentity.js";
 import { touchManifestMachine } from "./machineRegistry.js";
 import { manifestKeyOf, trackedLinkIdMap } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
@@ -1571,6 +1578,55 @@ export class SyncEngine {
       editingSince: r.editingSince,
       ageHours: r.ageMs / 3600_000,
     }));
+  }
+
+  /**
+   * Live rows sharing one linkId — the artefact of a bind racing a canonical
+   * rename. Read-only; same manifest fetch as Health Check.
+   */
+  async listDuplicateLinkIds(workspaceId: string): Promise<DuplicateLinkIdGroup[]> {
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      return [];
+    }
+    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!m) {
+      return [];
+    }
+    return findDuplicateLinkIds(m.files);
+  }
+
+  /**
+   * One-click repair for duplicate linkId carriers: the newest carrier keeps
+   * the identity, older ones are tombstoned with their bindings folded in
+   * (pure transform in linkIdentity.ts). The 412-merge path auto-repairs races
+   * it participates in; this covers duplicates surfaced by Health Check when
+   * no write is in flight.
+   * @returns Number of duplicate groups repaired.
+   */
+  async repairWorkspaceDuplicateLinkIds(workspaceId: string): Promise<number> {
+    this.assertMayMutate("repairWorkspaceDuplicateLinkIds");
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
+    if (!m) {
+      throw new Error("manifest missing");
+    }
+    const groups = findDuplicateLinkIds(m.files).length;
+    if (groups === 0) {
+      return 0;
+    }
+    const repaired = repairDuplicateLinkIds(m, new Date().toISOString());
+    await this.putManifest(
+      workspaceId,
+      repaired,
+      await this.currentManifestEtag(workspaceId, entry.manifestEtag),
+    );
+    return groups;
   }
 
   /**
