@@ -23,7 +23,7 @@ import { pickWorkspaceId, pickOtherWorkspaceId } from "./_shared.js";
 import { resolveFileTarget, resolveFileTargetLoose as resolveFileTargetLooseRaw } from "./_fileTargetHelpers.js";
 import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlows.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
-import { trackedAbsolutePathFor, trackedPosixRelFor } from "../core/trackedPathResolver.js";
+import { manifestKeyOf, trackedAbsolutePathFor, trackedPosixRelFor } from "../core/trackedPathResolver.js";
 import { planAddDuplicates, type AddCandidate, type DuplicateMatch } from "../core/plan/planAddDuplicates.js";
 import { planCanonicalRootOptions } from "../core/plan/planCanonicalRoot.js";
 import { computeHash } from "../utils/hash.js";
@@ -680,7 +680,9 @@ export function registerFileOperationsCommands(
           context,
           provider,
           workspaceId: row.workspaceId,
-          relPath: rel,
+          // History lives under the canonical manifest key; the local
+          // placement of a bound file names a directory that does not exist.
+          relPath: manifestKeyOf(row),
         });
       }, target.root);
     }),

@@ -48,6 +48,13 @@ export interface ActivityEventInput {
   machineName: string;
   provider: ProviderType;
   detail?: string;
+  /**
+   * Stable file identity (Link Bindings). `relPath` freezes the placement at
+   * event time, so a renamed or physically moved file loses its Timeline past;
+   * matching by linkId keeps the trail attached across renames. Optional —
+   * old events and old readers are unaffected.
+   */
+  linkId?: string;
   meta?: Record<string, unknown>;
 }
 

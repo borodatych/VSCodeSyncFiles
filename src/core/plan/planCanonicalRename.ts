@@ -43,6 +43,21 @@ export interface PlannedCanonicalRename {
   warnings: CanonicalRenameWarning[];
 }
 
+/**
+ * One-level un-nest target: the node keeps its name and leaves its parent —
+ * `a/b/c` → `a/c`, `b/c` → `c`. `null` when the node has no parent to leave.
+ * Repeating the command walks a node all the way to the workspace root.
+ */
+export function unnestedTarget(canonicalPath: string): string | null {
+  const segments = canonicalPath.split("/").filter(Boolean);
+  if (segments.length < 2) {
+    return null;
+  }
+  const name = segments[segments.length - 1];
+  const upper = segments.slice(0, -2);
+  return upper.length > 0 ? `${upper.join("/")}/${name}` : name;
+}
+
 /** POSIX-relative, no empty/`.`/`..` segments, no backslashes. */
 export function isValidCanonicalPath(p: string): boolean {
   if (p === "" || p.includes("\\")) return false;

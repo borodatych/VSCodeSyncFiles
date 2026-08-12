@@ -13,7 +13,6 @@ import { getWorkspaceConfigStore, type WorkspaceConfigStore } from "./io/workspa
 import type { CloudManifest, ManifestFile, MetaJson, MachineEntry, MetaEntry } from "./cloudLayout.js";
 import {
   EMPTY_META_JSON,
-  historyDirForFile,
   manifestCloudPath,
   metaCloudPath,
   SUPPORTED_MANIFEST_SCHEMA,
@@ -21,7 +20,34 @@ import {
   workspaceRootPath,
 } from "./cloudLayout.js";
 import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
-import { defaultLinkName, findDuplicateLinkIds, newLinkId, rebuildManifestFilesFromTracked } from "./linkIdentity.js";
+import {
+  defaultLinkName,
+  newLinkId,
+  rebuildManifestFilesFromTracked,
+  type DuplicateLinkIdGroup,
+} from "./linkIdentity.js";
+import {
+  downloadHistorySnapshot,
+  downloadTrackedBlobPlaintext,
+  listTrackedFileHistory,
+  type TrackedBlobReaderDeps,
+} from "./io/trackedBlobReader.js";
+import {
+  clearStaleManifestLocks,
+  listStaleManifestLocks,
+  listWorkspaceDuplicateLinkIds,
+  repairWorkspaceDuplicateLinkIdGroups,
+  workspaceCloudHealth,
+  type ManifestHealthDeps,
+  type StaleLockRow,
+} from "./manifestHealthOps.js";
+import {
+  collectWorkspaceOrphans,
+  scanWorkspaceOrphans,
+  ORPHAN_GC_DEFAULT_MIN_AGE_DAYS,
+  type OrphanCollectResult,
+} from "./io/orphanGcOps.js";
+import type { OrphanGcPlan } from "./plan/planOrphanGc.js";
 import { touchManifestMachine } from "./machineRegistry.js";
 import { manifestKeyOf, trackedLinkIdMap } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
@@ -80,12 +106,17 @@ import {
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
-import { applyTrackingDiff, planPurgeLostCandidates, planTrackingDiff } from "./plan/planTrackingDiff.js";
+import {
+  applyTrackingDiff,
+  planPurgeLostCandidates,
+  planTrackingDiff,
+  pruneTrackedRowsAgainstManifest,
+} from "./plan/planTrackingDiff.js";
 import type { CanonicalRenameRequest } from "./plan/planCanonicalRename.js";
 import type { RenamedKeysResult } from "./canonicalRename.js";
 import { runCanonicalKeyRelocation } from "./io/canonicalRelocation.js";
 import { throwIfAborted } from "./operationCancelled.js";
-import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
+import { applyLockChange } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -1521,100 +1552,77 @@ export class SyncEngine {
     return sharedIgnorePatternsOrEmpty(m);
   }
 
-  /** Доступен ли облачный манифест для активного workspace. */
+  /** Доступен ли облачный манифест для активного workspace; flow in manifestHealthOps.ts. */
   async healthCheckWorkspace(workspaceId: string): Promise<{ ok: true } | { ok: false; message: string }> {
-    try {
-      const cfg = await this.loadCfg();
-      const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-      if (!entry) {
-        return { ok: false, message: "workspace не в списке активных" };
-      }
-      const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-      if (!m) {
-        return { ok: false, message: "манифест недоступен" };
-      }
-      // Link Bindings: a bind racing a canonical rename can leave one linkId
-      // on two live rows — surfaced here, repaired via repairDuplicateLinkIds.
-      const dupes = findDuplicateLinkIds(m.files);
-      if (dupes.length > 0) {
-        return {
-          ok: false,
-          message: `дубликат идентичности (linkId) у: ${dupes.map((d) => d.paths.join(" ↔ ")).join("; ")}`,
-        };
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, message: e instanceof Error ? e.message : String(e) };
-    }
+    return workspaceCloudHealth(this.manifestHealthDeps(workspaceId));
   }
 
-  /**
-   * Manifest paths with abandoned soft lock (`editingBy` / `editingSince` older than threshold).
-   * Read-only; uses same manifest fetch as Health Check.
-   */
-  async listStaleManifestEditingLocks(workspaceId: string): Promise<
-    { path: string; editingBy: string; editingSince: string; ageHours: number }[]
-  > {
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      return [];
-    }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      return [];
-    }
-    // One definition of "stale", shared with the clearing path below.
-    return findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => ({
-      path: r.posixRel,
-      editingBy: r.machineId,
-      editingSince: r.editingSince,
-      ageHours: r.ageMs / 3600_000,
-    }));
-  }
-
-  /**
-   * Clear soft locks on manifest files when `editingSince` is older than `STALE_MANIFEST_EDITING_LOCK_MS`.
-   * @returns Number of files updated.
-   */
-  async clearStaleManifestEditingLocks(workspaceId: string): Promise<number> {
-    this.assertMayMutate("clearStaleManifestEditingLocks");
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+  /** Read-only orphan scan (blobs/history/_meta под мёртвыми ключами); flow in io/orphanGcOps.ts. */
+  async scanWorkspaceOrphansForGc(workspaceId: string): Promise<OrphanGcPlan> {
+    const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
       throw new Error("workspace not active");
     }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      throw new Error("manifest missing");
-    }
-    const nowIso = new Date().toISOString();
-    const stale = new Set(
-      findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => r.posixRel),
-    );
-    const cleared = stale.size;
-    if (cleared === 0) {
-      return 0;
-    }
-    // Clearing someone else's abandoned lock *is* an edit to the row, so the
-    // version bumps here — unlike taking or dropping your own lock.
-    const files: ManifestFile[] = m.files.map((f) => {
-      if (!stale.has(f.path)) {
-        return f;
-      }
-      const rest = { ...f };
-      delete rest.editingBy;
-      delete rest.editingSince;
-      return { ...rest, version: f.version + 1 };
+    return scanWorkspaceOrphans({
+      workspaceId,
+      provider: this.deps.provider,
+      downloadManifest: () => this.downloadManifest(workspaceId, entry.manifestEtag),
+      pullMeta: () => this.pullMeta(workspaceId, entry.metaEtag),
+      minAgeMs: ORPHAN_GC_DEFAULT_MIN_AGE_DAYS * 24 * 3600_000,
     });
-    const updated: CloudManifest = {
-      ...m,
-      files,
-      updatedAt: nowIso,
-      machines: this.touchMachine(m.machines, nowIso),
+  }
+
+  /** Trash the confirmed orphans (deleteFile = корзина, D11); flow in io/orphanGcOps.ts. */
+  async collectWorkspaceOrphansToTrash(workspaceId: string, plan: OrphanGcPlan): Promise<OrphanCollectResult> {
+    this.assertMayMutate("collectWorkspaceOrphans");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    const freshMetaEtag = async (): Promise<string | undefined> =>
+      (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId)?.metaEtag;
+    return collectWorkspaceOrphans(
+      {
+        provider: this.deps.provider,
+        pullMeta: async () => this.pullMeta(workspaceId, await freshMetaEtag()),
+        pushMeta: async (meta) => {
+          await this.pushMetaJson(workspaceId, meta, await freshMetaEtag(), "push");
+        },
+      },
+      plan,
+    );
+  }
+
+  /** Manifest paths with an abandoned soft lock; flow in manifestHealthOps.ts. */
+  async listStaleManifestEditingLocks(workspaceId: string): Promise<StaleLockRow[]> {
+    return listStaleManifestLocks(this.manifestHealthDeps(workspaceId), this.resolveSoftLockStaleMs());
+  }
+
+  /** Read-only duplicate-linkId listing; flow in manifestHealthOps.ts. */
+  async listDuplicateLinkIds(workspaceId: string): Promise<DuplicateLinkIdGroup[]> {
+    return listWorkspaceDuplicateLinkIds(this.manifestHealthDeps(workspaceId));
+  }
+
+  /** One-click duplicate-linkId repair; flow in manifestHealthOps.ts. */
+  async repairWorkspaceDuplicateLinkIds(workspaceId: string): Promise<number> {
+    this.assertMayMutate("repairWorkspaceDuplicateLinkIds");
+    return repairWorkspaceDuplicateLinkIdGroups(this.manifestHealthDeps(workspaceId));
+  }
+
+  private manifestHealthDeps(workspaceId: string): ManifestHealthDeps {
+    return {
+      findEntry: async () =>
+        (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId),
+      downloadManifest: (etag) => this.downloadManifest(workspaceId, etag),
+      putManifest: async (m, etag) => {
+        await this.putManifest(workspaceId, m, etag);
+      },
+      currentEtag: (fallback) => this.currentManifestEtag(workspaceId, fallback),
+      touchMachines: (machines, now) => this.touchMachine(machines, now),
     };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    return cleared;
+  }
+
+  /** Clear abandoned soft locks; flow in manifestHealthOps.ts. Returns files updated. */
+  async clearStaleManifestEditingLocks(workspaceId: string): Promise<number> {
+    this.assertMayMutate("clearStaleManifestEditingLocks");
+    return clearStaleManifestLocks(this.manifestHealthDeps(workspaceId), this.resolveSoftLockStaleMs());
   }
 
   /**
@@ -1908,6 +1916,7 @@ export class SyncEngine {
         relPath: posixRel,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(rowLinkId !== undefined ? { linkId: rowLinkId } : {}),
       });
     }
     let diskCfg = await this.loadCfg();
@@ -2007,6 +2016,7 @@ export class SyncEngine {
       relPath: localPosixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(plan.tracked.linkId !== undefined ? { linkId: plan.tracked.linkId } : {}),
     });
     return { localPosixRel, contentMatches: plan.contentMatches };
   }
@@ -2170,7 +2180,7 @@ export class SyncEngine {
     // Pass 1 computes what the manifest would become and asks; pass 2 deletes.
     // Link Bindings: `key` is the canonical manifest/_meta/blob key; `posixRel`
     // stays the local placement (matches cfg.files[].localPath below).
-    const plannedRemovals: { posixRel: string; key: string; cloudPath: string }[] = [];
+    const plannedRemovals: { posixRel: string; key: string; cloudPath: string; linkId?: string }[] = [];
     for (const abs of absolutePaths) {
       const posixRel = this.posixRel(cfg, abs);
       const tracked = this.findTracked(cfg, workspaceId, posixRel);
@@ -2178,7 +2188,7 @@ export class SyncEngine {
       const cloudPath =
         tracked?.cloudPath ??
         blobCloudPath(workspaceId, key, meta.files[key]?.wireGzip === true);
-      plannedRemovals.push({ posixRel, key, cloudPath });
+      plannedRemovals.push({ posixRel, key, cloudPath, ...(tracked?.linkId !== undefined ? { linkId: tracked.linkId } : {}) });
     }
 
     for (const { key } of plannedRemovals) {
@@ -2198,7 +2208,7 @@ export class SyncEngine {
       }
     }
 
-    for (const { posixRel, key, cloudPath } of plannedRemovals) {
+    for (const { posixRel, key, cloudPath, linkId } of plannedRemovals) {
       try {
         await this.deps.provider.deleteFile(cloudPath);
       } catch (e) {
@@ -2216,6 +2226,7 @@ export class SyncEngine {
         relPath: posixRel,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(linkId !== undefined ? { linkId } : {}),
       });
     }
 
@@ -2249,9 +2260,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
     // Unbinding convention (docs/v2/linkBindings.md): write the CANONICAL path
-    // back into this machine's bindings key — never delete (union-merge would
-    // resurrect), never leave stale (re-adopt would land on the old binding
-    // instead of the current canonical path). See `manifestWithBindingsReset`.
+    // back into the bindings key — see `manifestWithBindingsReset`.
     const unboundKeys = cfg.files
       .filter((f) => f.workspaceId === workspaceId && relSet.has(f.localPath))
       .filter((f) => f.manifestPath !== undefined && f.manifestPath !== f.localPath)
@@ -2665,6 +2674,7 @@ export class SyncEngine {
       relPath: posixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
     });
   }
 
@@ -2728,6 +2738,7 @@ export class SyncEngine {
       relPath: posixRel,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       meta: { rule: "keep-both", theirsRel: plan.theirsRel },
     });
   }
@@ -3150,15 +3161,7 @@ export class SyncEngine {
   }
 
   private pruneTrackingFromManifest(cfg: WorkspaceConfig, manifest: CloudManifest): void {
-    const active = new Set(
-      manifest.files.filter((f) => !f.removedAt).map((f) => `${manifest.workspaceId}:${f.path}`),
-    );
-    cfg.files = cfg.files.filter((f) => {
-      if (f.workspaceId !== manifest.workspaceId) {
-        return true;
-      }
-      return active.has(`${f.workspaceId}:${manifestKeyOf(f)}`);
-    });
+    cfg.files = pruneTrackedRowsAgainstManifest(cfg.files, manifest);
   }
 
   private async syncOneFile(
@@ -3266,6 +3269,7 @@ export class SyncEngine {
         relPath: file.localPath,
         machineName: this.deps.machineName,
         provider: this.deps.provider.type,
+        ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       });
     }
   }
@@ -3393,6 +3397,7 @@ export class SyncEngine {
       relPath: file.localPath,
       machineName: this.deps.machineName,
       provider: this.deps.provider.type,
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
     });
     return false;
   }
@@ -3806,6 +3811,7 @@ export class SyncEngine {
           relPath: posixRel,
           machineName: this.deps.machineName,
           provider: this.deps.provider.type,
+          ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
           meta: activityMeta,
         });
         this.emitTransfer({ direction: "upload", bytes: uploadBuf.length });
@@ -3839,6 +3845,7 @@ export class SyncEngine {
             machineName: this.deps.machineName,
             provider: this.deps.provider.type,
             detail: "precondition_failed",
+            ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
           });
           return;
         }
@@ -4051,6 +4058,7 @@ export class SyncEngine {
     await this.persistMutatedCfg(cfg);
     this.fireActivity({
       kind: "pull",
+      ...(file.linkId !== undefined ? { linkId: file.linkId } : {}),
       workspaceId,
       workspaceNote: ent.workspaceNote,
       relPath: posixRel,
@@ -4063,71 +4071,30 @@ export class SyncEngine {
     });
   }
 
-  /** Снимки в `.history/` для файла (новые первыми). */
+  /** История файла (включая прежние канонические имена); flow in io/trackedBlobReader.ts. */
   async listCloudHistoryForTrackedFile(posixRel: string): Promise<FileMetadata[]> {
-    const cfg = await this.loadCfg();
-    const hit = cfg.files.find((f) => f.localPath === posixRel);
-    if (!hit) {
-      throw new Error("not tracked");
-    }
-    const dir = historyDirForFile(hit.workspaceId, manifestKeyOf(hit));
-    const items = await this.deps.provider.listFolder(dir);
-    const baseName = (p: string): string => {
-      const i = p.lastIndexOf("/");
-      return i >= 0 ? p.slice(i + 1) : p;
-    };
-    return [...items].sort((a, b) => baseName(b.cloudPath).localeCompare(baseName(a.cloudPath)));
+    return listTrackedFileHistory(this.blobReaderDeps(), posixRel);
   }
 
-  /**
-   * Shared prologue of the tracked-blob readers: tracked row by local path,
-   * its workspace entry, `_meta` row and wire codec — everything keyed by the
-   * canonical manifest key (Link Bindings).
-   */
-  private async trackedReadContext(posixRel: string): Promise<{
-    hit: TrackedFile;
-    key: string;
-    wireGzip: boolean;
-  }> {
-    const cfg = await this.loadCfg();
-    const hit = cfg.files.find((f) => f.localPath === posixRel);
-    if (!hit) {
-      throw new Error("not tracked");
-    }
-    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === hit.workspaceId);
-    if (!ent) {
-      throw new Error("no entry");
-    }
-    const meta = await this.pullMeta(hit.workspaceId, ent.metaEtag);
-    const key = manifestKeyOf(hit);
-    return { hit, key, wireGzip: meta.files[key]?.wireGzip === true };
-  }
-
-  /** Download with one retry on an empty 304 body (provider cache quirk). */
-  private async downloadCloudBytes(cloudPath: string): Promise<Buffer> {
-    let dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
-    if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
-    }
-    return dl.body;
-  }
-
-  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла. Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
+  /** Снимок истории по цепочке ключей; flow in io/trackedBlobReader.ts. */
   async downloadHistorySnapshotIfOwned(posixRel: string, historyCloudPath: string): Promise<Buffer> {
-    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
-    const prefix = `${historyDirForFile(hit.workspaceId, key)}/`;
-    const norm = historyCloudPath.replace(/\/$/, "");
-    if (!norm.startsWith(prefix)) {
-      throw new Error("not a history path for this file");
-    }
-    return this.decodeCloudBlob(await this.downloadCloudBytes(norm), wireGzip);
+    return downloadHistorySnapshot(this.blobReaderDeps(), posixRel, historyCloudPath);
   }
 
-  /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
+  /** Расшифрованные байты блоба; flow in io/trackedBlobReader.ts. */
   async downloadTrackedBlob(posixRel: string): Promise<{ body: Buffer }> {
-    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
-    const path = blobCloudPath(hit.workspaceId, key, wireGzip);
-    return { body: this.decodeCloudBlob(await this.downloadCloudBytes(path), wireGzip) };
+    return downloadTrackedBlobPlaintext(this.blobReaderDeps(), posixRel);
+  }
+
+  private blobReaderDeps(): TrackedBlobReaderDeps {
+    return {
+      provider: this.deps.provider,
+      loadCfg: () => this.loadCfg(),
+      pullMeta: (wsId, etag) => this.pullMeta(wsId, etag),
+      downloadManifest: (wsId, etag) => this.downloadManifest(wsId, etag),
+      decode: (body, gz) => this.decodeCloudBlob(body, gz),
+      abortSignal: this.abortSignal,
+    };
   }
 }
 

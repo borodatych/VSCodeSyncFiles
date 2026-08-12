@@ -27,6 +27,8 @@ import {
   peekWorkspaceInstanceLockHolder,
 } from "../core/workspaceInstanceLock.js";
 import { buildHealthCheckReport } from "../ui/healthCheckReport.js";
+import { formatBytes } from "../core/storageUsageReport.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import {
   buildSyncProfileReport,
   type SyncProfileBuffer,
@@ -128,6 +130,12 @@ export function registerDiagnosticsCommands(
       if (report.staleLockTargets.length > 0 && provider) {
         actions.push("Починить stale lock");
       }
+      if (report.duplicateLinkIdTargets.length > 0 && provider) {
+        actions.push("Починить дубликаты linkId");
+      }
+      if (provider) {
+        actions.push("Проверить мусор в облаке");
+      }
       actions.push("Закрыть");
 
       const picked = await vscode.window.showInformationMessage(
@@ -168,6 +176,105 @@ export function registerDiagnosticsCommands(
             "VSCodeSync: устаревших soft lock не осталось (уже сброшены или порог времени изменился). Перезапустите Health Check.",
           );
         }
+      }
+
+      if (picked === "Починить дубликаты linkId" && provider) {
+        let groups = 0;
+        for (const t of report.duplicateLinkIdTargets) {
+          try {
+            const eng = makeEngine(t.folderRoot, provider, gcData.machineId, gcData.machineName, "user");
+            groups += await eng.repairWorkspaceDuplicateLinkIds(t.workspaceId);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            await vscode.window.showErrorMessage(`VSCodeSync: ремонт дубликатов — ${t.workspaceNote}: ${msg}`);
+            groups = -1;
+            break;
+          }
+        }
+        if (groups > 0) {
+          void vscode.window.showInformationMessage(
+            `VSCodeSync: починено групп дубликатов linkId: ${String(groups)}. Выживает новейший носитель, привязки слиты.`,
+          );
+        }
+        if (groups === 0 && report.duplicateLinkIdTargets.length > 0) {
+          void vscode.window.showInformationMessage(
+            "VSCodeSync: дубликатов не осталось (уже починены — например, авторемонтом при слиянии). Перезапустите Health Check.",
+          );
+        }
+      }
+
+      // Orphan GC: scan on demand (a recursive listing costs API quota, so it
+      // does not ride every weekly auto-check), then trash strictly after an
+      // explicit confirmation. deleteFile = provider trash (contract D11).
+      if (picked === "Проверить мусор в облаке" && provider) {
+        const scans: {
+          folderRoot: string;
+          workspaceId: string;
+          workspaceNote: string;
+          plan: Awaited<ReturnType<SyncEngine["scanWorkspaceOrphansForGc"]>>;
+        }[] = [];
+        for (const folder of folders) {
+          const root = folder.uri.fsPath;
+          const wc = await WorkspaceConfigManager.load(root);
+          for (const aw of wc.activeWorkspaces) {
+            try {
+              const eng = makeEngine(root, provider, gcData.machineId, gcData.machineName, "user");
+              const plan = await eng.scanWorkspaceOrphansForGc(aw.workspaceId);
+              scans.push({ folderRoot: root, workspaceId: aw.workspaceId, workspaceNote: aw.workspaceNote, plan });
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              healthCheckChannel.appendLine(`⚠ GC-скан «${aw.workspaceNote}»: ${msg}`);
+            }
+          }
+        }
+        let objects = 0;
+        let bytes = 0;
+        let undatable = 0;
+        for (const s of scans) {
+          const n = s.plan.orphanBlobs.length + s.plan.orphanHistoryFiles.length;
+          objects += n;
+          bytes += s.plan.totalBytes;
+          undatable += s.plan.skippedUndatable.length;
+          healthCheckChannel.appendLine(
+            `— GC «${s.workspaceNote}»: сирот ${String(n)} (${formatBytes(s.plan.totalBytes)}), ` +
+              `лишних строк _meta ${String(s.plan.orphanMetaKeys.length)}, без даты (пропущены): ${String(s.plan.skippedUndatable.length)}`,
+          );
+          for (const o of [...s.plan.orphanBlobs, ...s.plan.orphanHistoryFiles]) {
+            healthCheckChannel.appendLine(`    · ${o.cloudPath}`);
+          }
+        }
+        const metaRows = scans.reduce((n, s) => n + s.plan.orphanMetaKeys.length, 0);
+        if (objects === 0 && metaRows === 0) {
+          void vscode.window.showInformationMessage(
+            `VSCodeSync: мусора не найдено${undatable > 0 ? ` (объектов без даты, пропущено: ${String(undatable)})` : ""}.`,
+          );
+          return;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          `VSCodeSync: найдено сирот: ${String(objects)} (${formatBytes(bytes)}) и лишних строк _meta: ${String(metaRows)}. ` +
+            "Список — в панели Output. Переместить в корзину провайдера?",
+          { modal: true },
+          "Собрать в корзину",
+        );
+        if (confirm !== "Собрать в корзину") {
+          return;
+        }
+        let freed = 0;
+        let deleted = 0;
+        for (const s of scans) {
+          try {
+            const eng = makeEngine(s.folderRoot, provider, gcData.machineId, gcData.machineName, "user");
+            const res = await eng.collectWorkspaceOrphansToTrash(s.workspaceId, s.plan);
+            freed += res.freedBytes;
+            deleted += res.deletedObjects;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            await vscode.window.showErrorMessage(`VSCodeSync: GC «${s.workspaceNote}»: ${msg}`);
+          }
+        }
+        void vscode.window.showInformationMessage(
+          `VSCodeSync: в корзину провайдера отправлено объектов: ${String(deleted)}, освобождено ${formatBytes(freed)}.`,
+        );
       }
     }),
 

@@ -3,6 +3,8 @@ import { loadActivityFile, type ActivityEvent } from "../core/activityLog.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { trackedLocalAbsolutePath } from "../core/pathMapping.js";
+import { manifestKeyOf } from "../core/trackedPathResolver.js";
+import type { TrackedFile } from "../core/types.js";
 
 const KIND_ICON: Record<string, string> = {
   push: "$(arrow-up)",
@@ -57,7 +59,7 @@ export class SyncTimelineProvider implements vscode.Disposable {
     const storageDir = this.globalConfig.getStorageDir();
 
     const wc = await WorkspaceConfigManager.load(root);
-    let posixRel: string | undefined;
+    let row: TrackedFile | undefined;
     for (const f of wc.files) {
       let abs: string;
       try {
@@ -66,20 +68,28 @@ export class SyncTimelineProvider implements vscode.Disposable {
         continue;
       }
       if (abs === fsPath) {
-        posixRel = f.localPath;
+        row = f;
         break;
       }
     }
 
-    if (!posixRel) {
+    if (!row) {
       return { items: [] };
     }
 
     const activity = await loadActivityFile(storageDir);
-    const rel = posixRel;
-
+    // Identity first (Link Bindings): `relPath` freezes the placement at event
+    // time, so events from before a rename or a physical move would drop out
+    // of the trail. The linkId match keeps them; path matches cover events
+    // recorded before linkId rode the activity log.
+    const rowLinkId = row.linkId;
+    const paths = new Set([row.localPath, manifestKeyOf(row)]);
     const relevant = activity.events
-      .filter((ev) => ev.relPath === rel)
+      .filter((ev) =>
+        rowLinkId !== undefined && ev.linkId !== undefined
+          ? ev.linkId === rowLinkId
+          : paths.has(ev.relPath),
+      )
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .slice(0, 50);
 

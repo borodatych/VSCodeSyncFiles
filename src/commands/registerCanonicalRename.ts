@@ -16,9 +16,13 @@ import * as vscode from "vscode";
 import {
   isValidCanonicalPath,
   planCanonicalRename,
+  unnestedTarget,
   type CanonicalRenameRequest,
   type PlannedCanonicalRename,
 } from "../core/plan/planCanonicalRename.js";
+import { manifestKeyOf } from "../core/trackedPathResolver.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { moveLocalFilesWithProgress } from "../ui/localStructureMove.js";
 import type { SyncTreeElement } from "../ui/workspacesTree.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
@@ -102,6 +106,29 @@ function describeProblem(p: PlannedCanonicalRename["problems"][number]): string 
   }
 }
 
+/**
+ * This machine's rows whose bytes still sit at the old placement after the
+ * batch: the tracked row already carries the new canonical key (the engine
+ * re-pointed it), so a row whose local path differs is a move candidate.
+ */
+async function ownLocalMovesFor(
+  root: string,
+  workspaceId: string,
+  applied: readonly { from: string; to: string }[],
+): Promise<{ fromRel: string; toRel: string }[]> {
+  const wc = await WorkspaceConfigManager.load(root);
+  const toByKey = new Map(applied.map((m) => [m.to, m]));
+  const out: { fromRel: string; toRel: string }[] = [];
+  for (const f of wc.files) {
+    if (f.workspaceId !== workspaceId) continue;
+    const move = toByKey.get(manifestKeyOf(f));
+    if (move && f.localPath !== move.to) {
+      out.push({ fromRel: f.localPath, toRel: move.to });
+    }
+  }
+  return out;
+}
+
 /** The one shared confirm-and-run flow behind every entry point (DnD included). */
 export async function confirmAndRunCanonicalRename(
   deps: CanonicalRenameDeps,
@@ -154,10 +181,21 @@ export async function confirmAndRunCanonicalRename(
       const batch: LastRenameBatch = { root, workspaceId, applied, finishedAt: new Date().toISOString() };
       await deps.context.workspaceState.update(LAST_BATCH_KEY, batch);
     }
+    // The author machine deserves the same offer the replaying machines get:
+    // its rows now carry the new canonical key while the bytes still sit at
+    // the old placement — moving them is one click, never automatic.
+    const authorMoves = applied.length > 0 ? await ownLocalMovesFor(root, workspaceId, applied) : [];
+    const buttons = [
+      ...(authorMoves.length > 0 ? ["Переместить у меня"] : []),
+      ...(applied.length > 0 ? ["Отменить переименование"] : []),
+    ];
     const choice = await vscode.window.showInformationMessage(
       `VSCodeSync: пути обновлены (${String(applied.length)})${skipped > 0 ? `, пропущено: ${String(skipped)}` : ""}. Локальные файлы не перемещались.`,
-      ...(applied.length > 0 ? ["Отменить переименование"] : []),
+      ...buttons,
     );
+    if (choice === "Переместить у меня") {
+      await moveLocalFilesWithProgress(root, authorMoves);
+    }
     if (choice === "Отменить переименование") {
       await vscode.commands.executeCommand("vscodesync.undoCanonicalRename");
       return;
@@ -233,6 +271,37 @@ export function registerCanonicalRenameCommands(deps: CanonicalRenameDeps): vsco
         }
         await confirmAndRunCanonicalRename(deps, el.folderRoot.fsPath, el.workspaceId, [
           { scope: "prefix", from: canonical, to },
+        ]);
+      },
+    ),
+
+    /**
+     * Un-nest: the node keeps its name and leaves its parent folder — one
+     * click instead of editing the prefix by hand. Cloud structure only (the
+     * seeding scenario: new paths land on the other machine); the author gets
+     * the «Переместить у меня» offer from the shared flow afterwards.
+     */
+    vscode.commands.registerCommand(
+      "vscodesync.treeUnnestNode",
+      async (el: SyncTreeElement | undefined) => {
+        if (el?.kind !== "file" && el?.kind !== "fileFolder") {
+          return;
+        }
+        const canonical =
+          el.kind === "file"
+            ? (el.manifestPath ?? el.localPath)
+            : el.space === "canonical"
+              ? el.localPrefix
+              : (el.canonicalPrefix ?? el.localPrefix);
+        const to = unnestedTarget(canonical);
+        if (to === null) {
+          void vscode.window.showInformationMessage(
+            "VSCodeSync: узел уже в корне воркспейса — поднимать некуда.",
+          );
+          return;
+        }
+        await confirmAndRunCanonicalRename(deps, el.folderRoot.fsPath, el.workspaceId, [
+          { scope: el.kind === "fileFolder" ? "prefix" : "file", from: canonical, to },
         ]);
       },
     ),

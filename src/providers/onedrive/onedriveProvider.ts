@@ -574,6 +574,57 @@ export class OneDriveProvider implements ICloudProvider {
     }
   }
 
+  /**
+   * Server-side move/rename via `PATCH` on the driveItem — metadata-only, the
+   * content never travels. The documented request form is
+   * `parentReference: { id }` (driveitem-move), so the target folder is
+   * created first and its id read back with one metadata GET. A missing
+   * source maps to NOT_FOUND: the canonical-rename fast path reads that as
+   * "metadata-only move". A name conflict at the target is thrown as-is —
+   * the caller's transcode-copy fallback overwrites instead.
+   */
+  async moveFile(fromCloudPath: string, toCloudPath: string): Promise<UploadResult> {
+    const segments = toCloudPath.split("/").filter(Boolean);
+    const name = segments.pop() ?? "";
+    const parent = segments.join("/");
+    const token = await this.accessToken();
+    let parentId: string;
+    if (parent === "") {
+      const rootR = await this.graphFetch(`${GRAPH}/me/drive/root`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!rootR.ok) {
+        throw await this.classifyResponse(rootR);
+      }
+      parentId = ((await rootR.json()) as { id: string }).id;
+    } else {
+      await this.createFolder(parent);
+      const parentR = await this.graphFetch(itemUrl(parent), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!parentR.ok) {
+        throw await this.classifyResponse(parentR);
+      }
+      parentId = ((await parentR.json()) as { id: string }).id;
+    }
+    const r = await this.graphFetch(itemUrl(fromCloudPath), {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ parentReference: { id: parentId }, name }),
+    });
+    if (r.status === 404) {
+      throw new ProviderError("NOT_FOUND", `OneDrive: нет файла ${fromCloudPath}`);
+    }
+    if (!r.ok) {
+      throw await this.classifyResponse(r);
+    }
+    const j = (await r.json()) as { eTag?: string };
+    return { etag: normalizeEtag(j.eTag ?? null) };
+  }
+
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     const token = await this.accessToken();
     const prefix = cloudPath.endsWith("/") ? cloudPath : `${cloudPath}/`;
