@@ -22,6 +22,7 @@
   "cmd.renameLinkName.title": "VSCodeSync: Rename cloud entry label…",
   "cmd.treeFolderBind.title": "Bind folder to another local path…",
   "cmd.treeFolderPull.title": "Download folder",
+  "cmd.pickSyncScopes.title": "VSCodeSync: Pick folders to sync on this machine…",
   "cmd.removeFromSync.title": "VSCodeSync: Remove from sync",
   "cmd.moveCurrentFileToWorkspace.title": "VSCodeSync: Move current file to another workspace",
   "cmd.diffWithCloud.title": "VSCodeSync: Diff with cloud",

@@ -25,6 +25,7 @@ import { openTrackedFileInCloudStorage, runShowFileHistory } from "./_engineFlow
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { trackedAbsolutePathFor, trackedPosixRelFor } from "../core/trackedPathResolver.js";
 import { planAddDuplicates, type AddCandidate, type DuplicateMatch } from "../core/plan/planAddDuplicates.js";
+import { planCanonicalRootOptions } from "../core/plan/planCanonicalRoot.js";
 import { computeHash } from "../utils/hash.js";
 import { readCloudFileIndex } from "./_cloudIndex.js";
 
@@ -168,6 +169,64 @@ async function runAddToNewWorkspaceImpl(
   }, target.root);
 }
 
+/** Distinguishes "user closed the picker" from "no mapping needed". */
+const CANCELLED = Symbol("canonical-root-cancelled");
+
+/**
+ * Link Bindings: how the folder being sent should lie in the cloud. Offers
+ * `as is` plus every prefix cut, so `src/SEMD272/jscore` can go up as
+ * `jscore` and land correctly on a machine that has no `src/SEMD272`.
+ * Returns `undefined` when there is nothing to choose (single folder root or
+ * a multi-folder selection, where one rule could not describe the batch).
+ */
+async function pickCanonicalRootForFolder(
+  root: string,
+  rawPaths: readonly string[],
+  expandedFiles: readonly string[],
+): Promise<{ localDirRel: string; canonicalRoot: string } | undefined | typeof CANCELLED> {
+  const dirs: string[] = [];
+  for (const p of rawPaths) {
+    try {
+      if ((await fs.stat(p)).isDirectory()) dirs.push(p);
+    } catch {
+      /* ignore missing */
+    }
+  }
+  if (dirs.length !== 1) {
+    return undefined;
+  }
+  const localDirRel = await trackedPosixRelFor(root, dirs[0]);
+  if (localDirRel?.includes("/") !== true) {
+    return undefined; // top-level folder: nothing to trim
+  }
+  // First expanded file is the sample shown next to each option.
+  const sampleLocalPath =
+    expandedFiles.length > 0 ? await trackedPosixRelFor(root, expandedFiles[0]) : undefined;
+  const options = planCanonicalRootOptions({
+    localDirRel,
+    ...(sampleLocalPath === undefined ? {} : { sampleLocalPath }),
+  });
+  const picked = await vscode.window.showQuickPick(
+    options.map((o) => ({
+      label: `${o.canonicalRoot}/`,
+      description: o.droppedPrefix === "" ? "как есть" : `без «${o.droppedPrefix}/»`,
+      detail: `Пример: ${o.sampleCanonicalPath}`,
+      value: o,
+    })),
+    {
+      title: "VSCodeSync — каким путём эта папка лежит в облаке",
+      placeHolder: "Обрежьте начало пути, если на другой машине его нет",
+    },
+  );
+  if (picked === undefined) {
+    return CANCELLED;
+  }
+  if (picked.value.droppedPrefix === "") {
+    return undefined; // as is — no rule needed
+  }
+  return { localDirRel, canonicalRoot: picked.value.canonicalRoot };
+}
+
 export interface FileOperationsCommandsDeps {
   context: vscode.ExtensionContext;
   globalConfig: GlobalConfigManager;
@@ -259,6 +318,16 @@ export function registerFileOperationsCommands(
           return;
         }
       }
+      // Link Bindings: sending a folder asks how it should lie in the cloud —
+      // the leading local path is often machine-specific dressing (home
+      // `src/SEMD272/jscore` ↔ work `jscore`).
+      const canonicalRoot = selectionHadDirectory
+        ? await pickCanonicalRootForFolder(target.root, rawPaths, expanded)
+        : undefined;
+      if (canonicalRoot === CANCELLED) {
+        return;
+      }
+
       const useBulkAddConfirm = expanded.length > 1 || selectionHadDirectory;
       if (useBulkAddConfirm) {
         const ok = await vscode.window.showInformationMessage(
@@ -356,7 +425,10 @@ export function registerFileOperationsCommands(
           }
         }
         if (toAdd.length > 0) {
-          await engine.addFiles(ws, toAdd, linkName !== undefined && linkName !== "" ? { linkName } : undefined);
+          await engine.addFiles(ws, toAdd, {
+            ...(linkName !== undefined && linkName !== "" ? { linkName } : {}),
+            ...(canonicalRoot !== undefined ? { canonicalRoot } : {}),
+          });
         }
         const boundNote = toBind.length > 0 ? `, привязано: ${String(toBind.length)}` : "";
         if (expanded.length === 1) {

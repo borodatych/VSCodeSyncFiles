@@ -13,6 +13,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.renameLinkName",
   "vscodesync.treeFolderBind",
   "vscodesync.treeFolderPull",
+  "vscodesync.pickSyncScopes",
   "vscodesync.pushAll",
   "vscodesync.bulkPush",
   "vscodesync.pullAll",

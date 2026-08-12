@@ -67,6 +67,15 @@ export interface ActiveWorkspaceEntry {
   manifestEtag?: string;
   /** ETag последнего успешного PUT `_meta.json`. */
   metaEtag?: string;
+  /**
+   * Link Bindings (docs/v2/linkBindings.md): canonical folder prefixes this
+   * machine syncs. Empty or absent — the whole workspace, as before. Anything
+   * outside is not adopted, not reported as drift and not shown in the tree,
+   * so a machine can take `jscore/**` and leave `promed/**` to another one.
+   * Per-machine and local by design: the cloud must not decide what this disk
+   * carries.
+   */
+  syncScopes?: string[];
 }
 
 /**

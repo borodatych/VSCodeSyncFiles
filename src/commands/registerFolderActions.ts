@@ -10,6 +10,9 @@ import * as vscode from "vscode";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { describeFolderIntake, planFolderIntake } from "../core/plan/planFolderIntake.js";
 import { manifestKeyOf, trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
+import { isInSyncScope, normalizeSyncScopes } from "../core/syncScope.js";
+import { topLevelFolders } from "../ui/folderIntakePrompt.js";
+import { pickRoot, pickWorkspaceId } from "./_shared.js";
 import type { SyncTreeElement } from "../ui/workspacesTree.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
@@ -126,6 +129,63 @@ export function registerFolderActionsCommands(deps: FolderActionsDeps): vscode.D
             ". Правило действует и на будущие файлы этой папки.",
         );
       }, root);
+      await refreshUi();
+    }),
+
+    /**
+     * Which cloud folders this machine carries. Everything outside the choice
+     * stops being adopted, stops showing as «нет на диске» and disappears from
+     * the tree — the list stays this machine's business, the cloud keeps all
+     * folders for the others.
+     */
+    vscode.commands.registerCommand("vscodesync.pickSyncScopes", async () => {
+      const root = pickRoot();
+      if (root === undefined) {
+        return;
+      }
+      const ws = await pickWorkspaceId(root);
+      if (!ws) {
+        return;
+      }
+      let manifestPaths: string[] = [];
+      await runWithEngine(async (engine) => {
+        manifestPaths = await engine.listCloudWorkspaceFiles(ws);
+      }, root);
+      const folders = topLevelFolders(manifestPaths);
+      if (folders.length === 0) {
+        void vscode.window.showInformationMessage("VSCodeSync: в облаке этого воркспейса нет папок.");
+        return;
+      }
+      const cfg = await WorkspaceConfigManager.load(root);
+      const current = cfg.activeWorkspaces.find((w) => w.workspaceId === ws)?.syncScopes ?? [];
+      const picked = await vscode.window.showQuickPick(
+        folders.map((f) => ({
+          label: `${f.prefix}/`,
+          description: `${String(f.fileCount)} файл(ов)`,
+          picked: current.length === 0 || isInSyncScope(current, `${f.prefix}/x`),
+          value: f.prefix,
+        })),
+        {
+          title: "VSCodeSync — какие папки синхронизировать на этой машине",
+          placeHolder: "Снятые папки не появятся в дереве и не будут числиться отсутствующими",
+          canPickMany: true,
+        },
+      );
+      if (picked === undefined) {
+        return;
+      }
+      // Everything selected == no restriction: keep the list empty so the
+      // workspace behaves exactly as it did before scopes existed.
+      const scopes =
+        picked.length === folders.length ? [] : normalizeSyncScopes(picked.map((p) => p.value));
+      await runWithEngine(async (engine) => {
+        await engine.setWorkspaceSyncScopes(ws, scopes);
+      }, root);
+      void vscode.window.showInformationMessage(
+        scopes.length === 0
+          ? "Синхронизируется весь воркспейс."
+          : `Синхронизируются папки: ${scopes.map((s) => `${s}/`).join(", ")}.`,
+      );
       await refreshUi();
     }),
 

@@ -73,6 +73,7 @@
   "cmd.renameLinkName.title": "VSCodeSync: Переименовать линковочное имя…",
   "cmd.treeFolderBind.title": "Привязать папку к другому локальному пути…",
   "cmd.treeFolderPull.title": "Скачать папку",
+  "cmd.pickSyncScopes.title": "VSCodeSync: Выбрать папки для синхронизации на этой машине…",
   "cmd.syncWorkspace.title": "VSCodeSync: Синхронизировать воркспейс",
   "cmd.detachWorkspace.title": "VSCodeSync: Отвязать воркспейс...",
   "cmd.renameWorkspaceNote.title": "VSCodeSync: Переименовать заметку воркспейса",

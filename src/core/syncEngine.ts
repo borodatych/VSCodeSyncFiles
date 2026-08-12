@@ -42,6 +42,13 @@ import { applyWorkspaceMergeToCfg } from "./plan/planWorkspaceMergeCfg.js";
 import { entryPatchFromManifest, manifestMachineCache } from "./manifestCacheFields.js";
 import { runBlake3BackfillTasks } from "./plan/planBlake3Backfill.js";
 import { runBindingSelfHeal } from "./bindingSelfHealState.js";
+import { isInSyncScope, normalizeSyncScopes } from "./syncScope.js";
+import {
+  manifestWithFolderRule,
+  manifestWithLinkName,
+  replaceStrandedRows,
+  tombstoneManifestKey,
+} from "./folderBindingOps.js";
 import { buildSyncPreview } from "./syncPreview.js";
 import { planFileAction, syncStatusForAction } from "./plan/planFileAction.js";
 import { parallelLimit } from "./parallelLimit.js";
@@ -881,8 +888,12 @@ export class SyncEngine {
     const folderRules = manifest.folderBindings?.[this.deps.machineId];
     const placementOf = (posixRel: string): string =>
       localPathForCanonicalKey(folderRules, posixRel) ?? posixRel;
+    // Sync scope: folders this machine did not subscribe to are not adopted —
+    // otherwise the panel fills with "нет на диске" rows nobody asked for.
+    const scopes = entry.syncScopes;
+    const inScope = (canonicalKey: string): boolean => isInSyncScope(scopes, canonicalKey);
     const candidatePaths = manifest.files
-      .filter((f) => !f.removedAt)
+      .filter((f) => !f.removedAt && inScope(f.path))
       .map((f) => f.path);
     const existing = new Set<string>();
     for (const posixRel of candidatePaths) {
@@ -890,10 +901,14 @@ export class SyncEngine {
     }
     const diff = planTrackingDiff({
       workspaceId,
-      manifestFiles: manifest.files,
+      // Out-of-scope rows are invisible to the planner: neither adopted nor
+      // pruned — this machine simply does not carry that folder.
+      manifestFiles: manifest.files.filter((f) => inScope(f.path)),
       // Link Bindings: tracked rows are known to the manifest by their
       // canonical key — localPath here would false-adopt every bound file.
-      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => manifestKeyOf(f)),
+      trackedPaths: cfg.files
+        .filter((f) => f.workspaceId === workspaceId && inScope(manifestKeyOf(f)))
+        .map((f) => manifestKeyOf(f)),
       metaHashFor: (rel: string) => meta.files[rel]?.hash,
       wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
       existsLocally: (rel: string) => existing.has(rel),
@@ -1354,24 +1369,7 @@ export class SyncEngine {
     if (!note) {
       throw new Error("Название не может быть пустым");
     }
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      throw new Error("workspace not active");
-    }
-    const remote = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!remote) {
-      throw new Error("manifest missing on cloud");
-    }
-    const now = new Date().toISOString();
-    const updated: CloudManifest = {
-      ...remote,
-      workspaceNote: note,
-      updatedAt: now,
-      machines: this.touchMachine(remote.machines, now),
-    };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    await this.patchEntry(workspaceId, { workspaceNote: note, manifestMachines: manifestMachineCache(updated) });
+    await this.setManifestField(workspaceId, { workspaceNote: note }, { workspaceNote: note });
   }
 
   /** Поля облачного манифеста для подсказок в UI (читает манифест с облака). */
@@ -1397,23 +1395,7 @@ export class SyncEngine {
   async setWorkspaceGitBranch(workspaceId: string, gitBranchRaw: string): Promise<void> {
     this.assertMayMutate("setWorkspaceGitBranch");
     const branch = gitBranchRaw.trim();
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      throw new Error("workspace not active");
-    }
-    const remote = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!remote) {
-      throw new Error("manifest missing on cloud");
-    }
-    const now = new Date().toISOString();
-    const updated: CloudManifest = {
-      ...remote,
-      gitBranch: branch === "" ? undefined : branch,
-      updatedAt: now,
-      machines: this.touchMachine(remote.machines, now),
-    };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
+    await this.setManifestField(workspaceId, { gitBranch: branch === "" ? undefined : branch }, {});
   }
 
   /**
@@ -1492,9 +1474,15 @@ export class SyncEngine {
     return m?.machines ?? [];
   }
 
-  async setWorkspaceTags(workspaceId: string, tags: string[]): Promise<void> {
-    this.assertMayMutate("setWorkspaceTags");
-    const normalized = [...new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))];
+  /**
+   * Publish one manifest field and mirror it into the local entry cache. The
+   * two callers below were byte-for-byte the same flow apart from the field.
+   */
+  private async setManifestField(
+    workspaceId: string,
+    fields: Partial<CloudManifest>,
+    entryPatch: Parameters<SyncEngine["patchEntry"]>[1],
+  ): Promise<void> {
     const cfg = await this.loadCfg();
     const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
     if (!entry) {
@@ -1505,38 +1493,29 @@ export class SyncEngine {
       throw new Error("manifest missing on cloud");
     }
     const now = new Date().toISOString();
-    const updated: CloudManifest = {
-      ...remote,
-      tags: normalized,
-      updatedAt: now,
-      machines: this.touchMachine(remote.machines, now),
-    };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    await this.patchEntry(workspaceId, { tags: normalized });
+    await this.putManifest(
+      workspaceId,
+      { ...remote, ...fields, updatedAt: now, machines: this.touchMachine(remote.machines, now) },
+      entry.manifestEtag,
+    );
+    await this.patchEntry(workspaceId, entryPatch);
+  }
+
+  async setWorkspaceTags(workspaceId: string, tags: string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceTags");
+    const normalized = [...new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))];
+    await this.setManifestField(workspaceId, { tags: normalized }, { tags: normalized });
   }
 
   async setWorkspaceSharedIgnorePatterns(workspaceId: string, patterns: string[]): Promise<void> {
     this.assertMayMutate("setWorkspaceSharedIgnorePatterns");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     const normalized = normalizeIgnorePatternStrings(patterns);
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      throw new Error("workspace not active");
-    }
-    const remote = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!remote) {
-      throw new Error("manifest missing on cloud");
-    }
-    const now = new Date().toISOString();
-    const updated: CloudManifest = {
-      ...remote,
-      sharedIgnorePatterns: normalized,
-      updatedAt: now,
-      machines: this.touchMachine(remote.machines, now),
-    };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    await this.patchEntry(workspaceId, { sharedIgnorePatterns: normalized });
+    await this.setManifestField(
+      workspaceId,
+      { sharedIgnorePatterns: normalized },
+      { sharedIgnorePatterns: normalized },
+    );
   }
 
   /** Cloud manifest `sharedIgnorePatterns` (fresh download / cache refresh). */
@@ -1813,7 +1792,18 @@ export class SyncEngine {
     await this.saveCfg(cfg);
   }
 
-  async addFiles(workspaceId: string, absolutePaths: string[], opts?: { linkName?: string }): Promise<void> {
+  /**
+   * `opts.canonicalRoot` (Link Bindings): send `localDirRel/**` to the cloud
+   * as `canonicalRoot/**` — the sender decides how much of its own leading
+   * path is local dressing (home `src/SEMD272/jscore` → cloud `jscore`). The
+   * dropped part is recorded as this machine's folder rule, so future files on
+   * both sides follow the same mapping.
+   */
+  async addFiles(
+    workspaceId: string,
+    absolutePaths: string[],
+    opts?: { linkName?: string; canonicalRoot?: { localDirRel: string; canonicalRoot: string } },
+  ): Promise<void> {
     this.assertMayMutate("addFiles");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
     await this.ensureWorkspaceMayUploadFiles(workspaceId);
@@ -1835,8 +1825,18 @@ export class SyncEngine {
     };
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
     // Link Bindings: a fresh file under a folder rule's local prefix is keyed
-    // under the canonical prefix (work `promed/**` ↔ home `php/**`).
-    const addFolderRules = remoteManifest.folderBindings?.[this.deps.machineId];
+    // under the canonical prefix (work `promed/**` ↔ home `php/**`). An
+    // explicit `canonicalRoot` for this batch wins over the stored rules — it
+    // IS the user choosing the mapping right now.
+    const chosenRoot = opts?.canonicalRoot;
+    const addFolderRules = chosenRoot
+      ? {
+          [normalizeDirPrefix(chosenRoot.canonicalRoot)]: {
+            path: normalizeDirPrefix(chosenRoot.localDirRel),
+            boundAt: now,
+          },
+        }
+      : remoteManifest.folderBindings?.[this.deps.machineId];
     for (const abs of absolutePaths) {
       await this.assertFileWithinSizeLimit(abs);
       const posixRel = this.posixRel(cfg, abs);
@@ -1933,7 +1933,24 @@ export class SyncEngine {
       throw new Error("workspace entry lost");
     }
     const merged = mergeCloudManifests(localCopy, remoteManifest);
-    await this.putManifest(workspaceId, merged, entAfterMeta.manifestEtag);
+    // Record the chosen mapping as this machine's folder rule, so files added
+    // to the same folder later keep the same canonical prefix without asking.
+    const ruleCanon = chosenRoot ? normalizeDirPrefix(chosenRoot.canonicalRoot) : "";
+    const ruleLocal = chosenRoot ? normalizeDirPrefix(chosenRoot.localDirRel) : "";
+    const withRule =
+      chosenRoot && ruleCanon !== ruleLocal
+        ? {
+            ...merged,
+            folderBindings: {
+              ...merged.folderBindings,
+              [this.deps.machineId]: {
+                ...merged.folderBindings?.[this.deps.machineId],
+                [ruleCanon]: { path: ruleLocal, boundAt: now },
+              },
+            },
+          }
+        : merged;
+    await this.putManifest(workspaceId, withRule, entAfterMeta.manifestEtag);
     const finalCfg = await this.loadCfg();
     finalCfg.files = cfg.files;
     await this.saveCfg(finalCfg);
@@ -2005,6 +2022,29 @@ export class SyncEngine {
     return { localPosixRel, contentMatches: plan.contentMatches };
   }
 
+  /**
+   * Link Bindings: which canonical folders this machine carries. Local and
+   * per-machine — nothing is written to the cloud, and dropping a folder from
+   * the list untracks its rows here without touching anyone else's copy.
+   */
+  async setWorkspaceSyncScopes(workspaceId: string, scopes: readonly string[]): Promise<void> {
+    this.assertMayMutate("setWorkspaceSyncScopes");
+    const cfg = await this.loadCfg();
+    const ix = cfg.activeWorkspaces.findIndex((w) => w.workspaceId === workspaceId);
+    if (ix < 0) {
+      throw new Error("workspace not active");
+    }
+    const normalized = normalizeSyncScopes(scopes);
+    cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], syncScopes: normalized };
+    // Rows outside the new scope stop being tracked here. Bytes on disk are
+    // untouched — this is a subscription change, not a deletion.
+    cfg.files = cfg.files.filter(
+      (f) => f.workspaceId !== workspaceId || isInSyncScope(normalized, manifestKeyOf(f)),
+    );
+    await this.saveCfg(cfg);
+    await this.adoptManifestFilesFromCloud(workspaceId);
+  }
+
   /** Link Bindings: rename the human label of a cloud entry (not a key — collisions allowed). */
   async renameLinkName(workspaceId: string, manifestKey: string, linkName: string): Promise<void> {
     this.assertMayMutate("renameLinkName");
@@ -2018,25 +2058,17 @@ export class SyncEngine {
     if (!remoteManifest) {
       throw new Error("manifest missing on cloud");
     }
-    const row = remoteManifest.files.find((f) => f.path === manifestKey && !f.removedAt);
-    if (!row) {
-      throw new Error(`manifest row not found: ${manifestKey}`);
-    }
     const now = new Date().toISOString();
-    const updated: ManifestFile = {
-      ...row,
-      linkName,
-      // A user edit fights real edits in 412-merges — Lamport bump required.
-      version: Math.max(this.nextManifestVersion(remoteManifest.files), row.version + 1),
-    };
     await this.putManifest(
       workspaceId,
-      {
-        ...remoteManifest,
-        updatedAt: now,
-        machines: this.touchMachine(remoteManifest.machines, now),
-        files: remoteManifest.files.map((f) => (f === row ? updated : f)),
-      },
+      manifestWithLinkName({
+        manifest: remoteManifest,
+        manifestKey,
+        linkName,
+        nowIso: now,
+        nextVersion: this.nextManifestVersion(remoteManifest.files),
+        touchMachines: (machines, nowIso) => this.touchMachine(machines, nowIso),
+      }),
       entry.manifestEtag,
     );
   }
@@ -2078,44 +2110,30 @@ export class SyncEngine {
       throw new Error("manifest missing on cloud");
     }
     const now = new Date().toISOString();
-    const machineRules = {
-      ...remoteManifest.folderBindings?.[this.deps.machineId],
-      [canonPrefix]: { path: localDirRel, boundAt: now },
-    };
     await this.putManifest(
       workspaceId,
-      {
-        ...remoteManifest,
-        updatedAt: now,
-        machines: this.touchMachine(remoteManifest.machines, now),
-        folderBindings: { ...remoteManifest.folderBindings, [this.deps.machineId]: machineRules },
-      },
+      manifestWithFolderRule({
+        manifest: remoteManifest,
+        machineId: this.deps.machineId,
+        canonPrefix,
+        localDirRel,
+        nowIso: now,
+        touchMachines: (machines, nowIso) => this.touchMachine(machines, nowIso),
+      }),
       entry.manifestEtag,
     );
-    // Re-place tracked rows stranded at the canonical placement whose bytes
-    // actually live under the local prefix.
     const meta = await this.pullMeta(workspaceId, entry.metaEtag);
     const freshCfg = await this.loadCfg();
-    let rebound = 0;
-    for (let i = 0; i < freshCfg.files.length; i++) {
-      const f = freshCfg.files[i];
-      if (f.workspaceId !== workspaceId) continue;
-      const fKey = manifestKeyOf(f);
-      if (!fKey.startsWith(`${canonPrefix}/`) || f.localPath !== fKey) continue;
-      const placement = `${localDirRel}/${fKey.slice(canonPrefix.length + 1)}`;
-      if (await fileExists(this.localAbs(freshCfg, f.localPath))) continue;
-      if (!(await fileExists(this.localAbs(freshCfg, placement)))) continue;
-      const hash = await this.hashTrackedFile(this.localAbs(freshCfg, placement), fKey).catch(() => "");
-      const matches = hash !== "" && hash === meta.files[fKey]?.hash;
-      freshCfg.files[i] = {
-        ...f,
-        localPath: placement,
-        manifestPath: fKey,
-        localHash: matches ? hash : "",
-        syncStatus: matches ? "ok" : "cloud_newer",
-      };
-      rebound += 1;
-    }
+    const rebound = await replaceStrandedRows({
+      cfg: freshCfg,
+      workspaceId,
+      canonPrefix,
+      localDirRel,
+      meta,
+      localAbs: (rel) => this.localAbs(freshCfg, rel),
+      fileExists,
+      hashTracked: (abs, key) => this.hashTrackedFile(abs, key),
+    });
     await this.saveCfg(freshCfg);
     await this.adoptManifestFilesFromCloud(workspaceId);
     this.fireActivity({
@@ -2175,24 +2193,7 @@ export class SyncEngine {
     }
 
     for (const { key } of plannedRemovals) {
-      const mfIx = localCopy.files.findIndex((f) => f.path === key);
-      const nextVer = this.nextManifestVersion(localCopy.files);
-      if (mfIx >= 0) {
-        const prev = localCopy.files[mfIx];
-        localCopy.files[mfIx] = {
-          ...prev,
-          removedAt: now,
-          version: Math.max(nextVer, prev.version + 1),
-        };
-      } else {
-        localCopy.files.push({
-          path: key,
-          addedAt: now,
-          version: nextVer,
-          hasSyncignoreMarkers: false,
-          removedAt: now,
-        });
-      }
+      tombstoneManifestKey(localCopy.files, key, now, this.nextManifestVersion(localCopy.files));
     }
 
     // Ask before anything is destroyed.
@@ -2299,24 +2300,7 @@ export class SyncEngine {
       meta.files = Object.fromEntries(
         Object.entries(meta.files).filter(([metaKey]) => metaKey !== key),
       );
-      const mfIx = localCopy.files.findIndex((f) => f.path === key);
-      const nextVer = this.nextManifestVersion(localCopy.files);
-      if (mfIx >= 0) {
-        const prev = localCopy.files[mfIx];
-        localCopy.files[mfIx] = {
-          ...prev,
-          removedAt: now,
-          version: Math.max(nextVer, prev.version + 1),
-        };
-      } else {
-        localCopy.files.push({
-          path: key,
-          addedAt: now,
-          version: nextVer,
-          hasSyncignoreMarkers: false,
-          removedAt: now,
-        });
-      }
+      tombstoneManifestKey(localCopy.files, key, now, this.nextManifestVersion(localCopy.files));
     }
 
     const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
@@ -2913,7 +2897,7 @@ export class SyncEngine {
       this.pruneTrackingFromManifest(cfgAfterAdopt, manifest);
       await this.saveCfg(cfgAfterAdopt);
     } else {
-      this.reportTrackingDrift(cfg, workspaceId, entry.workspaceNote, manifest);
+      this.reportTrackingDrift(cfg, workspaceId, entry.workspaceNote, manifest, entry.syncScopes);
     }
 
     if (normalizeWorkspaceSyncState(entry) !== "active") {
@@ -2972,6 +2956,7 @@ export class SyncEngine {
     workspaceId: string,
     workspaceNote: string,
     manifest: CloudManifest,
+    scopes?: readonly string[],
   ): void {
     if (!this.deps.onTrackingDriftDetected) return;
     // Same planner the adoption uses, so the notification cannot promise a
@@ -2979,10 +2964,14 @@ export class SyncEngine {
     // irrelevant to the counts, so the detector answers it cheaply.
     const diff = planTrackingDiff({
       workspaceId,
-      manifestFiles: manifest.files,
+      // Same scope filter as the adoption pass: a folder this machine does not
+      // carry must not be reported as drift either.
+      manifestFiles: manifest.files.filter((f) => isInSyncScope(scopes, f.path)),
       // Link Bindings: same canonical-key feed as the adoption pass — a bound
       // file otherwise reads as a perpetual adopt+prune drift.
-      trackedPaths: cfg.files.filter((f) => f.workspaceId === workspaceId).map((f) => manifestKeyOf(f)),
+      trackedPaths: cfg.files
+        .filter((f) => f.workspaceId === workspaceId && isInSyncScope(scopes, manifestKeyOf(f)))
+        .map((f) => manifestKeyOf(f)),
       metaHashFor: () => undefined,
       wireGzipFor: () => false,
       existsLocally: () => false,

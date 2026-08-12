@@ -91,6 +91,7 @@ export const MUTATION_OPS = [
   "bindLocalFile",
   "bindLocalFolder",
   "renameLinkName",
+  "setWorkspaceSyncScopes",
   // --- Conflict resolution ---------------------------------------------
   "resolveConflictKeepMine",
   "resolveConflictTakeTheirs",
