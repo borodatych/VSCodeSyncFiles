@@ -293,8 +293,19 @@ export async function moveHistoryDirs(
       for (const entry of entries) {
         const name = entry.cloudPath.split("/").pop();
         if (name === undefined || name === "") continue;
+        const target = `${historyDirForFile(workspaceId, move.to)}/${name}`;
+        // Snapshots keep their name and wire form — a native move is always
+        // valid here, and N snapshots stop costing N full round-trips.
+        if (provider.moveFile) {
+          try {
+            await provider.moveFile(entry.cloudPath, target);
+            continue;
+          } catch {
+            // Fall back to copy below — same best-effort contract.
+          }
+        }
         const dl = await provider.downloadFile(entry.cloudPath);
-        await provider.uploadFile(`${historyDirForFile(workspaceId, move.to)}/${name}`, dl.body);
+        await provider.uploadFile(target, dl.body);
         await provider.deleteFile(entry.cloudPath);
       }
     } catch (e) {

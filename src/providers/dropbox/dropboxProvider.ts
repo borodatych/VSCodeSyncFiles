@@ -462,6 +462,33 @@ export class DropboxProvider implements ICloudProvider {
     }
   }
 
+  /**
+   * Server-side move via `files/move_v2` — metadata-only, the content never
+   * travels; `rev` of the moved entry is this provider's etag convention.
+   * Dropbox reports a missing source as HTTP 409 with `not_found` in the error
+   * body — mapped to NOT_FOUND, which the canonical-rename fast path reads as
+   * "metadata-only move". A target conflict (no overwrite flag in move_v2) is
+   * thrown as-is: the caller's transcode-copy fallback overwrites instead.
+   */
+  async moveFile(fromCloudPath: string, toCloudPath: string): Promise<UploadResult> {
+    const toDb = toDropboxPath(toCloudPath);
+    await this.ensureParentFolders(toDb);
+    const r = await this.rpc("/2/files/move_v2", {
+      from_path: toDropboxPath(fromCloudPath),
+      to_path: toDb,
+      autorename: false,
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      if ((r.status === 409 && txt.includes("not_found")) || r.status === 404) {
+        throw new ProviderError("NOT_FOUND", `Dropbox: нет файла ${fromCloudPath}`);
+      }
+      throw this.classifyBody(r.status, txt);
+    }
+    const j = (await r.json()) as { metadata?: { rev?: string } };
+    return { etag: normalizeEtag(j.metadata?.rev ?? null) };
+  }
+
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     const trimmed = cloudPath.endsWith("/") ? cloudPath.slice(0, -1) : cloudPath;
     const folderDb = toDropboxPath(trimmed);

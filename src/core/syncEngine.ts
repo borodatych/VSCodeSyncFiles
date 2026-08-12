@@ -26,9 +26,16 @@ import {
   findDuplicateLinkIds,
   newLinkId,
   rebuildManifestFilesFromTracked,
-  repairDuplicateLinkIds,
   type DuplicateLinkIdGroup,
 } from "./linkIdentity.js";
+import {
+  clearStaleManifestLocks,
+  listStaleManifestLocks,
+  listWorkspaceDuplicateLinkIds,
+  repairWorkspaceDuplicateLinkIdGroups,
+  type ManifestHealthDeps,
+  type StaleLockRow,
+} from "./manifestHealthOps.js";
 import { touchManifestMachine } from "./machineRegistry.js";
 import { manifestKeyOf, trackedLinkIdMap } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
@@ -92,7 +99,7 @@ import type { CanonicalRenameRequest } from "./plan/planCanonicalRename.js";
 import type { RenamedKeysResult } from "./canonicalRename.js";
 import { runCanonicalKeyRelocation } from "./io/canonicalRelocation.js";
 import { throwIfAborted } from "./operationCancelled.js";
-import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
+import { applyLockChange } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
 
 const HISTORY_VERSIONS_DEFAULT = 10;
@@ -1555,122 +1562,39 @@ export class SyncEngine {
     }
   }
 
-  /**
-   * Manifest paths with abandoned soft lock (`editingBy` / `editingSince` older than threshold).
-   * Read-only; uses same manifest fetch as Health Check.
-   */
-  async listStaleManifestEditingLocks(workspaceId: string): Promise<
-    { path: string; editingBy: string; editingSince: string; ageHours: number }[]
-  > {
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      return [];
-    }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      return [];
-    }
-    // One definition of "stale", shared with the clearing path below.
-    return findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => ({
-      path: r.posixRel,
-      editingBy: r.machineId,
-      editingSince: r.editingSince,
-      ageHours: r.ageMs / 3600_000,
-    }));
+  /** Manifest paths with an abandoned soft lock; flow in manifestHealthOps.ts. */
+  async listStaleManifestEditingLocks(workspaceId: string): Promise<StaleLockRow[]> {
+    return listStaleManifestLocks(this.manifestHealthDeps(workspaceId), this.resolveSoftLockStaleMs());
   }
 
-  /**
-   * Live rows sharing one linkId — the artefact of a bind racing a canonical
-   * rename. Read-only; same manifest fetch as Health Check.
-   */
+  /** Read-only duplicate-linkId listing; flow in manifestHealthOps.ts. */
   async listDuplicateLinkIds(workspaceId: string): Promise<DuplicateLinkIdGroup[]> {
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      return [];
-    }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      return [];
-    }
-    return findDuplicateLinkIds(m.files);
+    return listWorkspaceDuplicateLinkIds(this.manifestHealthDeps(workspaceId));
   }
 
-  /**
-   * One-click repair for duplicate linkId carriers: the newest carrier keeps
-   * the identity, older ones are tombstoned with their bindings folded in
-   * (pure transform in linkIdentity.ts). The 412-merge path auto-repairs races
-   * it participates in; this covers duplicates surfaced by Health Check when
-   * no write is in flight.
-   * @returns Number of duplicate groups repaired.
-   */
+  /** One-click duplicate-linkId repair; flow in manifestHealthOps.ts. */
   async repairWorkspaceDuplicateLinkIds(workspaceId: string): Promise<number> {
     this.assertMayMutate("repairWorkspaceDuplicateLinkIds");
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      throw new Error("workspace not active");
-    }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      throw new Error("manifest missing");
-    }
-    const groups = findDuplicateLinkIds(m.files).length;
-    if (groups === 0) {
-      return 0;
-    }
-    const repaired = repairDuplicateLinkIds(m, new Date().toISOString());
-    await this.putManifest(
-      workspaceId,
-      repaired,
-      await this.currentManifestEtag(workspaceId, entry.manifestEtag),
-    );
-    return groups;
+    return repairWorkspaceDuplicateLinkIdGroups(this.manifestHealthDeps(workspaceId));
   }
 
-  /**
-   * Clear soft locks on manifest files when `editingSince` is older than `STALE_MANIFEST_EDITING_LOCK_MS`.
-   * @returns Number of files updated.
-   */
+  private manifestHealthDeps(workspaceId: string): ManifestHealthDeps {
+    return {
+      findEntry: async () =>
+        (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId),
+      downloadManifest: (etag) => this.downloadManifest(workspaceId, etag),
+      putManifest: async (m, etag) => {
+        await this.putManifest(workspaceId, m, etag);
+      },
+      currentEtag: (fallback) => this.currentManifestEtag(workspaceId, fallback),
+      touchMachines: (machines, now) => this.touchMachine(machines, now),
+    };
+  }
+
+  /** Clear abandoned soft locks; flow in manifestHealthOps.ts. Returns files updated. */
   async clearStaleManifestEditingLocks(workspaceId: string): Promise<number> {
     this.assertMayMutate("clearStaleManifestEditingLocks");
-    const cfg = await this.loadCfg();
-    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entry) {
-      throw new Error("workspace not active");
-    }
-    const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-    if (!m) {
-      throw new Error("manifest missing");
-    }
-    const nowIso = new Date().toISOString();
-    const stale = new Set(
-      findStaleLocks(m, this.resolveSoftLockStaleMs(), Date.now()).map((r) => r.posixRel),
-    );
-    const cleared = stale.size;
-    if (cleared === 0) {
-      return 0;
-    }
-    // Clearing someone else's abandoned lock *is* an edit to the row, so the
-    // version bumps here — unlike taking or dropping your own lock.
-    const files: ManifestFile[] = m.files.map((f) => {
-      if (!stale.has(f.path)) {
-        return f;
-      }
-      const rest = { ...f };
-      delete rest.editingBy;
-      delete rest.editingSince;
-      return { ...rest, version: f.version + 1 };
-    });
-    const updated: CloudManifest = {
-      ...m,
-      files,
-      updatedAt: nowIso,
-      machines: this.touchMachine(m.machines, nowIso),
-    };
-    await this.putManifest(workspaceId, updated, entry.manifestEtag);
-    return cleared;
+    return clearStaleManifestLocks(this.manifestHealthDeps(workspaceId), this.resolveSoftLockStaleMs());
   }
 
   /**

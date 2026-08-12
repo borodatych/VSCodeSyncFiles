@@ -100,6 +100,17 @@ export function wrapWithQueue(provider: ICloudProvider): ICloudProvider {
       });
   }
 
+  // Optional fast path for canonical renames. Forwarding matters: the engine
+  // only ever sees the wrapped provider, so an unforwarded moveFile silently
+  // demotes every native move to a full download+upload.
+  if (provider.moveFile !== undefined) {
+    wrapped.moveFile = (fromCloudPath: string, toCloudPath: string) =>
+      q().enqueue(() => {
+        track();
+        return provider.moveFile!(fromCloudPath, toCloudPath);
+      });
+  }
+
   if (provider.getWebViewLink !== undefined) {
     wrapped.getWebViewLink = (cloudPath: string): Promise<string | null> =>
       provider.getWebViewLink!(cloudPath);

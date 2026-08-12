@@ -625,6 +625,44 @@ export class GdriveProvider implements ICloudProvider {
     }
   }
 
+  /**
+   * Server-side move via `files.update` with addParents/removeParents —
+   * id-based and metadata-only, the content never travels. This provider's
+   * etag convention is md5Checksum, and a move never changes content, so the
+   * digest in the response stays the valid token for `_meta`.
+   */
+  async moveFile(fromCloudPath: string, toCloudPath: string): Promise<UploadResult> {
+    const token = await this.accessToken();
+    const { item } = await this.resolveLeafForRead(token, fromCloudPath);
+    if (!item?.id) {
+      throw new ProviderError("NOT_FOUND", `Google Drive: нет файла ${fromCloudPath}`);
+    }
+    const fromParent = fromCloudPath.split("/").filter(Boolean).slice(0, -1).join("/");
+    const toSegments = toCloudPath.split("/").filter(Boolean);
+    const newName = toSegments[toSegments.length - 1] ?? "";
+    const newParentId = await this.ensureFolderPath(token, toSegments.slice(0, -1).join("/"));
+    const oldParentId = await this.resolveFolderPath(token, fromParent);
+    const params = new URLSearchParams({ fields: "id,md5Checksum", addParents: newParentId });
+    if (oldParentId !== null && oldParentId !== newParentId) {
+      params.set("removeParents", oldParentId);
+    }
+    const r = await this.driveFetch(`${DRIVE}/files/${item.id}?${params.toString()}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (r.status === 404) {
+      throw new ProviderError("NOT_FOUND", `Google Drive: нет файла ${fromCloudPath}`);
+    }
+    if (!r.ok) {
+      throw await this.classifyResponse(r);
+    }
+    return { etag: await etagFromDriveUploadResponse(r) };
+  }
+
   /** Bypasses the trash — user-invoked purge only (D11). */
   async purgeFilePermanently(cloudPath: string): Promise<void> {
     const token = await this.accessToken();

@@ -83,7 +83,8 @@ export class MockCloudProvider implements ICloudProvider {
       throw new ProviderError("NOT_FOUND", `missing ${fromCloudPath}`);
     }
     const etag = this.nextEtag();
-    this.files.set(toCloudPath, { content: rec.content, etag });
+    // Same defensive copy as uploadFile: the caller must not share our bytes.
+    this.files.set(toCloudPath, { content: Buffer.from(rec.content), etag });
     this.files.delete(fromCloudPath);
     return { etag };
   }

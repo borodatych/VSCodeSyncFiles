@@ -388,6 +388,79 @@ export class YandexDiskProvider implements ICloudProvider {
     return { body: buf, etag };
   }
 
+  /**
+   * Server-side move via `resources/move` — metadata-only. Disk answers 201
+   * when the move completed synchronously, or 202 with an operation href to
+   * poll until `success`. The move response carries no etag, so it is read
+   * back via `getMetadata(to)` — the same convention `uploadFile` uses. The
+   * 423 lock retry loop mirrors `uploadFile`.
+   */
+  async moveFile(fromCloudPath: string, toCloudPath: string): Promise<UploadResult> {
+    await this.ensureParentFolders(toCloudPath);
+    const fromEnc = encodeURIComponent(toDiskApiPath(fromCloudPath, this.useAppFolder));
+    const toEnc = encodeURIComponent(toDiskApiPath(toCloudPath, this.useAppFolder));
+    let r!: Response;
+    for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
+      r = await this.apiFetch(
+        `resources/move?from=${fromEnc}&path=${toEnc}&overwrite=true`,
+        { method: "POST" },
+      );
+      if (r.ok) {
+        break;
+      }
+      if (r.status === 404) {
+        throw new ProviderError("NOT_FOUND", `Yandex Disk: нет файла ${fromCloudPath}`);
+      }
+      const txt = await r.text();
+      let code = "";
+      try {
+        code = (JSON.parse(txt) as { error?: string }).error ?? "";
+      } catch { /* ignore */ }
+      if ((r.status === 423 || code === "DiskResourceLockedError") && attempt < LOCKED_RETRY_MAX) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, LOCKED_RETRY_DELAY_MS); });
+        continue;
+      }
+      throw this.classifyBody(r.status, txt);
+    }
+    if (r.status === 202) {
+      const j = (await r.json()) as { href?: string };
+      if (j.href !== undefined && j.href !== "") {
+        await this.awaitDiskOperation(j.href);
+      }
+    }
+    const after = await this.getMetadata(toCloudPath);
+    return { etag: after?.etag };
+  }
+
+  /**
+   * Poll an async Disk operation until it succeeds. A failed or still-running
+   * operation throws: the caller must not read the target as moved — the
+   * canonical-rename fast path then falls back to transcode-copy safely.
+   */
+  private async awaitDiskOperation(href: string): Promise<void> {
+    const MAX_POLLS = 10;
+    const POLL_DELAY_MS = 1500;
+    if (!href.startsWith(API_BASE)) {
+      throw new ProviderError("NETWORK_ERROR", `Yandex Disk: неожиданный href операции: ${href}`);
+    }
+    const rel = href.slice(API_BASE.length + 1);
+    for (let i = 0; i < MAX_POLLS; i++) {
+      const r = await this.apiFetch(rel);
+      if (!r.ok) {
+        throw await this.classifyResponse(r);
+      }
+      const j = (await r.json()) as { status?: string };
+      if (j.status === "success") {
+        return;
+      }
+      if (j.status === "failed") {
+        throw new ProviderError("NETWORK_ERROR", "Yandex Disk: операция move завершилась ошибкой");
+      }
+      await new Promise<void>((resolve) => { setTimeout(resolve, POLL_DELAY_MS); });
+    }
+    throw new ProviderError("NETWORK_ERROR", "Yandex Disk: операция move не завершилась за отведённое время");
+  }
+
   async deleteFile(cloudPath: string): Promise<void> {
     await this.removeResource(cloudPath, false);
   }
