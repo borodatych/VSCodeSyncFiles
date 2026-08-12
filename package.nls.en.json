@@ -265,6 +265,7 @@
   "cmd.prefetchActiveWorkspace.title": "VSCodeSync: Prefetch Active Workspace",
   "cmd.treeEditCanonicalPath.title": "Edit cloud path…",
   "cmd.treeRenameCloudFolder.title": "Rename cloud folder…",
+  "cmd.treeUnnestNode.title": "Move out of folder (one level up)",
   "cmd.editWorkspacePaths.title": "Edit workspace paths…",
   "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Apply workspace path edits",
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Resume interrupted path move",

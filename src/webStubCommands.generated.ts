@@ -15,6 +15,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.treeEditCanonicalPath",
   "vscodesync.toggleTreeCanonicalMode",
   "vscodesync.treeRenameCloudFolder",
+  "vscodesync.treeUnnestNode",
   "vscodesync.editWorkspacePaths",
   "vscodesync.applyWorkspacePathsEdit",
   "vscodesync.resumeCanonicalRename",

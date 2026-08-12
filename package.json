@@ -904,6 +904,10 @@
         "title": "%cmd.treeRenameCloudFolder.title%"
       },
       {
+        "command": "vscodesync.treeUnnestNode",
+        "title": "%cmd.treeUnnestNode.title%"
+      },
+      {
         "command": "vscodesync.editWorkspacePaths",
         "title": "%cmd.editWorkspacePaths.title%"
       },
@@ -1593,6 +1597,10 @@
           "when": "false"
         },
         {
+          "command": "vscodesync.treeUnnestNode",
+          "when": "false"
+        },
+        {
           "command": "vscodesync.editWorkspacePaths",
           "when": "false"
         },
@@ -1953,6 +1961,16 @@
           "command": "vscodesync.treeEditCanonicalPath",
           "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.7"
+        },
+        {
+          "command": "vscodesync.treeUnnestNode",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
+          "group": "file@2.8"
+        },
+        {
+          "command": "vscodesync.treeUnnestNode",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
+          "group": "manage@3"
         },
         {
           "command": "vscodesync.editWorkspacePaths",

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidCanonicalPath,
   planCanonicalRename,
+  unnestedTarget,
 } from "../../src/core/plan/planCanonicalRename.js";
 
 const live = (path: string) => ({ path });
@@ -22,6 +23,32 @@ describe("isValidCanonicalPath", () => {
     expect(isValidCanonicalPath("src/../a.ts")).toBe(false);
     expect(isValidCanonicalPath("src/./a.ts")).toBe(false);
     expect(isValidCanonicalPath("src\\a.ts")).toBe(false);
+  });
+});
+
+describe("unnestedTarget — подъём на уровень выше", () => {
+  it("узел покидает родителя, имя сохраняется", () => {
+    expect(unnestedTarget("a/b/c.ts")).toBe("a/c.ts");
+    expect(unnestedTarget("src/SEMD272/jscore")).toBe("src/jscore");
+  });
+
+  it("родитель верхнего уровня — узел уходит в корень", () => {
+    expect(unnestedTarget("b/c.ts")).toBe("c.ts");
+  });
+
+  it("узел в корне поднимать некуда", () => {
+    expect(unnestedTarget("c.ts")).toBeNull();
+    expect(unnestedTarget("")).toBeNull();
+  });
+
+  it("повторный подъём доводит до корня за глубину шагов", () => {
+    let p: string | null = "a/b/c/d.ts";
+    const seen: string[] = [];
+    while (p !== null) {
+      seen.push(p);
+      p = unnestedTarget(p);
+    }
+    expect(seen).toEqual(["a/b/c/d.ts", "a/b/d.ts", "a/d.ts", "d.ts"]);
   });
 });
 

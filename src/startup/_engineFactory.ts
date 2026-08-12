@@ -588,37 +588,12 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
           if (choice !== "Переместить у меня") {
             return;
           }
-          await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: "VSCodeSync: перенос файлов по новой структуре",
-              cancellable: true,
-            },
-            async (progress, token) => {
-              let done = 0;
-              const failed: string[] = [];
-              for (const n of notices) {
-                if (token.isCancellationRequested) break;
-                try {
-                  const oldUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...n.localPlacement.split("/"));
-                  const newUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...n.to.split("/"));
-                  const parent = vscode.Uri.joinPath(newUri, "..");
-                  await vscode.workspace.fs.createDirectory(parent);
-                  await vscode.workspace.fs.rename(oldUri, newUri, { overwrite: false });
-                  // onDidRenameFiles picks each move up; the file is bound, so
-                  // the engine's rebind branch re-keys it without questions.
-                } catch (e) {
-                  failed.push(`${n.localPlacement}: ${e instanceof Error ? e.message : String(e)}`);
-                }
-                done++;
-                progress.report({ increment: 100 / notices.length, message: `${String(done)}/${String(notices.length)}` });
-              }
-              if (failed.length > 0) {
-                void vscode.window.showErrorMessage(
-                  `VSCodeSync: не перенесено ${String(failed.length)} файлов — ${failed[0]}${failed.length > 1 ? " …" : ""}`,
-                );
-              }
-            },
+          // Shared batch mover (ui/localStructureMove.ts) — the author-side
+          // offer after an own rename uses the same one.
+          const { moveLocalFilesWithProgress } = await import("../ui/localStructureMove.js");
+          await moveLocalFilesWithProgress(
+            workspaceRoot,
+            notices.map((n) => ({ fromRel: n.localPlacement, toRel: n.to })),
           );
         })();
       },
