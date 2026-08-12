@@ -44,7 +44,10 @@ function activePaths(files: readonly ManifestFile[]): Set<string> {
 /**
  * Compare `prev` and `next` manifests, return a guard report.
  * Removal = path that was active in `prev` and is either tombstoned (removedAt
- * set) in `next` or absent from `next.files` entirely.
+ * set) in `next` or absent from `next.files` entirely. A tombstone with a live
+ * heir in `next` — an active row whose `renamedFrom` points at it, or one
+ * carrying the same `linkId` — is a canonical rename, not a removal: without
+ * this every folder rename of 25+ files trips the "mass deletion" modal.
  */
 export function detectMassChange(
   prev: CloudManifest | undefined,
@@ -59,9 +62,24 @@ export function detectMassChange(
   }
   const prevActive = activePaths(prev.files);
   const nextActive = activePaths(next.files);
+  const renamedAway = new Set<string>();
+  const activeLinkIds = new Set<string>();
+  for (const f of next.files) {
+    if (f.removedAt) continue;
+    if (f.renamedFrom) renamedAway.add(f.renamedFrom);
+    if (f.linkId !== undefined) activeLinkIds.add(f.linkId);
+  }
+  const prevLinkIdByPath = new Map<string, string>();
+  for (const f of prev.files) {
+    if (!f.removedAt && f.linkId !== undefined) prevLinkIdByPath.set(f.path, f.linkId);
+  }
+  const movedByLinkId = (p: string): boolean => {
+    const id = prevLinkIdByPath.get(p);
+    return id !== undefined && activeLinkIds.has(id);
+  };
   const newlyRemoved: string[] = [];
   for (const p of prevActive) {
-    if (!nextActive.has(p)) newlyRemoved.push(p);
+    if (!nextActive.has(p) && !renamedAway.has(p) && !movedByLinkId(p)) newlyRemoved.push(p);
   }
   newlyRemoved.sort();
 

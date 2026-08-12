@@ -18,7 +18,7 @@
 import type { ICloudProvider } from "../../providers/cloudProviderTypes.js";
 import { ProviderError } from "../../providers/cloudProviderTypes.js";
 import { manifestCloudPath, type CloudManifest } from "../cloudLayout.js";
-import { withBackfilledLinkIds, withPrunedStaleBindings } from "../linkIdentity.js";
+import { repairDuplicateLinkIds, withBackfilledLinkIds, withPrunedStaleBindings } from "../linkIdentity.js";
 import { mergeCloudManifests } from "../manifestMerger.js";
 import { validateManifestShape } from "../manifestValidate.js";
 import { detectMassChange, type MassChangeReport } from "../massChangeGuard.js";
@@ -210,7 +210,16 @@ export function createManifestStore(deps: ManifestStoreDeps): ManifestStore {
           if (!remote) {
             throw e;
           }
-          return store.put(workspaceId, mergeCloudManifests(manifest, remote), freshEtag, retries - 1);
+          // A 412-merge is where a bind racing a canonical rename first becomes
+          // visible as two live carriers of one linkId. The repair is
+          // deterministic (newest carrier wins on every machine) and a no-op on
+          // clean manifests, so it rides the merge instead of waiting for a
+          // manual health-check action.
+          const merged = repairDuplicateLinkIds(
+            mergeCloudManifests(manifest, remote),
+            new Date().toISOString(),
+          );
+          return store.put(workspaceId, merged, freshEtag, retries - 1);
         }
         throw e;
       }

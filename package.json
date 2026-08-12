@@ -1840,37 +1840,37 @@
         },
         {
           "command": "vscodesync.treeFilePush",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@1"
         },
         {
           "command": "vscodesync.treeFilePull",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2"
         },
         {
           "command": "vscodesync.diffWithCloud",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.65"
         },
         {
           "command": "vscodesync.treeFileShowHistory",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.5"
         },
         {
           "command": "vscodesync.treeFileOpenInCloud",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.6"
         },
         {
           "command": "vscodesync.sendQuickTransfer",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@3"
         },
         {
           "command": "vscodesync.removeFromSync",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@4"
         },
         {

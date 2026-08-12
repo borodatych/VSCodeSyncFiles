@@ -12,6 +12,7 @@ import {
   deterministicLinkId,
   findDuplicateLinkIds,
   newLinkId,
+  rebuildManifestFilesFromTracked,
   repairDuplicateLinkIds,
   withBackfilledLinkIds,
   withPrunedStaleBindings,
@@ -151,5 +152,36 @@ describe("findDuplicateLinkIds / repairDuplicateLinkIds", () => {
   it("без дубликатов — тот же объект", () => {
     const m = manifest([solo]);
     expect(repairDuplicateLinkIds(m, "t9")).toBe(m);
+  });
+});
+
+describe("rebuildManifestFilesFromTracked", () => {
+  it("нумерует версии от high-water: rebuild не проигрывает merge уцелевшей старой копии", () => {
+    // После массовых canonical rename строки несут высокие Lamport-версии.
+    // Rebuild с version=i+1 проиграл бы каждый 412-merge старым копиям.
+    const rows = rebuildManifestFilesFromTracked(
+      [{ localPath: "a.ts" }, { localPath: "b.ts" }],
+      "M1",
+      "t1",
+      500,
+    );
+    expect(rows.map((r) => r.version)).toEqual([501, 502]);
+  });
+
+  it("без baseVersion — прежнее поведение (от 1)", () => {
+    const rows = rebuildManifestFilesFromTracked([{ localPath: "a.ts" }], "M1", "t1");
+    expect(rows[0].version).toBe(1);
+  });
+
+  it("привязанная строка ключуется канонически и переутверждает своё размещение", () => {
+    const rows = rebuildManifestFilesFromTracked(
+      [{ localPath: "php/x.php", manifestPath: "promed/x.php", linkId: "abc" }],
+      "M1",
+      "t1",
+      10,
+    );
+    expect(rows[0].path).toBe("promed/x.php");
+    expect(rows[0].linkId).toBe("abc");
+    expect(rows[0].bindings).toEqual({ M1: { path: "php/x.php", boundAt: "t1" } });
   });
 });

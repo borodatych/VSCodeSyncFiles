@@ -131,3 +131,45 @@ describe("describeMassChange", () => {
     ).toMatch(/60%/);
   });
 });
+
+describe("detectMassChange — rename-осведомлённость", () => {
+  // Канонический переезд = tombstone + наследник. Без этих веток каждый
+  // папочный rename ≥25 файлов ловил бы модалку «массовое удаление».
+  const stamp = "2026-08-12T00:00:00.000Z";
+
+  it("tombstone с наследником по renamedFrom — не удаление", () => {
+    const prevFiles = Array.from({ length: 30 }, (_, i) => file(`src/f${String(i)}.ts`));
+    const nextFiles = [
+      ...prevFiles.map((f) => ({ ...f, removedAt: stamp })),
+      ...prevFiles.map((f) => ({
+        ...file(`lib/f${f.path.slice(4)}`),
+        renamedFrom: f.path,
+        renamedAt: stamp,
+      })),
+    ];
+    const r = detectMassChange(manifest(prevFiles), manifest(nextFiles));
+    expect(r.triggered).toBe(false);
+    expect(r.newlyRemoved).toEqual([]);
+  });
+
+  it("идентичность жива под другим путём (linkId) — не удаление даже без renamedFrom", () => {
+    const prevFiles = Array.from({ length: 30 }, (_, i) => ({
+      ...file(`src/f${String(i)}.ts`),
+      linkId: `id${String(i).padStart(14, "0")}`,
+    }));
+    const nextFiles = prevFiles.map((f) => ({
+      ...f,
+      path: `lib/${f.path.slice(4)}`,
+    }));
+    const r = detectMassChange(manifest(prevFiles), manifest(nextFiles));
+    expect(r.triggered).toBe(false);
+  });
+
+  it("настоящие удаления по-прежнему триггерят гард", () => {
+    const prevFiles = Array.from({ length: 30 }, (_, i) => file(`src/f${String(i)}.ts`));
+    const nextFiles = prevFiles.map((f) => ({ ...f, removedAt: stamp }));
+    const r = detectMassChange(manifest(prevFiles), manifest(nextFiles));
+    expect(r.triggered).toBe(true);
+    expect(r.reason).toBe("absolute");
+  });
+});

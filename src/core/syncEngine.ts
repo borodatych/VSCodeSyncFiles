@@ -44,8 +44,10 @@ import { runBlake3BackfillTasks } from "./plan/planBlake3Backfill.js";
 import { runBindingSelfHeal } from "./bindingSelfHealState.js";
 import { isInSyncScope, normalizeSyncScopes } from "./syncScope.js";
 import {
+  manifestWithBindingsReset,
   manifestWithFolderRule,
   manifestWithLinkName,
+  manifestWithRebinding,
   replaceStrandedRows,
   tombstoneManifestKey,
 } from "./folderBindingOps.js";
@@ -78,7 +80,10 @@ import {
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
-import { planTrackingDiff } from "./plan/planTrackingDiff.js";
+import { applyTrackingDiff, planPurgeLostCandidates, planTrackingDiff } from "./plan/planTrackingDiff.js";
+import type { CanonicalRenameRequest } from "./plan/planCanonicalRename.js";
+import type { RenamedKeysResult } from "./canonicalRename.js";
+import { runCanonicalKeyRelocation } from "./io/canonicalRelocation.js";
 import { throwIfAborted } from "./operationCancelled.js";
 import { applyLockChange, findStaleLocks } from "./softLockAdmin.js";
 import { bufferLooksBinary } from "../utils/binary.js";
@@ -914,57 +919,26 @@ export class SyncEngine {
       existsLocally: (rel: string) => existing.has(rel),
     });
 
-    let changed = false;
+    // Disk existence for the rename branch, resolved up front — the applier
+    // stays free of I/O. Replay contract lives with `applyTrackingDiff`.
+    const bytesAt = new Map<string, boolean>();
     for (const r of diff.rename) {
-      const oldIdx = cfg.files.findIndex(
-        (f) => f.workspaceId === workspaceId && manifestKeyOf(f) === r.from,
-      );
-      if (oldIdx < 0) continue;
-      const prev = cfg.files[oldIdx];
-      // A canonical rename replayed here moves only the KEY when bytes exist
-      // at this machine's placement (stage 3 — no silent disk moves): the row
-      // stays where it is, the UI offers "переместить у меня" as an explicit
-      // action. A row with no local bytes has nothing to preserve — it follows
-      // the rename to its (folder-rule-mapped) placement.
-      const bytesAtPlacement = await fileExists(this.localAbs(cfg, prev.localPath));
-      if (bytesAtPlacement) {
-        cfg.files[oldIdx] = {
-          ...prev,
-          manifestPath: prev.localPath === r.to ? undefined : r.to,
-          cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
-        };
-        if (prev.localPath !== r.to) {
-          this.deps.onCanonicalRenameReplayed?.({
-            workspaceId,
-            from: r.from,
-            to: r.to,
-            localPlacement: prev.localPath,
-          });
-        }
-      } else {
-        const renamedPlacement = placementOf(r.to);
-        cfg.files[oldIdx] = {
-          ...prev,
-          localPath: renamedPlacement,
-          manifestPath: renamedPlacement === r.to ? undefined : r.to,
-          cloudPath: blobCloudPath(workspaceId, r.to, r.wireGzip),
-          localHash: r.localHash,
-        };
+      const row = cfg.files.find((f) => f.workspaceId === workspaceId && manifestKeyOf(f) === r.from);
+      if (row && !bytesAt.has(row.localPath)) {
+        bytesAt.set(row.localPath, await fileExists(this.localAbs(cfg, row.localPath)));
       }
-      changed = true;
     }
-    for (const a of diff.adopt) {
-      const placement = placementOf(a.posixRel);
-      cfg.files.push({
-        localPath: placement,
-        workspaceId,
-        cloudPath: blobCloudPath(workspaceId, a.posixRel, a.wireGzip),
-        lastSync: stamp,
-        localHash: a.localHash,
-        syncStatus: a.syncStatus,
-        ...(placement !== a.posixRel ? { manifestPath: a.posixRel } : {}),
-      });
-      changed = true;
+    const { changed, replayed } = applyTrackingDiff({
+      workspaceId,
+      files: cfg.files,
+      diff,
+      placementOf,
+      bytesAtPlacement: (localPath) => bytesAt.get(localPath) === true,
+      blobPathOf: (posixRel, wireGzip) => blobCloudPath(workspaceId, posixRel, wireGzip),
+      nowIso: stamp,
+    });
+    for (const notice of replayed) {
+      this.deps.onCanonicalRenameReplayed?.({ workspaceId, ...notice });
     }
     if (changed) {
       await this.saveCfg(cfg);
@@ -1013,7 +987,14 @@ export class SyncEngine {
       if (ix < 0) {
         throw new Error(`active workspace not found: ${workspaceId}`);
       }
-      cfg.activeWorkspaces[ix] = { ...cfg.activeWorkspaces[ix], ...patch };
+      const prev = cfg.activeWorkspaces[ix];
+      const next = { ...prev, ...patch };
+      // The high-water mark is monotonic: a concurrently-downloaded older
+      // manifest body must not roll it back.
+      if (patch.manifestVersionHighWater !== undefined && prev.manifestVersionHighWater !== undefined) {
+        next.manifestVersionHighWater = Math.max(patch.manifestVersionHighWater, prev.manifestVersionHighWater);
+      }
+      cfg.activeWorkspaces[ix] = next;
     });
   }
 
@@ -2259,8 +2240,50 @@ export class SyncEngine {
     }
     const cfg = await this.loadCfg();
     const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
+    // Unbinding convention (docs/v2/linkBindings.md): a machine letting go of a
+    // bound row writes the CANONICAL path back into its bindings key — never a
+    // deletion, which union-merge would resurrect. Without this the cloud keeps
+    // asserting a placement this machine no longer tracks, and a later re-adopt
+    // ("повторный засев") would land on the stale binding instead of the
+    // current canonical path.
+    const unboundKeys = cfg.files
+      .filter(
+        (f) =>
+          f.workspaceId === workspaceId &&
+          relSet.has(f.localPath) &&
+          f.manifestPath !== undefined &&
+          f.manifestPath !== f.localPath,
+      )
+      .map((f) => manifestKeyOf(f));
     cfg.files = cfg.files.filter((f) => !(f.workspaceId === workspaceId && relSet.has(f.localPath)));
     await this.saveCfg(cfg);
+    if (unboundKeys.length === 0) {
+      return;
+    }
+    // Best-effort cloud hint: the local untrack above is the operation; a
+    // frozen workspace or an offline provider must not fail it.
+    try {
+      const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+      if (!entry) return;
+      const remoteManifest = await this.downloadManifest(workspaceId, entry.manifestEtag);
+      if (!remoteManifest) return;
+      const reset = manifestWithBindingsReset({
+        manifest: remoteManifest,
+        machineId: this.deps.machineId,
+        keys: unboundKeys,
+        nowIso: new Date().toISOString(),
+        nextVersion: this.nextManifestVersion(remoteManifest.files),
+        touchMachines: (machines, when) => this.touchMachine(machines, when),
+      });
+      if (!reset) return;
+      await this.putManifest(
+        workspaceId,
+        reset,
+        await this.currentManifestEtag(workspaceId, entry.manifestEtag),
+      );
+    } catch (e) {
+      warnLog("syncEngine", `untrackFileLocal: binding reset skipped (${e instanceof Error ? e.message : String(e)})`);
+    }
   }
 
   /**
@@ -2354,31 +2377,20 @@ export class SyncEngine {
 
     // Link Bindings: a local move of a BOUND file does not touch the canonical
     // key — it is a rebind: local placement + the row's bindings entry change,
-    // no blob copy, no tombstone, no `_meta` move. (Stage 3 adds the modal
-    // offering a canonical rename instead.)
+    // no blob copy, no tombstone, no `_meta` move.
     const renameKey = manifestKeyOf(trackedEntry);
     if (renameKey !== oldRel) {
-      const nowBind = new Date().toISOString();
-      const row = remoteManifest.files.find((f) => f.path === renameKey && !f.removedAt);
-      if (row) {
-        const updatedRow: ManifestFile = {
-          ...row,
-          version: Math.max(this.nextManifestVersion(remoteManifest.files), row.version + 1),
-          bindings: {
-            ...row.bindings,
-            [this.deps.machineId]: { path: newRel, boundAt: nowBind },
-          },
-        };
-        await this.putManifest(
-          workspaceId,
-          {
-            ...remoteManifest,
-            updatedAt: nowBind,
-            machines: this.touchMachine(remoteManifest.machines, nowBind),
-            files: remoteManifest.files.map((f) => (f === row ? updatedRow : f)),
-          },
-          entry.manifestEtag,
-        );
+      const rebound = manifestWithRebinding({
+        manifest: remoteManifest,
+        manifestKey: renameKey,
+        machineId: this.deps.machineId,
+        localRel: newRel,
+        nowIso: new Date().toISOString(),
+        nextVersion: this.nextManifestVersion(remoteManifest.files),
+        touchMachines: (machines, when) => this.touchMachine(machines, when),
+      });
+      if (rebound) {
+        await this.putManifest(workspaceId, rebound, entry.manifestEtag);
       }
       const rebindCfg = await this.loadCfg();
       const ix = rebindCfg.files.findIndex((f) => f.workspaceId === workspaceId && f.localPath === oldRel);
@@ -2388,112 +2400,102 @@ export class SyncEngine {
       await this.saveCfg(rebindCfg);
       return;
     }
-    const meta = await this.pullMeta(workspaceId, entry.metaEtag);
-
-    const oldCloudPath = trackedEntry.cloudPath;
-    // The new path must carry the same wire encoding as the old one. It used to
-    // be built with `trackedFileCloudPath`, i.e. always without the `.gz`
-    // suffix, while the `_meta` row was moved across verbatim — `wireGzip: true`
-    // included. `pullFile` then asked for `<newRel>.gz`, which did not exist,
-    // and the file was NOT_FOUND forever: a plain rename with `compressUploads`
-    // on permanently broke the file.
-    const renameWireGzip = meta.files[oldRel]?.wireGzip === true;
-    const newCloudPath = blobCloudPath(workspaceId, newRel, renameWireGzip);
-
-    // Copy blob: download old, upload to new path. Bytes are moved in their
-    // wire form on purpose — no decode/re-encode, so no key is needed here.
-    try {
-      const dl = await this.deps.provider.downloadFile(oldCloudPath, { signal: this.abortSignal });
-      await this.deps.provider.uploadFile(newCloudPath, dl.body, undefined);
-    } catch (e) {
-      if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
-        throw e;
-      }
-      // Old blob missing — proceed with metadata-only rename
+    // Canonical branch: the bytes already moved on disk (fs rename), so after
+    // the shared cloud-side key move the row follows to its new local path.
+    // No live manifest row (drifted state) — the local row alone moves and the
+    // next push re-registers the file under its new key.
+    const hasLiveRow = remoteManifest.files.some((f) => f.path === oldRel && !f.removedAt);
+    if (hasLiveRow) {
+      await this.relocateCanonicalKeys(workspaceId, [{ scope: "file", from: oldRel, to: newRel }]);
     }
-    // Tombstone old blob
-    try {
-      await this.deps.provider.deleteFile(oldCloudPath);
-    } catch (e) {
-      if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
-        throw e;
-      }
-    }
-
-    const now = new Date().toISOString();
-
-    // Update meta: move entry from old key to new key
-    const oldMetaEntry = meta.files[oldRel];
-    if (oldMetaEntry) {
-      const { [oldRel]: _moved, ...rest } = meta.files;
-      meta.files = { ...rest, [newRel]: { ...oldMetaEntry } };
-    }
-
-    // Build updated manifest
-    const localCopy: CloudManifest = {
-      ...remoteManifest,
-      updatedAt: now,
-      machines: this.touchMachine(remoteManifest.machines, now),
-      files: [...remoteManifest.files],
-    };
-    const nextVer = this.nextManifestVersion(localCopy.files);
-    // Tombstone old entry
-    const oldIx = localCopy.files.findIndex((f) => f.path === oldRel);
-    if (oldIx >= 0) {
-      const prev = localCopy.files[oldIx];
-      localCopy.files[oldIx] = {
-        ...prev,
-        removedAt: now,
-        version: Math.max(nextVer, prev.version + 1),
-      };
-    }
-    // Add new entry with renamedFrom marker. Link Bindings: identity and the
-    // other machines' placements travel with the rename — their bindings hold
-    // machine-local paths, which a canonical rename does not affect.
-    const oldRow = oldIx >= 0 ? remoteManifest.files.find((f) => f.path === oldRel) : undefined;
-    const existingNewIx = localCopy.files.findIndex((f) => f.path === newRel);
-    const newManifestFile: ManifestFile = {
-      path: newRel,
-      addedAt: now,
-      version: this.nextManifestVersion(localCopy.files),
-      hasSyncignoreMarkers: trackedEntry.syncStatus === "ok" ? false : trackedEntry.syncStatus === "conflict",
-      renamedFrom: oldRel,
-      renamedAt: now,
-      ...(oldRow?.linkId !== undefined ? { linkId: oldRow.linkId } : {}),
-      ...(oldRow?.linkName !== undefined ? { linkName: oldRow.linkName } : {}),
-      ...(oldRow?.bindings !== undefined ? { bindings: { ...oldRow.bindings } } : {}),
-    };
-    if (existingNewIx >= 0) {
-      localCopy.files[existingNewIx] = { ...localCopy.files[existingNewIx], ...newManifestFile };
-    } else {
-      localCopy.files.push(newManifestFile);
-    }
-
-    // Update local tracking entry
-    trackedEntry.localPath = newRel;
-    trackedEntry.cloudPath = newCloudPath;
-
-    let diskCfg = await this.loadCfg();
-    const entDisk = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entDisk) {
-      throw new Error("workspace entry lost");
-    }
-    await this.pushMetaJson(workspaceId, meta, entDisk.metaEtag, "push");
-    diskCfg = await this.loadCfg();
-    const entAfterMeta = diskCfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-    if (!entAfterMeta) {
-      throw new Error("workspace entry lost");
-    }
-    const merged = mergeCloudManifests(localCopy, remoteManifest);
-    await this.putManifest(workspaceId, merged, entAfterMeta.manifestEtag);
-
     const finalCfg = await this.loadCfg();
-    // Patch the tracked entry in the loaded config
     const localIdx = finalCfg.files.findIndex((f) => f.workspaceId === workspaceId && f.localPath === oldRel);
     if (localIdx >= 0) {
-      finalCfg.files[localIdx] = { ...finalCfg.files[localIdx], localPath: newRel, cloudPath: newCloudPath };
+      const { manifestPath: _bound, ...row } = finalCfg.files[localIdx];
+      const wireGzip = this.metaStore.peek(workspaceId)?.files[newRel]?.wireGzip === true;
+      finalCfg.files[localIdx] = { ...row, localPath: newRel, cloudPath: blobCloudPath(workspaceId, newRel, wireGzip) };
     }
     await this.saveCfg(finalCfg);
+  }
+
+  /**
+   * Canonical path editing (docs/v3/canonicalPaths.md): move manifest keys —
+   * cloud-only. Local bytes NEVER move here, on any machine: bound rows keep
+   * their placement via `bindings`, this machine's rows keep `localPath` and
+   * follow with a re-pointed `manifestPath`. Idempotent and resumable —
+   * re-running the same requests skips what already happened (moved rows plan
+   * as `missing`, uploads overwrite, deletes tolerate NOT_FOUND).
+   */
+  async renameCanonicalKeys(
+    workspaceId: string,
+    requests: CanonicalRenameRequest[],
+  ): Promise<RenamedKeysResult> {
+    this.assertMayMutate("renameCanonicalKeys");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    await this.ensureWorkspaceMayUploadFiles(workspaceId);
+    return this.relocateCanonicalKeys(workspaceId, requests);
+  }
+
+  /**
+   * The shared key-move machinery behind `renameCanonicalKeys` /
+   * `renameTrackedFile` — orchestration lives in `io/canonicalRelocation.ts`
+   * (engine line ceiling), this wires the engine's I/O closures in.
+   */
+  private async relocateCanonicalKeys(
+    workspaceId: string,
+    requests: CanonicalRenameRequest[],
+  ): Promise<RenamedKeysResult> {
+    const cfg = await this.loadCfg();
+    const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
+    }
+    this.assertEncryptionReady();
+    return runCanonicalKeyRelocation({
+      workspaceId,
+      requests,
+      provider: this.deps.provider,
+      machineId: this.deps.machineId,
+      downloadManifest: () => this.downloadManifest(workspaceId, entry.manifestEtag),
+      pullMeta: () => this.pullMeta(workspaceId, entry.metaEtag),
+      putManifest: async (manifest) => {
+        await this.putManifest(
+          workspaceId,
+          manifest,
+          await this.currentManifestEtag(workspaceId, entry.manifestEtag),
+        );
+      },
+      pushMeta: async (meta) => {
+        const fresh = await this.loadCfg();
+        const entAfterPut = fresh.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+        if (!entAfterPut) {
+          throw new Error("workspace entry lost");
+        }
+        await this.pushMetaJson(workspaceId, meta, entAfterPut.metaEtag, "push");
+      },
+      nextManifestVersion: (files) => this.nextManifestVersion(files),
+      touchMachines: (machines, when) => this.touchMachine(machines, when),
+      decode: (body, wireGzip) => this.decodeCloudBlob(body, wireGzip),
+      encodeFor: (posixRel, plaintext) =>
+        planUploadEncoding({
+          workspaceId,
+          posixRel,
+          plaintext,
+          encrypt: this.deps.encrypt,
+          decrypt: this.deps.decrypt,
+          compressUploads: this.deps.compressUploads,
+        }),
+      hashFor: (plaintext, posixRel) => hashCanonicalBuffer(plaintext, posixRel, this.hashCfg(posixRel)),
+      loadCfg: () => this.loadCfg(),
+      saveCfg: (next) => this.saveCfg(next),
+      syncScopes: entry.syncScopes,
+      patchSyncScopes: (scopes) =>
+        this.patchEntry(workspaceId, { syncScopes: normalizeSyncScopes(scopes) }),
+      abortSignal: this.abortSignal,
+      onUploadBytes: (bytes) => {
+        this.emitTransfer({ direction: "upload", bytes });
+      },
+    });
   }
 
   private async fileHasSyncMarkers(abs: string): Promise<boolean> {
@@ -2539,10 +2541,13 @@ export class SyncEngine {
   ): Promise<void> {
     const now = new Date().toISOString();
     // Builder in linkIdentity.ts: canonical keys + re-asserted own placement.
+    // Rows start above the highest version ever seen — a rebuild numbered from
+    // 1 would lose every 412-merge against a surviving stale copy.
     const manifestFiles = rebuildManifestFilesFromTracked(
       cfg.files.filter((f) => f.workspaceId === workspaceId),
       this.deps.machineId,
       now,
+      entry.manifestVersionHighWater ?? 0,
     );
     const manifest: CloudManifest = {
       schemaVersion: SUPPORTED_MANIFEST_SCHEMA,
@@ -2862,10 +2867,12 @@ export class SyncEngine {
 
     // Detect files that would be silently pruned (tombstone purged while offline)
     // but still exist on disk — warn the user so they're not lost without notice.
+    // Rows a canonical rename is about to MOVE are excluded by the planner.
     if (this.deps.onPurgeLostFiles) {
-      const activePaths = new Set(manifest.files.filter((f) => !f.removedAt).map((f) => f.path));
-      const wouldBePruned = cfg.files.filter(
-        (f) => f.workspaceId === workspaceId && !activePaths.has(manifestKeyOf(f)),
+      const wouldBePruned = planPurgeLostCandidates(
+        manifest.files,
+        cfg.files.filter((f) => f.workspaceId === workspaceId),
+        (f) => manifestKeyOf(f),
       );
       if (wouldBePruned.length > 0) {
         const lost: PurgeLostFileItem[] = [];
@@ -3088,7 +3095,11 @@ export class SyncEngine {
     const localCurrent = await this.hashTrackedFile(this.localAbs(cfg, file.localPath), manifestKeyOf(file)).catch(() => "");
     let cloudCurrent = "";
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
+      // Blob address derives from the canonical key + `_meta` wire encoding,
+      // same as `pullFile` — the cached `file.cloudPath` goes stale across
+      // canonical renames while the row itself is fine.
+      const blobPath = blobCloudPath(file.workspaceId, manifestKeyOf(file), metaRow?.wireGzip === true);
+      const dl = await this.deps.provider.downloadFile(blobPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {
@@ -3164,7 +3175,9 @@ export class SyncEngine {
     let cloudCurrent = "";
     let cloudBuf: Buffer | undefined;
     try {
-      const dl = await this.deps.provider.downloadFile(file.cloudPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
+      // Same canonical-key blob address as `pullFile` — see checkOneFileStatus.
+      const blobPath = blobCloudPath(workspaceId, manifestKeyOf(file), metaRow?.wireGzip === true);
+      const dl = await this.deps.provider.downloadFile(blobPath, { ifNoneMatch: metaRow?.etag, signal: this.abortSignal });
       if (dl.notModified) {
         cloudCurrent = base ?? "";
       } else {

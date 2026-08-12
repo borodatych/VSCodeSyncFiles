@@ -17,6 +17,8 @@ export interface ManifestFileRow {
   removedAt?: string;
   /** Set by the machine that renamed the file; used to move an entry, not duplicate it. */
   renamedFrom?: string;
+  /** Row identity — cached into the adopted tracked row for rename re-association. */
+  linkId?: string;
 }
 
 export interface TrackingDiffInput {
@@ -43,6 +45,8 @@ export interface AdoptedFilePlan {
    */
   localHash: string;
   syncStatus: "ok" | "missing_local";
+  /** Manifest row identity to cache locally (undefined on legacy rows). */
+  linkId?: string;
 }
 
 export interface RenamedFilePlan {
@@ -50,6 +54,8 @@ export interface RenamedFilePlan {
   to: string;
   wireGzip: boolean;
   localHash: string;
+  /** Manifest row identity to cache locally (undefined on legacy rows). */
+  linkId?: string;
 }
 
 export interface TrackingDiff {
@@ -59,6 +65,116 @@ export interface TrackingDiff {
   rename: RenamedFilePlan[];
   /** Tracked here, absent from (or tombstoned in) the manifest. */
   prune: string[];
+}
+
+export interface ReplayedRenameNotice {
+  from: string;
+  to: string;
+  localPlacement: string;
+}
+
+/**
+ * Apply a {@link TrackingDiff} to the tracked rows of one workspace, in place.
+ *
+ * The replay contract (docs/v2/linkBindings.md): a canonical rename moves only
+ * the KEY when this machine holds the bytes — the row keeps its `localPath`
+ * and the physical move stays an explicit user action (returned as notices for
+ * the UI). A row with no local bytes follows the rename to its
+ * folder-rule-mapped placement. The identity cache rides every touched row —
+ * after the 30-day `renamedFrom` purge, re-association has nothing else.
+ * Pure apart from mutating `files`; disk existence is precomputed by the caller.
+ */
+export function applyTrackingDiff(input: {
+  workspaceId: string;
+  /** All tracked rows (every workspace); mutated in place. */
+  files: {
+    localPath: string;
+    workspaceId: string;
+    cloudPath: string;
+    lastSync: string;
+    localHash: string;
+    syncStatus?: string;
+    manifestPath?: string;
+    linkId?: string;
+  }[];
+  diff: TrackingDiff;
+  placementOf: (posixRel: string) => string;
+  /** Whether this machine holds bytes at the row's current placement. */
+  bytesAtPlacement: (localPath: string) => boolean;
+  blobPathOf: (posixRel: string, wireGzip: boolean) => string;
+  nowIso: string;
+}): { changed: boolean; replayed: ReplayedRenameNotice[] } {
+  const { files, diff, workspaceId } = input;
+  const keyOf = (f: { localPath: string; manifestPath?: string }): string => f.manifestPath ?? f.localPath;
+  let changed = false;
+  const replayed: ReplayedRenameNotice[] = [];
+  for (const r of diff.rename) {
+    const ix = files.findIndex((f) => f.workspaceId === workspaceId && keyOf(f) === r.from);
+    if (ix < 0) continue;
+    const prev = files[ix];
+    const replayLinkId = r.linkId ?? prev.linkId;
+    if (input.bytesAtPlacement(prev.localPath)) {
+      files[ix] = {
+        ...prev,
+        manifestPath: prev.localPath === r.to ? undefined : r.to,
+        cloudPath: input.blobPathOf(r.to, r.wireGzip),
+        ...(replayLinkId !== undefined ? { linkId: replayLinkId } : {}),
+      };
+      if (prev.localPath !== r.to) {
+        replayed.push({ from: r.from, to: r.to, localPlacement: prev.localPath });
+      }
+    } else {
+      const placement = input.placementOf(r.to);
+      files[ix] = {
+        ...prev,
+        localPath: placement,
+        manifestPath: placement === r.to ? undefined : r.to,
+        cloudPath: input.blobPathOf(r.to, r.wireGzip),
+        localHash: r.localHash,
+        ...(replayLinkId !== undefined ? { linkId: replayLinkId } : {}),
+      };
+    }
+    changed = true;
+  }
+  for (const a of diff.adopt) {
+    const placement = input.placementOf(a.posixRel);
+    files.push({
+      localPath: placement,
+      workspaceId,
+      cloudPath: input.blobPathOf(a.posixRel, a.wireGzip),
+      lastSync: input.nowIso,
+      localHash: a.localHash,
+      syncStatus: a.syncStatus,
+      ...(placement !== a.posixRel ? { manifestPath: a.posixRel } : {}),
+      ...(a.linkId !== undefined ? { linkId: a.linkId } : {}),
+    });
+    changed = true;
+  }
+  return { changed, replayed };
+}
+
+/**
+ * Tracked rows the manifest no longer lists — candidates for the "these files
+ * would be silently pruned" warning. A key that an active row renamed away
+ * from, or whose identity (`linkId`) lives on under another path, is about to
+ * be MOVED by adopt, not pruned — warning about it would cry wolf on every
+ * canonical rename. Pure; the caller still checks the disk.
+ */
+export function planPurgeLostCandidates<T extends { linkId?: string }>(
+  manifestFiles: readonly (ManifestFileRow & { linkId?: string })[],
+  trackedRows: readonly T[],
+  keyOf: (row: T) => string,
+): T[] {
+  const activeRows = manifestFiles.filter((f) => !f.removedAt);
+  const activePaths = new Set(activeRows.map((f) => f.path));
+  const renamedAway = new Set(activeRows.map((f) => f.renamedFrom).filter((p): p is string => !!p));
+  const activeLinkIds = new Set(activeRows.map((f) => f.linkId).filter((id): id is string => id !== undefined));
+  return trackedRows.filter(
+    (f) =>
+      !activePaths.has(keyOf(f)) &&
+      !renamedAway.has(keyOf(f)) &&
+      !(f.linkId !== undefined && activeLinkIds.has(f.linkId)),
+  );
 }
 
 export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
@@ -76,7 +192,13 @@ export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
     const wireGzip = input.wireGzipFor(row.path);
     const metaHash = input.metaHashFor(row.path) ?? "";
     if (row.renamedFrom !== undefined && row.renamedFrom !== "" && tracked.has(row.renamedFrom)) {
-      rename.push({ from: row.renamedFrom, to: row.path, wireGzip, localHash: metaHash });
+      rename.push({
+        from: row.renamedFrom,
+        to: row.path,
+        wireGzip,
+        localHash: metaHash,
+        ...(row.linkId !== undefined ? { linkId: row.linkId } : {}),
+      });
       continue;
     }
     const exists = input.existsLocally(row.path);
@@ -85,6 +207,7 @@ export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
       wireGzip,
       localHash: exists ? metaHash : "",
       syncStatus: exists ? "ok" : "missing_local",
+      ...(row.linkId !== undefined ? { linkId: row.linkId } : {}),
     });
   }
 

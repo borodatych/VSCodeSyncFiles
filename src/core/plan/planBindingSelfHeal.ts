@@ -26,6 +26,12 @@ export function planBindingSelfHeal(input: {
 }): { healedRows: Map<string, ManifestFile> } {
   const healedRows = new Map<string, ManifestFile>();
   let version = input.nextVersion;
+  // Mass canonical renames make this a hot path — index active rows once
+  // instead of scanning the manifest per tracked file.
+  const activeByPath = new Map<string, ManifestFile>();
+  for (const m of input.manifestFiles) {
+    if (!m.removedAt) activeByPath.set(m.path, m);
+  }
   for (const f of input.trackedFiles) {
     const key = manifestKeyOf(f);
     if (f.manifestPath === undefined || f.manifestPath === f.localPath) {
@@ -34,7 +40,7 @@ export function planBindingSelfHeal(input: {
     if (canonicalKeyForLocalPath(input.folderRules, f.localPath) === key) {
       continue; // the folder rule already explains this placement
     }
-    const row = input.manifestFiles.find((m) => m.path === key && !m.removedAt);
+    const row = activeByPath.get(key);
     if (!row) {
       continue;
     }

@@ -90,3 +90,27 @@ describe("planTrackingDiff", () => {
     expect(d).toEqual({ adopt: [], rename: [], prune: [] });
   });
 });
+
+describe("planTrackingDiff — кэш идентичности (linkId)", () => {
+  it("adopt несёт linkId строки манифеста — локальный кэш заполняется при адопции", () => {
+    const d = planTrackingDiff(
+      makeInput({ manifestFiles: [{ path: "a.ts", linkId: "aabbccdd00112233" }] }),
+    );
+    expect(d.adopt[0].linkId).toBe("aabbccdd00112233");
+  });
+
+  it("rename несёт linkId наследника", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [{ path: "b.ts", renamedFrom: "a.ts", linkId: "aabbccdd00112233" }],
+        trackedPaths: ["a.ts"],
+      }),
+    );
+    expect(d.rename[0]).toMatchObject({ from: "a.ts", to: "b.ts", linkId: "aabbccdd00112233" });
+  });
+
+  it("легаси-строка без linkId — поле отсутствует, не undefined-мусор", () => {
+    const d = planTrackingDiff(makeInput({ manifestFiles: [{ path: "a.ts" }] }));
+    expect("linkId" in d.adopt[0]).toBe(false);
+  });
+});

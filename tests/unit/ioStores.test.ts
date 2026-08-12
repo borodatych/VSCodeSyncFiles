@@ -206,3 +206,41 @@ describe("blobTransfer", () => {
     ).rejects.toThrow("hash mismatch");
   });
 });
+
+describe("manifestStore — авторемонт дублей linkId в 412-merge", () => {
+  function storeFor(provider: MockCloudProvider, currentEtag: () => Promise<string | undefined>) {
+    return createManifestStore({
+      provider,
+      tombstonePurgeDays: () => 30,
+      onEtag: () => Promise.resolve(),
+      currentEtag,
+      beforeWrite: () => Promise.resolve(),
+    });
+  }
+
+  it("bind × canonical-rename: после merge выживает один носитель идентичности", async () => {
+    const provider = new MockCloudProvider("onedrive");
+    // Облако: наследник rename несёт идентичность на новом пути (моложе).
+    const cloudRow = {
+      path: "lib/a.ts", addedAt: "2026-08-12T10:00:00.000Z", version: 5,
+      hasSyncignoreMarkers: false, linkId: "aabbccdd00112233",
+      renamedFrom: "src/a.ts", renamedAt: "2026-08-12T10:00:00.000Z",
+    };
+    const up = await provider.uploadFile(
+      manifestCloudPath(WS),
+      Buffer.from(JSON.stringify(manifest([cloudRow as never])), "utf8"),
+    );
+    const store = storeFor(provider, () => Promise.resolve(up.etag));
+    // Наш PUT с устаревшим etag: та же идентичность живёт на старом пути.
+    const staleRow = {
+      path: "src/a.ts", addedAt: "2026-08-11T00:00:00.000Z", version: 6,
+      hasSyncignoreMarkers: false, linkId: "aabbccdd00112233",
+    };
+    await store.put(WS, manifest([staleRow]), 'W/"stale"');
+    const final = await store.download(WS, undefined);
+    const live = final?.files.filter((f) => !f.removedAt) ?? [];
+    expect(live.map((f) => f.path)).toEqual(["lib/a.ts"]);
+    const tomb = final?.files.find((f) => f.path === "src/a.ts");
+    expect(tomb?.removedAt).toBeTruthy();
+  });
+});

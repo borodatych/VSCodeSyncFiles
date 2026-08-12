@@ -46,16 +46,22 @@ export function defaultLinkName(posixPath: string): string {
  * canonically; the machine's own placement is re-asserted as a binding so
  * other machines keep their view. (Extracted from
  * `syncEngine.rebuildManifestFromLocalState` — engine line-ceiling offset.)
+ *
+ * `baseVersion` must be the highest Lamport version this machine has ever seen
+ * for the workspace: rebuilt rows starting from 1 would lose every 412-merge
+ * against a surviving stale copy whose rows carry higher versions (canonical
+ * renames bump aggressively, so the gap is not theoretical).
  */
 export function rebuildManifestFilesFromTracked(
   trackedRows: readonly { localPath: string; manifestPath?: string; linkId?: string }[],
   machineId: string,
   nowIso: string,
+  baseVersion = 0,
 ): ManifestFile[] {
   return trackedRows.map((f, i) => ({
     path: f.manifestPath ?? f.localPath,
     addedAt: nowIso,
-    version: i + 1,
+    version: baseVersion + i + 1,
     hasSyncignoreMarkers: false,
     ...(f.linkId !== undefined ? { linkId: f.linkId } : {}),
     ...(f.manifestPath !== undefined && f.manifestPath !== f.localPath
@@ -162,13 +168,16 @@ export function repairDuplicateLinkIds(manifest: CloudManifest, nowIso: string):
   }
   let nextVersion = manifest.files.reduce((m, f) => Math.max(m, f.version), 0) + 1;
   const files = [...manifest.files];
+  // Mass canonical renames make this a hot path — one index instead of a
+  // linear scan per carrier. Group paths are unique per manifest snapshot.
+  const indexByPath = new Map<string, number>(files.map((f, i) => [f.path, i]));
   for (const g of groups) {
     const keepPath = g.paths[g.paths.length - 1];
-    const keepIx = files.findIndex((f) => f.path === keepPath);
+    const keepIx = indexByPath.get(keepPath) ?? -1;
     if (keepIx < 0) continue;
     let survivor = files[keepIx];
     for (const path of g.paths.slice(0, -1)) {
-      const ix = files.findIndex((f) => f.path === path);
+      const ix = indexByPath.get(path) ?? -1;
       if (ix < 0) continue;
       const loser = files[ix];
       const bindings = { ...loser.bindings, ...survivor.bindings };
