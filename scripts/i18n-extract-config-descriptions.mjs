@@ -10,8 +10,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 
 const pkgPath = join(root, "package.json");
-const enPath = join(root, "package.nls.json");
-const ruPath = join(root, "package.nls.ru.json");
+const enPath = join(root, "package.nls.en.json");
+const ruPath = join(root, "package.nls.json");
 
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 const en = JSON.parse(readFileSync(enPath, "utf8"));

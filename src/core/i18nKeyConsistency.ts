@@ -1,6 +1,6 @@
 /**
  * Cross-cutting — pure validator for the `%key%` placeholder ↔
- * `package.nls.json` / `package.nls.ru.json` cross-reference. Caller
+ * `package.nls.json` (Russian base) / `package.nls.en.json` cross-reference. Caller
  * (existing tests / the i18n CI script) reads the three JSON files,
  * extracts string values, and feeds them in here.
  *
@@ -12,7 +12,7 @@ const PLACEHOLDER_RE = /^%([a-zA-Z0-9._-]+)%$/;
 export interface I18nConsistencyInput {
   /** Set of `%key%` placeholder names extracted from package.json strings. */
   referencedKeys: ReadonlySet<string>;
-  /** Map of key → translation present in package.nls.json (default locale,
+  /** Map of key → translation present in package.nls.json (default locale — Russian,
    * usually English). */
   nlsDefault: ReadonlyMap<string, string>;
   /** Map of key → translation present in a non-default locale (e.g. ru). */
