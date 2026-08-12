@@ -916,6 +916,10 @@
         "title": "%cmd.resumeCanonicalRename.title%"
       },
       {
+        "command": "vscodesync.undoCanonicalRename",
+        "title": "%cmd.undoCanonicalRename.title%"
+      },
+      {
         "command": "vscodesync.treeFolderPull",
         "title": "%cmd.treeFolderPull.title%"
       },

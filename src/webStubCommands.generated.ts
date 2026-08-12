@@ -18,6 +18,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.editWorkspacePaths",
   "vscodesync.applyWorkspacePathsEdit",
   "vscodesync.resumeCanonicalRename",
+  "vscodesync.undoCanonicalRename",
   "vscodesync.treeFolderPull",
   "vscodesync.pickSyncScopes",
   "vscodesync.pushAll",

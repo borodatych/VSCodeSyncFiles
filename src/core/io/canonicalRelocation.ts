@@ -38,6 +38,7 @@ import {
 import { manifestKeyOf } from "../trackedPathResolver.js";
 import type { WorkspaceConfig } from "../types.js";
 import { blobCloudPath } from "../wireCompression.js";
+import { isProbablyBinaryPath } from "../../utils/binary.js";
 import { warnLog } from "../../utils/log.js";
 
 export interface RelocateBlobsDeps {
@@ -68,6 +69,43 @@ export async function relocateBlobsForMoves(deps: RelocateBlobsDeps): Promise<st
     const metaRow = deps.meta.files[move.from];
     const wireGzip = metaRow?.wireGzip === true;
     const oldCloudPath = blobCloudPath(deps.workspaceId, move.from, wireGzip);
+    // Fast path: when the hashing category holds, the wire form is identical
+    // under the new key — a provider-native move relocates metadata only, no
+    // download+upload of the whole blob. The `_meta` row carries over with the
+    // move's fresh etag; the hash cannot change (same bytes, same
+    // canonicalisation rules).
+    if (
+      metaRow !== undefined &&
+      deps.provider.moveFile &&
+      isProbablyBinaryPath(move.from) === isProbablyBinaryPath(move.to)
+    ) {
+      try {
+        const moved = await deps.provider.moveFile(
+          oldCloudPath,
+          blobCloudPath(deps.workspaceId, move.to, wireGzip),
+        );
+        deps.meta.files[move.to] = {
+          ...metaRow,
+          etag: moved.etag ?? "",
+          machineId: deps.machineId,
+          updatedAt: deps.nowIso,
+          version: Math.max(metaRow.version, deps.meta.files[move.to]?.version ?? 0) + 1,
+        };
+        deps.meta.files = Object.fromEntries(
+          Object.entries(deps.meta.files).filter(([key]) => key !== move.from),
+        );
+        continue;
+      } catch (e) {
+        if (!(e instanceof ProviderError) || e.code !== "NOT_FOUND") {
+          warnLog(
+            "canonicalRelocation",
+            `native move failed for ${move.from}, falling back to copy: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        // NOT_FOUND falls through to the copy path, which treats a missing
+        // source as a metadata-only move.
+      }
+    }
     let plaintext: Buffer | undefined;
     try {
       const dl = await deps.provider.downloadFile(oldCloudPath, { signal: deps.abortSignal });

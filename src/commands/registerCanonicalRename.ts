@@ -29,12 +29,21 @@ export interface CanonicalRenameDeps {
 }
 
 const PENDING_KEY = "vscodesync.pendingCanonicalRename";
+const LAST_BATCH_KEY = "vscodesync.lastCanonicalRename";
 
 interface PendingRenameJob {
   root: string;
   workspaceId: string;
   requests: CanonicalRenameRequest[];
   startedAt: string;
+}
+
+/** The applied moves of the last successful batch — the undo material. */
+interface LastRenameBatch {
+  root: string;
+  workspaceId: string;
+  applied: { from: string; to: string }[];
+  finishedAt: string;
 }
 
 /** Mass-editor sessions, keyed by document URI. */
@@ -129,21 +138,30 @@ export async function confirmAndRunCanonicalRename(
   const job: PendingRenameJob = { root, workspaceId, requests, startedAt: new Date().toISOString() };
   await deps.context.workspaceState.update(PENDING_KEY, job);
   try {
-    let applied = 0;
+    let applied: { from: string; to: string }[] = [];
     let skipped = 0;
     await deps.runWithEngine(
       async (engine) => {
         const res = await engine.renameCanonicalKeys(workspaceId, requests);
-        applied = res.applied.length;
+        applied = res.applied;
         skipped = res.skipped.length;
       },
       root,
       { cancellable: "VSCodeSync: перенос канонических путей…", trigger: "user" },
     );
     await deps.context.workspaceState.update(PENDING_KEY, undefined);
-    void vscode.window.showInformationMessage(
-      `VSCodeSync: пути обновлены (${String(applied)})${skipped > 0 ? `, пропущено: ${String(skipped)}` : ""}. Локальные файлы не перемещались.`,
+    if (applied.length > 0) {
+      const batch: LastRenameBatch = { root, workspaceId, applied, finishedAt: new Date().toISOString() };
+      await deps.context.workspaceState.update(LAST_BATCH_KEY, batch);
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `VSCodeSync: пути обновлены (${String(applied.length)})${skipped > 0 ? `, пропущено: ${String(skipped)}` : ""}. Локальные файлы не перемещались.`,
+      ...(applied.length > 0 ? ["Отменить переименование"] : []),
     );
+    if (choice === "Отменить переименование") {
+      await vscode.commands.executeCommand("vscodesync.undoCanonicalRename");
+      return;
+    }
   } catch (e) {
     // The job stays persisted: every step is idempotent, so re-running the
     // same requests finishes what the interruption left half-done.
@@ -311,6 +329,26 @@ export function registerCanonicalRenameCommands(deps: CanonicalRenameDeps): vsco
       }
       await confirmAndRunCanonicalRename(deps, session.root, session.workspaceId, requests);
       editSessions.delete(uriKey);
+    }),
+
+    /**
+     * Undo the last batch: the inverse moves run through the SAME machinery —
+     * cheap while the `renamedFrom` breadcrumbs are alive (30 days), and the
+     * safety net the mass editor deserves.
+     */
+    vscode.commands.registerCommand("vscodesync.undoCanonicalRename", async () => {
+      const batch = deps.context.workspaceState.get<LastRenameBatch>(LAST_BATCH_KEY);
+      if (!batch || batch.applied.length === 0) {
+        void vscode.window.showInformationMessage("VSCodeSync: отменять нечего — последних переносов нет.");
+        return;
+      }
+      const inverse: CanonicalRenameRequest[] = batch.applied.map((m) => ({
+        scope: "file",
+        from: m.to,
+        to: m.from,
+      }));
+      await deps.context.workspaceState.update(LAST_BATCH_KEY, undefined);
+      await confirmAndRunCanonicalRename(deps, batch.root, batch.workspaceId, inverse);
     }),
 
     /** Retry an interrupted batch — the flow is idempotent end to end. */

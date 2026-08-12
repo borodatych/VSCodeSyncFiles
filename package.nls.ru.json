@@ -268,5 +268,6 @@
   "cmd.editWorkspacePaths.title": "Редактировать пути воркспейса…",
   "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Применить правки путей воркспейса",
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Возобновить прерванный перенос путей",
-  "cmd.toggleTreeCanonicalMode.title": "Дерево: локальное размещение ⇄ канонические пути"
+  "cmd.toggleTreeCanonicalMode.title": "Дерево: локальное размещение ⇄ канонические пути",
+  "cmd.undoCanonicalRename.title": "VSCodeSync: Отменить последнее переименование путей"
 }

@@ -268,5 +268,6 @@
   "cmd.editWorkspacePaths.title": "Edit workspace paths…",
   "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Apply workspace path edits",
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Resume interrupted path move",
-  "cmd.toggleTreeCanonicalMode.title": "Toggle tree: local placement ⇄ canonical paths"
+  "cmd.toggleTreeCanonicalMode.title": "Toggle tree: local placement ⇄ canonical paths",
+  "cmd.undoCanonicalRename.title": "VSCodeSync: Undo last path rename"
 }
