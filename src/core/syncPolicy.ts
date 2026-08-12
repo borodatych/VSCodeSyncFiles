@@ -103,6 +103,7 @@ export const MUTATION_OPS = [
   "applyHashBlake3Backfill",
   "clearStaleManifestEditingLocks",
   "repairWorkspaceDuplicateLinkIds",
+  "collectWorkspaceOrphans",
   // --- Locks and history -----------------------------------------------
   "setSoftLock",
   "clearSoftLock",

@@ -22,21 +22,32 @@ import {
 import { canonicalKeyForLocalPath, localPathForCanonicalKey, normalizeDirPrefix } from "./folderBindings.js";
 import {
   defaultLinkName,
-  findDuplicateLinkIds,
   newLinkId,
   rebuildManifestFilesFromTracked,
   type DuplicateLinkIdGroup,
 } from "./linkIdentity.js";
-import { priorCanonicalKeys } from "./linkKeyChain.js";
-import { historyPathOwnedByChain, listHistoryAcrossKeys } from "./io/historyChainReader.js";
+import {
+  downloadHistorySnapshot,
+  downloadTrackedBlobPlaintext,
+  listTrackedFileHistory,
+  type TrackedBlobReaderDeps,
+} from "./io/trackedBlobReader.js";
 import {
   clearStaleManifestLocks,
   listStaleManifestLocks,
   listWorkspaceDuplicateLinkIds,
   repairWorkspaceDuplicateLinkIdGroups,
+  workspaceCloudHealth,
   type ManifestHealthDeps,
   type StaleLockRow,
 } from "./manifestHealthOps.js";
+import {
+  collectWorkspaceOrphans,
+  scanWorkspaceOrphans,
+  ORPHAN_GC_DEFAULT_MIN_AGE_DAYS,
+  type OrphanCollectResult,
+} from "./io/orphanGcOps.js";
+import type { OrphanGcPlan } from "./plan/planOrphanGc.js";
 import { touchManifestMachine } from "./machineRegistry.js";
 import { manifestKeyOf, trackedLinkIdMap } from "./trackedPathResolver.js";
 import { mergeCloudManifests, mergeMachinesPreferNewer, mergeManifestFiles } from "./manifestMerger.js";
@@ -95,7 +106,12 @@ import {
 } from "./wireCompression.js";
 import { fileLooksBinary } from "../utils/binaryDetect.js";
 import { planUploadEncoding } from "./plan/planUploadEncoding.js";
-import { applyTrackingDiff, planPurgeLostCandidates, planTrackingDiff } from "./plan/planTrackingDiff.js";
+import {
+  applyTrackingDiff,
+  planPurgeLostCandidates,
+  planTrackingDiff,
+  pruneTrackedRowsAgainstManifest,
+} from "./plan/planTrackingDiff.js";
 import type { CanonicalRenameRequest } from "./plan/planCanonicalRename.js";
 import type { RenamedKeysResult } from "./canonicalRename.js";
 import { runCanonicalKeyRelocation } from "./io/canonicalRelocation.js";
@@ -1536,31 +1552,42 @@ export class SyncEngine {
     return sharedIgnorePatternsOrEmpty(m);
   }
 
-  /** Доступен ли облачный манифест для активного workspace. */
+  /** Доступен ли облачный манифест для активного workspace; flow in manifestHealthOps.ts. */
   async healthCheckWorkspace(workspaceId: string): Promise<{ ok: true } | { ok: false; message: string }> {
-    try {
-      const cfg = await this.loadCfg();
-      const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
-      if (!entry) {
-        return { ok: false, message: "workspace не в списке активных" };
-      }
-      const m = await this.downloadManifest(workspaceId, entry.manifestEtag);
-      if (!m) {
-        return { ok: false, message: "манифест недоступен" };
-      }
-      // Link Bindings: a bind racing a canonical rename can leave one linkId
-      // on two live rows — surfaced here, repaired via repairDuplicateLinkIds.
-      const dupes = findDuplicateLinkIds(m.files);
-      if (dupes.length > 0) {
-        return {
-          ok: false,
-          message: `дубликат идентичности (linkId) у: ${dupes.map((d) => d.paths.join(" ↔ ")).join("; ")}`,
-        };
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    return workspaceCloudHealth(this.manifestHealthDeps(workspaceId));
+  }
+
+  /** Read-only orphan scan (blobs/history/_meta под мёртвыми ключами); flow in io/orphanGcOps.ts. */
+  async scanWorkspaceOrphansForGc(workspaceId: string): Promise<OrphanGcPlan> {
+    const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (!entry) {
+      throw new Error("workspace not active");
     }
+    return scanWorkspaceOrphans({
+      workspaceId,
+      provider: this.deps.provider,
+      downloadManifest: () => this.downloadManifest(workspaceId, entry.manifestEtag),
+      pullMeta: () => this.pullMeta(workspaceId, entry.metaEtag),
+      minAgeMs: ORPHAN_GC_DEFAULT_MIN_AGE_DAYS * 24 * 3600_000,
+    });
+  }
+
+  /** Trash the confirmed orphans (deleteFile = корзина, D11); flow in io/orphanGcOps.ts. */
+  async collectWorkspaceOrphansToTrash(workspaceId: string, plan: OrphanGcPlan): Promise<OrphanCollectResult> {
+    this.assertMayMutate("collectWorkspaceOrphans");
+    rejectIfSecondaryWorkspaceInstanceReadOnly();
+    const freshMetaEtag = async (): Promise<string | undefined> =>
+      (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === workspaceId)?.metaEtag;
+    return collectWorkspaceOrphans(
+      {
+        provider: this.deps.provider,
+        pullMeta: async () => this.pullMeta(workspaceId, await freshMetaEtag()),
+        pushMeta: async (meta) => {
+          await this.pushMetaJson(workspaceId, meta, await freshMetaEtag(), "push");
+        },
+      },
+      plan,
+    );
   }
 
   /** Manifest paths with an abandoned soft lock; flow in manifestHealthOps.ts. */
@@ -2233,9 +2260,7 @@ export class SyncEngine {
     const cfg = await this.loadCfg();
     const relSet = new Set(absolutePaths.map((a) => this.posixRel(cfg, a)));
     // Unbinding convention (docs/v2/linkBindings.md): write the CANONICAL path
-    // back into this machine's bindings key — never delete (union-merge would
-    // resurrect), never leave stale (re-adopt would land on the old binding
-    // instead of the current canonical path). See `manifestWithBindingsReset`.
+    // back into the bindings key — see `manifestWithBindingsReset`.
     const unboundKeys = cfg.files
       .filter((f) => f.workspaceId === workspaceId && relSet.has(f.localPath))
       .filter((f) => f.manifestPath !== undefined && f.manifestPath !== f.localPath)
@@ -3136,15 +3161,7 @@ export class SyncEngine {
   }
 
   private pruneTrackingFromManifest(cfg: WorkspaceConfig, manifest: CloudManifest): void {
-    const active = new Set(
-      manifest.files.filter((f) => !f.removedAt).map((f) => `${manifest.workspaceId}:${f.path}`),
-    );
-    cfg.files = cfg.files.filter((f) => {
-      if (f.workspaceId !== manifest.workspaceId) {
-        return true;
-      }
-      return active.has(`${f.workspaceId}:${manifestKeyOf(f)}`);
-    });
+    cfg.files = pruneTrackedRowsAgainstManifest(cfg.files, manifest);
   }
 
   private async syncOneFile(
@@ -4054,79 +4071,30 @@ export class SyncEngine {
     });
   }
 
-  /**
-   * Снимки в `.history/` для файла (новые первыми) — включая снимки под
-   * прежними каноническими именами: история следует за файлом сквозь
-   * переименования (цепочка ключей по `renamedFrom`, linkKeyChain.ts).
-   */
+  /** История файла (включая прежние канонические имена); flow in io/trackedBlobReader.ts. */
   async listCloudHistoryForTrackedFile(posixRel: string): Promise<FileMetadata[]> {
-    const cfg = await this.loadCfg();
-    const hit = cfg.files.find((f) => f.localPath === posixRel);
-    if (!hit) {
-      throw new Error("not tracked");
-    }
-    return listHistoryAcrossKeys(this.deps.provider, hit.workspaceId, await this.historyKeyChain(hit));
+    return listTrackedFileHistory(this.blobReaderDeps(), posixRel);
   }
 
-  /** Current canonical key + prior chain keys; degrades to the current key alone offline. */
-  private async historyKeyChain(hit: TrackedFile): Promise<string[]> {
-    const key = manifestKeyOf(hit);
-    const entry = (await this.loadCfg()).activeWorkspaces.find((w) => w.workspaceId === hit.workspaceId);
-    if (!entry) {
-      return [key];
-    }
-    const m = await this.downloadManifest(hit.workspaceId, entry.manifestEtag).catch(() => null);
-    return m ? [key, ...priorCanonicalKeys(m.files, key)] : [key];
-  }
-
-  /**
-   * Shared prologue of the tracked-blob readers: tracked row by local path,
-   * its workspace entry, `_meta` row and wire codec — everything keyed by the
-   * canonical manifest key (Link Bindings).
-   */
-  private async trackedReadContext(posixRel: string): Promise<{
-    hit: TrackedFile;
-    key: string;
-    wireGzip: boolean;
-  }> {
-    const cfg = await this.loadCfg();
-    const hit = cfg.files.find((f) => f.localPath === posixRel);
-    if (!hit) {
-      throw new Error("not tracked");
-    }
-    const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === hit.workspaceId);
-    if (!ent) {
-      throw new Error("no entry");
-    }
-    const meta = await this.pullMeta(hit.workspaceId, ent.metaEtag);
-    const key = manifestKeyOf(hit);
-    return { hit, key, wireGzip: meta.files[key]?.wireGzip === true };
-  }
-
-  /** Download with one retry on an empty 304 body (provider cache quirk). */
-  private async downloadCloudBytes(cloudPath: string): Promise<Buffer> {
-    let dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
-    if (dl.notModified && dl.body.length === 0) {
-      dl = await this.deps.provider.downloadFile(cloudPath, { signal: this.abortSignal });
-    }
-    return dl.body;
-  }
-
-  /** Скачать снимок истории, если путь принадлежит `.history/` этого файла (включая прежние канонические имена цепочки). Декодируется decrypt + gunzip как у текущего файла по `_meta.wireGzip`. */
+  /** Снимок истории по цепочке ключей; flow in io/trackedBlobReader.ts. */
   async downloadHistorySnapshotIfOwned(posixRel: string, historyCloudPath: string): Promise<Buffer> {
-    const { hit, wireGzip } = await this.trackedReadContext(posixRel);
-    const chain = await this.historyKeyChain(hit);
-    if (!historyPathOwnedByChain(hit.workspaceId, chain, historyCloudPath)) {
-      throw new Error("not a history path for this file");
-    }
-    return this.decodeCloudBlob(await this.downloadCloudBytes(historyCloudPath.replace(/\/$/, "")), wireGzip);
+    return downloadHistorySnapshot(this.blobReaderDeps(), posixRel, historyCloudPath);
   }
 
-  /** Raw cloud bytes for tracked file decoded to canonical plaintext UTF-8 (decrypt + optional gunzip). */
+  /** Расшифрованные байты блоба; flow in io/trackedBlobReader.ts. */
   async downloadTrackedBlob(posixRel: string): Promise<{ body: Buffer }> {
-    const { hit, key, wireGzip } = await this.trackedReadContext(posixRel);
-    const path = blobCloudPath(hit.workspaceId, key, wireGzip);
-    return { body: this.decodeCloudBlob(await this.downloadCloudBytes(path), wireGzip) };
+    return downloadTrackedBlobPlaintext(this.blobReaderDeps(), posixRel);
+  }
+
+  private blobReaderDeps(): TrackedBlobReaderDeps {
+    return {
+      provider: this.deps.provider,
+      loadCfg: () => this.loadCfg(),
+      pullMeta: (wsId, etag) => this.pullMeta(wsId, etag),
+      downloadManifest: (wsId, etag) => this.downloadManifest(wsId, etag),
+      decode: (body, gz) => this.decodeCloudBlob(body, gz),
+      abortSignal: this.abortSignal,
+    };
   }
 }
 

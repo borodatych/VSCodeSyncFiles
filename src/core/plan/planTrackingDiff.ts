@@ -182,6 +182,20 @@ export function planPurgeLostCandidates<T extends { linkId?: string }>(
   );
 }
 
+/**
+ * Tracked rows that survive a manifest prune: rows of other workspaces stay,
+ * rows of this one stay only while their canonical key is still active.
+ * (Extracted from `syncEngine.pruneTrackingFromManifest` — line ceiling.)
+ */
+export function pruneTrackedRowsAgainstManifest<
+  T extends { workspaceId: string; localPath: string; manifestPath?: string },
+>(rows: readonly T[], manifest: { workspaceId: string; files: readonly ManifestFileRow[] }): T[] {
+  const active = new Set(manifest.files.filter((f) => !f.removedAt).map((f) => f.path));
+  return rows.filter(
+    (f) => f.workspaceId !== manifest.workspaceId || active.has(f.manifestPath ?? f.localPath),
+  );
+}
+
 export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
   const activeRows = input.manifestFiles.filter((f) => f.removedAt === undefined || f.removedAt === "");
   const activePaths = new Set(activeRows.map((f) => f.path));

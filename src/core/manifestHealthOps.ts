@@ -98,6 +98,34 @@ export async function clearStaleManifestLocks(
   return stale.size;
 }
 
+/** Cloud-side workspace health: manifest reachable, no duplicate identities. */
+export async function workspaceCloudHealth(
+  deps: ManifestHealthDeps,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const entry = await deps.findEntry();
+    if (!entry) {
+      return { ok: false, message: "workspace не в списке активных" };
+    }
+    const m = await deps.downloadManifest(entry.manifestEtag);
+    if (!m) {
+      return { ok: false, message: "манифест недоступен" };
+    }
+    // A bind racing a canonical rename can leave one linkId on two live rows —
+    // surfaced here, repaired via the Health Check button.
+    const dupes = findDuplicateLinkIds(m.files);
+    if (dupes.length > 0) {
+      return {
+        ok: false,
+        message: `дубликат идентичности (linkId) у: ${dupes.map((d) => d.paths.join(" ↔ ")).join("; ")}`,
+      };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Live rows sharing one linkId — read-only, same manifest fetch as Health Check. */
 export async function listWorkspaceDuplicateLinkIds(deps: ManifestHealthDeps): Promise<DuplicateLinkIdGroup[]> {
   const ctx = await workspaceManifest(deps);
