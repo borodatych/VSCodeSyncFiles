@@ -76,6 +76,13 @@ export interface ActiveWorkspaceEntry {
    * carries.
    */
   syncScopes?: string[];
+  /**
+   * Highest manifest `files[].version` this machine has ever observed
+   * (monotonic, kept by `patchEntry`). A manifest rebuilt after cloud loss must
+   * start above it — rows numbered from 1 lose every 412-merge against a
+   * surviving stale copy.
+   */
+  manifestVersionHighWater?: number;
 }
 
 /**

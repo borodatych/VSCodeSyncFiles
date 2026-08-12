@@ -170,24 +170,24 @@ describe("contributes.configuration ↔ src", () => {
 describe("contributes.configuration ↔ localisation", () => {
   it("каждый %ключ% описания есть в обоих nls-бандлах", () => {
     const props = configProperties();
-    const en = readNlsBundle("package.nls.json");
-    const ru = readNlsBundle("package.nls.ru.json");
+    const base = readNlsBundle("package.nls.json");
+    const en = readNlsBundle("package.nls.en.json");
     const missing: string[] = [];
     for (const [key, prop] of Object.entries(props)) {
       const raw = prop.description ?? prop.markdownDescription;
       if (typeof raw !== "string" || !raw.startsWith("%")) continue;
       const nlsKey = raw.slice(1, -1);
-      if (!(nlsKey in en)) missing.push(`${key} → отсутствует в package.nls.json (${nlsKey})`);
-      if (!(nlsKey in ru)) missing.push(`${key} → отсутствует в package.nls.ru.json (${nlsKey})`);
+      if (!(nlsKey in base)) missing.push(`${key} → отсутствует в package.nls.json (${nlsKey})`);
+      if (!(nlsKey in en)) missing.push(`${key} → отсутствует в package.nls.en.json (${nlsKey})`);
     }
     expect(missing).toEqual([]);
   });
 
   it("оба nls-бандла содержат один и тот же набор ключей", () => {
-    const en = Object.keys(readNlsBundle("package.nls.json"));
-    const ru = Object.keys(readNlsBundle("package.nls.ru.json"));
-    expect(en.filter((k) => !ru.includes(k))).toEqual([]);
-    expect(ru.filter((k) => !en.includes(k))).toEqual([]);
+    const base = Object.keys(readNlsBundle("package.nls.json"));
+    const en = Object.keys(readNlsBundle("package.nls.en.json"));
+    expect(base.filter((k) => !en.includes(k))).toEqual([]);
+    expect(en.filter((k) => !base.includes(k))).toEqual([]);
   });
 });
 

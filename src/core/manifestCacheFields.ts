@@ -19,12 +19,14 @@ export function manifestMachineCache(m: CloudManifest): ManifestMachineCacheEntr
 
 export function entryPatchFromManifest(m: CloudManifest): Pick<
   ActiveWorkspaceEntry,
-  "tags" | "gitBranch" | "sharedIgnorePatterns" | "manifestMachines"
+  "tags" | "gitBranch" | "sharedIgnorePatterns" | "manifestMachines" | "manifestVersionHighWater"
 > {
   return {
     tags: m.tags,
     gitBranch: m.gitBranch,
     sharedIgnorePatterns: sharedIgnorePatternsOrEmpty(m),
     manifestMachines: manifestMachineCache(m),
+    // Tombstones count too: their versions compete in merges like any row's.
+    manifestVersionHighWater: m.files.reduce((max, f) => Math.max(max, f.version), 0),
   };
 }

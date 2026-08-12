@@ -66,6 +66,84 @@ export function manifestWithLinkName(input: {
 }
 
 /**
+ * A local move of a BOUND file is a rebind: only this machine's placement in
+ * the row's `bindings` changes — no blob copy, no tombstone, no `_meta` move.
+ * User action, so the row takes a Lamport bump. Pure; `null` when the row is
+ * gone or tombstoned (nothing to update in the cloud).
+ */
+export function manifestWithRebinding(input: {
+  manifest: CloudManifest;
+  manifestKey: string;
+  machineId: string;
+  /** The new machine-local placement. */
+  localRel: string;
+  nowIso: string;
+  nextVersion: number;
+  touchMachines: (machines: CloudManifest["machines"], now: string) => CloudManifest["machines"];
+}): CloudManifest | null {
+  const row = input.manifest.files.find((f) => f.path === input.manifestKey && !f.removedAt);
+  if (!row) {
+    return null;
+  }
+  const updated = {
+    ...row,
+    version: Math.max(input.nextVersion, row.version + 1),
+    bindings: {
+      ...row.bindings,
+      [input.machineId]: { path: input.localRel, boundAt: input.nowIso },
+    },
+  };
+  return {
+    ...input.manifest,
+    updatedAt: input.nowIso,
+    machines: input.touchMachines(input.manifest.machines, input.nowIso),
+    files: input.manifest.files.map((f) => (f === row ? updated : f)),
+  };
+}
+
+/**
+ * Unbinding convention (docs/v2/linkBindings.md): a machine letting go of a
+ * bound row writes the CANONICAL path back into its bindings key — never a
+ * deletion, which union-merge would resurrect. Rows already reading "not bound
+ * here" (or tombstoned, or without this machine's key) pass through untouched;
+ * returns `null` when nothing changes, so the caller can skip the PUT. Pure.
+ */
+export function manifestWithBindingsReset(input: {
+  manifest: CloudManifest;
+  machineId: string;
+  /** Canonical keys whose binding this machine releases. */
+  keys: readonly string[];
+  nowIso: string;
+  nextVersion: number;
+  touchMachines: (machines: CloudManifest["machines"], now: string) => CloudManifest["machines"];
+}): CloudManifest | null {
+  const keys = new Set(input.keys);
+  const files = input.manifest.files.map((row) => {
+    const bound = row.bindings?.[input.machineId];
+    if (!keys.has(row.path) || row.removedAt || bound === undefined || bound.path === row.path) {
+      return row;
+    }
+    return {
+      ...row,
+      version: Math.max(input.nextVersion, row.version + 1),
+      bindings: {
+        ...row.bindings,
+        [input.machineId]: { path: row.path, boundAt: input.nowIso },
+      },
+    };
+  });
+  if (files.every((f, i) => f === input.manifest.files[i])) {
+    return null;
+  }
+  return {
+    ...input.manifest,
+    updatedAt: input.nowIso,
+    machines: input.touchMachines(input.manifest.machines, input.nowIso),
+    files,
+  };
+}
+
+/**
  * Tombstone one canonical key in a manifest copy, in place: bump an existing
  * row or push a fresh tombstone when the row is already gone. Shared by
  * `removeTrackedFiles` and `untrackFileTombstoneOnly`, which differ only in

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import type { SyncTreeElement } from "./workspacesTree.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
+import type { CanonicalRenameRequest } from "../core/plan/planCanonicalRename.js";
 
 /** Payload for drag; includes tree mime so drops work within the same TreeView. */
 const MIME_PAYLOAD = "application/vnd.vscodesync.sync-tree-file-move";
@@ -13,14 +14,41 @@ export interface WorkspacesTreeDnDDeps {
     targetWorkspaceId: string;
     sources: readonly { workspaceId: string; localPath: string; workspaceNote?: string }[];
   }): Promise<void>;
+  /**
+   * Canonical path editing: a drop INSIDE one workspace moves cloud keys, not
+   * bytes — the handler funnels into the shared preview + confirm flow.
+   */
+  onCanonicalMove(args: {
+    folderRoot: string;
+    workspaceId: string;
+    requests: readonly CanonicalRenameRequest[];
+  }): Promise<void>;
 }
 
-interface FileDragRow {
+interface DragRow {
+  kind: "file" | "folder";
   folderRoot: string;
   workspaceId: string;
-  localPath: string;
+  /** File rows only — what the cross-workspace move consumes. */
+  localPath?: string;
+  /** Canonical key (file) or canonical prefix (folder) — what a canonical move consumes. */
+  canonicalKey: string;
   workspaceNote?: string;
 }
+
+function isDragRow(p: unknown): p is DragRow {
+  return (
+    typeof p === "object" &&
+    p !== null &&
+    "kind" in p &&
+    ((p as DragRow).kind === "file" || (p as DragRow).kind === "folder") &&
+    typeof (p as DragRow).folderRoot === "string" &&
+    typeof (p as DragRow).workspaceId === "string" &&
+    typeof (p as DragRow).canonicalKey === "string"
+  );
+}
+
+const lastSegment = (p: string): string => (p.includes("/") ? p.slice(p.lastIndexOf("/") + 1) : p);
 
 export class WorkspacesTreeDnD implements vscode.TreeDragAndDropController<SyncTreeElement> {
   readonly dropMimeTypes = [MIME_PAYLOAD, MIME_TREE];
@@ -29,16 +57,31 @@ export class WorkspacesTreeDnD implements vscode.TreeDragAndDropController<SyncT
   constructor(private readonly deps: WorkspacesTreeDnDDeps) {}
 
   handleDrag(source: readonly SyncTreeElement[], dataTransfer: vscode.DataTransfer): void {
-    const files = source.filter((e): e is Extract<SyncTreeElement, { kind: "file" }> => e.kind === "file");
-    if (files.length === 0) {
+    const payload: DragRow[] = [];
+    for (const e of source) {
+      if (e.kind === "file") {
+        payload.push({
+          kind: "file",
+          folderRoot: e.folderRoot.fsPath,
+          workspaceId: e.workspaceId,
+          localPath: e.localPath,
+          canonicalKey: e.manifestPath ?? e.localPath,
+          workspaceNote: e.workspaceNote,
+        });
+      } else if (e.kind === "fileFolder") {
+        payload.push({
+          kind: "folder",
+          folderRoot: e.folderRoot.fsPath,
+          workspaceId: e.workspaceId,
+          canonicalKey:
+            e.space === "canonical" ? e.localPrefix : (e.canonicalPrefix ?? e.localPrefix),
+          workspaceNote: e.workspaceNote,
+        });
+      }
+    }
+    if (payload.length === 0) {
       return;
     }
-    const payload: FileDragRow[] = files.map((f) => ({
-      folderRoot: f.folderRoot.fsPath,
-      workspaceId: f.workspaceId,
-      localPath: f.localPath,
-      workspaceNote: f.workspaceNote,
-    }));
     dataTransfer.set(MIME_PAYLOAD, new vscode.DataTransferItem(JSON.stringify(payload)));
   }
 
@@ -57,25 +100,7 @@ export class WorkspacesTreeDnD implements vscode.TreeDragAndDropController<SyncT
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return;
     }
-    if (target?.kind !== "workspace") {
-      return;
-    }
-
-    const rows: FileDragRow[] = [];
-    for (const p of parsed) {
-      if (
-        typeof p === "object" &&
-        p !== null &&
-        "folderRoot" in p &&
-        "workspaceId" in p &&
-        "localPath" in p &&
-        typeof (p as FileDragRow).folderRoot === "string" &&
-        typeof (p as FileDragRow).workspaceId === "string" &&
-        typeof (p as FileDragRow).localPath === "string"
-      ) {
-        rows.push(p as FileDragRow);
-      }
-    }
+    const rows = parsed.filter(isDragRow);
     if (rows.length === 0) {
       return;
     }
@@ -86,24 +111,64 @@ export class WorkspacesTreeDnD implements vscode.TreeDragAndDropController<SyncT
       return;
     }
 
-    if (target.folderRoot.fsPath !== folderRoot) {
-      await vscode.window.showWarningMessage(
-        "VSCodeSync: перетащите файл на workspace той же корневой папки, что и у файла.",
+    if (target === undefined || (target.kind !== "workspace" && target.kind !== "fileFolder")) {
+      // The old handler returned silently here — a dropped node just snapped
+      // back with no explanation.
+      vscode.window.setStatusBarMessage(
+        "VSCodeSync: бросать можно на воркспейс или папку дерева",
+        4000,
       );
       return;
     }
-
-    const sources = rows.filter((r) => r.workspaceId !== target.workspaceId);
-    if (sources.length === 0) {
+    if (target.folderRoot.fsPath !== folderRoot) {
+      await vscode.window.showWarningMessage(
+        "VSCodeSync: перетащите элемент на workspace той же корневой папки.",
+      );
       return;
     }
-
     if (!(await assertWorkspaceTrusted())) {
       return;
     }
 
+    // Inside ONE workspace a drop is a canonical move: keys travel, bytes stay.
+    const sameWs = rows.filter((r) => r.workspaceId === target.workspaceId);
+    if (sameWs.length > 0) {
+      const targetPrefix =
+        target.kind === "fileFolder"
+          ? target.space === "canonical"
+            ? target.localPrefix
+            : (target.canonicalPrefix ?? target.localPrefix)
+          : "";
+      const requests: CanonicalRenameRequest[] = sameWs.map((r) => {
+        const to = targetPrefix === "" ? lastSegment(r.canonicalKey) : `${targetPrefix}/${lastSegment(r.canonicalKey)}`;
+        return { scope: r.kind === "folder" ? "prefix" : "file", from: r.canonicalKey, to };
+      });
+      await this.deps.onCanonicalMove({ folderRoot, workspaceId: target.workspaceId, requests });
+      return;
+    }
+
+    // Across workspaces the existing move (remove + add) applies to files only.
+    if (target.kind !== "workspace") {
+      vscode.window.setStatusBarMessage(
+        "VSCodeSync: перенос между воркспейсами — бросайте на узел воркспейса",
+        4000,
+      );
+      return;
+    }
+    const sources = rows.filter(
+      (r): r is DragRow & { localPath: string } =>
+        r.kind === "file" && r.workspaceId !== target.workspaceId && typeof r.localPath === "string",
+    );
+    if (sources.length === 0) {
+      vscode.window.setStatusBarMessage(
+        "VSCodeSync: папки между воркспейсами не переносятся — перетащите файлы",
+        4000,
+      );
+      return;
+    }
+
     const targetLabel = target.note.trim().length > 0 ? target.note : target.workspaceId;
-    const noteOf = (r: FileDragRow): string => r.workspaceNote?.trim() ?? r.workspaceId;
+    const noteOf = (r: DragRow): string => r.workspaceNote?.trim() ?? r.workspaceId;
     let confirmMsg: string;
     if (sources.length === 1 && sources[0]) {
       const s = sources[0];

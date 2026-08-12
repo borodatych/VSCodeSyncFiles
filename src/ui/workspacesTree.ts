@@ -47,12 +47,18 @@ export type SyncTreeElement =
       folderRoot: vscode.Uri;
       workspaceId: string;
       workspaceNote: string;
-      /** Local posix prefix, no trailing slash. */
+      /** Grouping posix prefix, no trailing slash (see `space`). */
       localPrefix: string;
       name: string;
       fileCount: number;
       missingCount: number;
       canonicalPrefix?: string;
+      /**
+       * Which path space the tree groups by. In canonical mode `localPrefix`
+       * holds the CLOUD prefix and `canonicalPrefix` the local placement —
+       * commands that touch the disk must check this instead of assuming.
+       */
+      space?: "local" | "canonical";
     }
   | {
       kind: "file";
@@ -68,6 +74,8 @@ export type SyncTreeElement =
       /** machineId currently soft-locking this file (editingBy from manifest, excluding self). */
       editingBy?: string;
       editingByName?: string;
+      /** Label override — canonical basename in canonical mode. */
+      displayName?: string;
     };
 
 function shortWorkspaceId(id: string): string {
@@ -99,6 +107,23 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
 
   /** If false, workspaces tagged `archived` are hidden unless tag filter includes archived or this flag is on. */
   private _showArchived = false;
+
+  /**
+   * Canonical mode: the tree groups by CLOUD paths (the space canonical-path
+   * edits and the seeding scenario live in) instead of local placement; the
+   * ⇄ badge flips to point at this machine's placement.
+   */
+  private _canonicalMode = false;
+
+  getCanonicalMode(): boolean {
+    return this._canonicalMode;
+  }
+
+  setCanonicalMode(v: boolean): void {
+    if (this._canonicalMode === v) return;
+    this._canonicalMode = v;
+    this.refresh();
+  }
 
   /** Имя машины из globalConfig — для pathMapping при построении дерева файлов. */
   private _machineName: string | undefined;
@@ -401,6 +426,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       );
       // One badge per folder instead of one per file: `⇄ canonical/prefix`
       // explains at a glance why this folder syncs under another name.
+      const canonSpace = element.space === "canonical";
       const parts = [`${String(element.fileCount)} файл(ов)`];
       if (element.missingCount > 0) {
         parts.push(`${String(element.missingCount)} нет на диске`);
@@ -411,7 +437,7 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       item.description = parts.join(" · ");
       item.tooltip =
         element.canonicalPrefix !== undefined
-          ? `${element.workspaceNote}\n${element.localPrefix}\n⇄ в облаке: ${element.canonicalPrefix}`
+          ? `${element.workspaceNote}\n${element.localPrefix}\n⇄ ${canonSpace ? "у меня" : "в облаке"}: ${element.canonicalPrefix}`
           : `${element.workspaceNote}\n${element.localPrefix}`;
       item.contextValue =
         element.canonicalPrefix !== undefined ? "vscodeSync.fileFolderBound" : "vscodeSync.fileFolder";
@@ -505,9 +531,11 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       return item;
     }
 
-    const basename = element.localPath.includes("/")
-      ? element.localPath.slice(element.localPath.lastIndexOf("/") + 1)
-      : element.localPath;
+    const basename =
+      element.displayName ??
+      (element.localPath.includes("/")
+        ? element.localPath.slice(element.localPath.lastIndexOf("/") + 1)
+        : element.localPath);
     const abs =
       element.resolvedFsPath ??
       path.join(element.folderRoot.fsPath, ...element.localPath.split("/"));
@@ -731,7 +759,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
     const rows = wc.files.filter((f) => f.workspaceId === ws.workspaceId);
     const note = wc.activeWorkspaces.find((a) => a.workspaceId === ws.workspaceId)?.workspaceNote ?? ws.note;
     const mn = this._machineName ?? "";
-    const toFileElement = (localPath: string, src: (typeof rows)[number] | undefined): SyncTreeElement => {
+    const canonical = this._canonicalMode;
+    const toFileElement = (
+      src: (typeof rows)[number] | undefined,
+      fallbackLocalPath: string,
+      displayName?: string,
+    ): SyncTreeElement => {
+      const localPath = src?.localPath ?? fallbackLocalPath;
       let resolvedFsPath: string | undefined;
       try {
         resolvedFsPath = trackedLocalAbsolutePath(ws.folderRoot.fsPath, wc.pathMapping, mn, localPath);
@@ -749,17 +783,35 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         syncStatus: src?.syncStatus,
         editingBy: src?.editingBy,
         editingByName: src?.editingByName,
+        ...(displayName !== undefined ? { displayName } : {}),
       };
     };
 
-    if (parentPrefix === undefined && !treeGroupingEnabled()) {
-      return rows.map((f) => toFileElement(f.localPath, f));
+    if (parentPrefix === undefined && !treeGroupingEnabled() && !canonical) {
+      return rows.map((f) => toFileElement(f, f.localPath));
     }
 
-    const byPath = new Map(rows.map((f) => [f.localPath, f]));
-    return planFileTreeChildren(rows, parentPrefix ?? "").map((node) =>
+    // Canonical mode flips the grouping space: the tree shows the CLOUD
+    // structure (the space path edits and the seeding scenario live in), and
+    // the ⇄ badge points back at this machine's placement instead.
+    const planRows = canonical
+      ? rows.map((f) => {
+          const key = f.manifestPath ?? f.localPath;
+          return {
+            ...f,
+            localPath: key,
+            manifestPath: key === f.localPath ? undefined : f.localPath,
+          };
+        })
+      : rows;
+    const byPlanPath = new Map(planRows.map((f, i) => [f.localPath, rows[i]]));
+    return planFileTreeChildren(planRows, parentPrefix ?? "").map((node) =>
       node.kind === "file"
-        ? toFileElement(node.localPath, byPath.get(node.localPath))
+        ? toFileElement(
+            byPlanPath.get(node.localPath),
+            node.localPath,
+            canonical ? node.name : undefined,
+          )
         : {
             kind: "fileFolder" as const,
             folderRoot: ws.folderRoot,
@@ -769,7 +821,10 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
             name: node.name,
             fileCount: node.fileCount,
             missingCount: node.missingCount,
+            // In canonical mode the planner's "canonical" side is the swapped
+            // one — this machine's placement; consumers key off `space`.
             canonicalPrefix: node.canonicalPrefix,
+            space: canonical ? ("canonical" as const) : ("local" as const),
           },
     );
   }

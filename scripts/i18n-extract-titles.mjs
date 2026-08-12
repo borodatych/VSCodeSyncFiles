@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Extract every command title from package.json into package.nls.json /
-// package.nls.ru.json placeholders. Idempotent: titles that are already
+// Extract every command title from package.json into package.nls.json (Russian base) /
+// package.nls.en.json placeholders. Idempotent: titles that are already
 // %placeholders% are left alone.
 //
 // Run: `node scripts/i18n-extract-titles.mjs`
@@ -12,8 +12,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 
 const pkgPath = join(root, "package.json");
-const enPath = join(root, "package.nls.json");
-const ruPath = join(root, "package.nls.ru.json");
+const enPath = join(root, "package.nls.en.json");
+const ruPath = join(root, "package.nls.json");
 
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 const en = JSON.parse(readFileSync(enPath, "utf8"));

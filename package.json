@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -891,6 +891,35 @@
         "title": "%cmd.treeFolderBind.title%"
       },
       {
+        "command": "vscodesync.treeEditCanonicalPath",
+        "title": "%cmd.treeEditCanonicalPath.title%"
+      },
+      {
+        "command": "vscodesync.toggleTreeCanonicalMode",
+        "title": "%cmd.toggleTreeCanonicalMode.title%",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "vscodesync.treeRenameCloudFolder",
+        "title": "%cmd.treeRenameCloudFolder.title%"
+      },
+      {
+        "command": "vscodesync.editWorkspacePaths",
+        "title": "%cmd.editWorkspacePaths.title%"
+      },
+      {
+        "command": "vscodesync.applyWorkspacePathsEdit",
+        "title": "%cmd.applyWorkspacePathsEdit.title%"
+      },
+      {
+        "command": "vscodesync.resumeCanonicalRename",
+        "title": "%cmd.resumeCanonicalRename.title%"
+      },
+      {
+        "command": "vscodesync.undoCanonicalRename",
+        "title": "%cmd.undoCanonicalRename.title%"
+      },
+      {
         "command": "vscodesync.treeFolderPull",
         "title": "%cmd.treeFolderPull.title%"
       },
@@ -1556,6 +1585,18 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "vscodesync.treeEditCanonicalPath",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeRenameCloudFolder",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.editWorkspacePaths",
+          "when": "false"
+        },
+        {
           "command": "vscodesync.treeWorkspacePushAll",
           "when": "false"
         },
@@ -1707,6 +1748,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "vscodesync.toggleTreeCanonicalMode",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@1.5"
+        },
+        {
           "command": "vscodesync.filterWorkspaces",
           "when": "view == vscodesync.workspaces",
           "group": "navigation@2"
@@ -1840,37 +1886,37 @@
         },
         {
           "command": "vscodesync.treeFilePush",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@1"
         },
         {
           "command": "vscodesync.treeFilePull",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2"
         },
         {
           "command": "vscodesync.diffWithCloud",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.65"
         },
         {
           "command": "vscodesync.treeFileShowHistory",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.5"
         },
         {
           "command": "vscodesync.treeFileOpenInCloud",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@2.6"
         },
         {
           "command": "vscodesync.sendQuickTransfer",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@3"
         },
         {
           "command": "vscodesync.removeFromSync",
-          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file/",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
           "group": "file@4"
         },
         {
@@ -1897,6 +1943,21 @@
           "command": "vscodesync.treeFolderBind",
           "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
           "group": "manage@1"
+        },
+        {
+          "command": "vscodesync.treeRenameCloudFolder",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.fileFolder/",
+          "group": "manage@2"
+        },
+        {
+          "command": "vscodesync.treeEditCanonicalPath",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.file(Locked|Conflict|Pending|Missing)?$/",
+          "group": "file@2.7"
+        },
+        {
+          "command": "vscodesync.editWorkspacePaths",
+          "when": "view == vscodesync.workspaces && viewItem =~ /^vscodeSync\\.workspace(Active|Suspended)(Archived)?$/",
+          "group": "manage@4"
         }
       ],
       "vscodesync.submenu": [

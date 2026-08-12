@@ -76,6 +76,18 @@ export class MockCloudProvider implements ICloudProvider {
     this.files.delete(cloudPath);
   }
 
+  async moveFile(fromCloudPath: string, toCloudPath: string): Promise<UploadResult> {
+    await Promise.resolve();
+    const rec = this.files.get(fromCloudPath);
+    if (!rec) {
+      throw new ProviderError("NOT_FOUND", `missing ${fromCloudPath}`);
+    }
+    const etag = this.nextEtag();
+    this.files.set(toCloudPath, { content: rec.content, etag });
+    this.files.delete(fromCloudPath);
+    return { etag };
+  }
+
   async listFolder(cloudPath: string): Promise<FileMetadata[]> {
     await Promise.resolve();
     const prefix = cloudPath.endsWith("/") ? cloudPath : `${cloudPath}/`;

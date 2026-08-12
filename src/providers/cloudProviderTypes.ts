@@ -111,6 +111,14 @@ export interface ICloudProvider {
    * to {@link deleteFile}. Never call from an automatic path.
    */
   purgeFilePermanently?(cloudPath: string): Promise<void>;
+  /**
+   * Server-side move — metadata-only on every real provider, so a folder
+   * rename of N blobs costs N cheap calls instead of N full
+   * download+uploads. Optional: canonical renames fall back to
+   * transcode-copy+delete when absent, and MUST fall back themselves when the
+   * move would change the wire form (hash category or gzip decision flips).
+   */
+  moveFile?(fromCloudPath: string, toCloudPath: string): Promise<UploadResult>;
   listFolder(cloudPath: string): Promise<FileMetadata[]>;
   createFolder(cloudPath: string): Promise<void>;
   /**

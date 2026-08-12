@@ -90,3 +90,85 @@ describe("planTrackingDiff", () => {
     expect(d).toEqual({ adopt: [], rename: [], prune: [] });
   });
 });
+
+describe("planTrackingDiff — кэш идентичности (linkId)", () => {
+  it("adopt несёт linkId строки манифеста — локальный кэш заполняется при адопции", () => {
+    const d = planTrackingDiff(
+      makeInput({ manifestFiles: [{ path: "a.ts", linkId: "aabbccdd00112233" }] }),
+    );
+    expect(d.adopt[0].linkId).toBe("aabbccdd00112233");
+  });
+
+  it("rename несёт linkId наследника", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [{ path: "b.ts", renamedFrom: "a.ts", linkId: "aabbccdd00112233" }],
+        trackedPaths: ["a.ts"],
+      }),
+    );
+    expect(d.rename[0]).toMatchObject({ from: "a.ts", to: "b.ts", linkId: "aabbccdd00112233" });
+  });
+
+  it("легаси-строка без linkId — поле отсутствует, не undefined-мусор", () => {
+    const d = planTrackingDiff(makeInput({ manifestFiles: [{ path: "a.ts" }] }));
+    expect("linkId" in d.adopt[0]).toBe(false);
+  });
+});
+
+describe("planTrackingDiff — фаза linkId-реассоциации", () => {
+  it("prune+adopt с общей идентичностью превращается в rename (офлайн дольше 30 дней, renamedFrom вычищен)", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [{ path: "lib/a.ts", linkId: "a".repeat(16) }],
+        trackedPaths: ["src/a.ts"],
+        trackedLinkIdOf: (key) => (key === "src/a.ts" ? "a".repeat(16) : undefined),
+      }),
+    );
+    expect(d.rename).toEqual([
+      { from: "src/a.ts", to: "lib/a.ts", wireGzip: false, localHash: "H", linkId: "a".repeat(16) },
+    ]);
+    expect(d.adopt).toEqual([]);
+    expect(d.prune).toEqual([]);
+  });
+
+  it("цепочка a→b→c: renamedFrom указывает на b (не tracked), но идентичность находит a", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [{ path: "c.ts", renamedFrom: "b.ts", linkId: "c".repeat(16) }],
+        trackedPaths: ["a.ts"],
+        trackedLinkIdOf: (key) => (key === "a.ts" ? "c".repeat(16) : undefined),
+      }),
+    );
+    expect(d.rename).toHaveLength(1);
+    expect(d.rename[0]).toMatchObject({ from: "a.ts", to: "c.ts" });
+    expect(d.prune).toEqual([]);
+  });
+
+  it("неоднозначная идентичность (дубль носителей) — пара НЕ строится", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [
+          { path: "x/a.ts", linkId: "d".repeat(16) },
+          { path: "y/a.ts", linkId: "d".repeat(16) },
+        ],
+        trackedPaths: ["src/a.ts"],
+        trackedLinkIdOf: () => "d".repeat(16),
+      }),
+    );
+    expect(d.rename).toEqual([]);
+    expect(d.adopt).toHaveLength(2);
+    expect(d.prune).toEqual(["src/a.ts"]);
+  });
+
+  it("renamedFrom-пара из фазы 1 не задваивается фазой 2", () => {
+    const d = planTrackingDiff(
+      makeInput({
+        manifestFiles: [{ path: "b.ts", renamedFrom: "a.ts", linkId: "e".repeat(16) }],
+        trackedPaths: ["a.ts"],
+        trackedLinkIdOf: (key) => (key === "a.ts" ? "e".repeat(16) : undefined),
+      }),
+    );
+    expect(d.rename).toHaveLength(1);
+    expect(d.prune).toEqual([]);
+  });
+});

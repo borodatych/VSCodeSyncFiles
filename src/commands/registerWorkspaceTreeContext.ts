@@ -22,6 +22,7 @@ import {
   WORKSPACES_TAG_FILTERS_KEY,
   applyWorkspacesTreeFilterChrome,
 } from "../ui/workspacesTreeFilterState.js";
+import { promptFolderIntakeAfterAttach } from "../ui/folderIntakePrompt.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { summarisePushForToast } from "../core/bulkPushWizard.js";
@@ -197,8 +198,18 @@ export function registerWorkspaceTreeContextCommands(
         workspacesTree.refresh();
         try {
           await runWithEngine(async (engine) => {
-            await engine.attachCloudWorkspace(el.workspaceId);
             const label = el.workspaceNote.trim().length > 0 ? el.workspaceNote : el.workspaceId;
+            // Intake prompt BEFORE the initial adopt/pull — the placement rules
+            // it writes must govern where the existing files land.
+            await engine.attachCloudWorkspace(el.workspaceId, {
+              beforeInitialAdopt: () =>
+                promptFolderIntakeAfterAttach(
+                  runWithEngine,
+                  el.anchorFolder.fsPath,
+                  el.workspaceId,
+                  label,
+                ).then(() => undefined),
+            });
             void vscode.window.showInformationMessage(
               `VSCodeSync: подключён workspace «${label}» (${el.workspaceId})`,
             );

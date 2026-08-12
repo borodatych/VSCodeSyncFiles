@@ -8,7 +8,7 @@
  * been deleted from the schema — VS Code rejects a write to an unregistered
  * key, so the webview reported "saved" while the value went nowhere.
  *
- * Descriptions come from the same `package.nls.ru.json` VS Code itself uses,
+ * Descriptions come from the same `package.nls.json` (Russian base) VS Code itself uses,
  * so the panel and the built-in Settings UI cannot disagree about wording.
  *
  * Run automatically before esbuild via `npm run compile`.
@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const nls = JSON.parse(readFileSync(join(root, "package.nls.ru.json"), "utf8"));
-const nlsEn = JSON.parse(readFileSync(join(root, "package.nls.json"), "utf8"));
+const nls = JSON.parse(readFileSync(join(root, "package.nls.json"), "utf8"));
+const nlsEn = JSON.parse(readFileSync(join(root, "package.nls.en.json"), "utf8"));
 
 const props = pkg.contributes?.configuration?.properties ?? {};
 const PREFIX = "vscodesync.";

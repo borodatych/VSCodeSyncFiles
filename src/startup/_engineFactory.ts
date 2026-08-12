@@ -26,6 +26,7 @@ import {
   planQuotaExhaustion,
   type TrackedFileWeight,
 } from "../core/quotaExhaustionPlanner.js";
+import { inferCommonPrefixMove } from "../core/canonicalRename.js";
 import { encryptBuffer, decryptBuffer } from "../core/encryption.js";
 import { SyncEngine } from "../core/syncEngine.js";
 import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js";
@@ -566,31 +567,68 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
           }
         })();
       },
-      // Link Bindings (stage 3): a canonical rename replayed from another
-      // machine keeps this machine's placement; moving the bytes to the new
-      // structure is an explicit click, never automatic.
-      onCanonicalRenameReplayed: ({ from, to, localPlacement }) => {
+      // Canonical path editing: a rename replayed from another machine keeps
+      // this machine's placement; moving the bytes to the new structure is an
+      // explicit click, never automatic. One toast per adopt pass — a folder
+      // move of N files must not fire N modals.
+      onCanonicalRenamesReplayed: (_wsId, notices) => {
         void (async () => {
+          const prefix = inferCommonPrefixMove(notices);
+          const message =
+            notices.length === 1
+              ? `VSCodeSync: на другой машине файл переименован «${notices[0].from}» → «${notices[0].to}». У вас он остаётся «${notices[0].localPlacement}».`
+              : prefix
+                ? `VSCodeSync: в облаке папка «${prefix.from}» переименована в «${prefix.to}» (${String(notices.length)} файлов). Пути обновлены, локальные файлы не тронуты.`
+                : `VSCodeSync: в облаке обновлены пути ${String(notices.length)} файлов. Локальные файлы не тронуты.`;
           const choice = await vscode.window.showInformationMessage(
-            `VSCodeSync: на другой машине файл переименован «${from}» → «${to}». У вас он остаётся «${localPlacement}».`,
+            message,
             "Переместить у меня",
             "Оставить мою структуру",
           );
           if (choice !== "Переместить у меня") {
             return;
           }
-          try {
-            const oldUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...localPlacement.split("/"));
-            const newUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...to.split("/"));
-            await vscode.workspace.fs.rename(oldUri, newUri, { overwrite: false });
-            // onDidRenameFiles picks the move up; the file is bound, so the
-            // engine's rebind branch re-keys it without further questions.
-          } catch (e) {
-            void vscode.window.showErrorMessage(
-              `VSCodeSync: не удалось переместить файл — ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "VSCodeSync: перенос файлов по новой структуре",
+              cancellable: true,
+            },
+            async (progress, token) => {
+              let done = 0;
+              const failed: string[] = [];
+              for (const n of notices) {
+                if (token.isCancellationRequested) break;
+                try {
+                  const oldUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...n.localPlacement.split("/"));
+                  const newUri = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), ...n.to.split("/"));
+                  const parent = vscode.Uri.joinPath(newUri, "..");
+                  await vscode.workspace.fs.createDirectory(parent);
+                  await vscode.workspace.fs.rename(oldUri, newUri, { overwrite: false });
+                  // onDidRenameFiles picks each move up; the file is bound, so
+                  // the engine's rebind branch re-keys it without questions.
+                } catch (e) {
+                  failed.push(`${n.localPlacement}: ${e instanceof Error ? e.message : String(e)}`);
+                }
+                done++;
+                progress.report({ increment: 100 / notices.length, message: `${String(done)}/${String(notices.length)}` });
+              }
+              if (failed.length > 0) {
+                void vscode.window.showErrorMessage(
+                  `VSCodeSync: не перенесено ${String(failed.length)} файлов — ${failed[0]}${failed.length > 1 ? " …" : ""}`,
+                );
+              }
+            },
+          );
         })();
+      },
+      // Losing a concurrent rename race must be visible — the merge decided
+      // deterministically, but the user's intent went elsewhere.
+      onCanonicalRenameOverridden: (_wsId, moves) => {
+        const first = moves[0];
+        void vscode.window.showWarningMessage(
+          `VSCodeSync: переименование «${first.from}» → «${first.to}»${moves.length > 1 ? ` (и ещё ${String(moves.length - 1)})` : ""} переиграно более свежей правкой с другой машины. Дерево показывает итоговую структуру.`,
+        );
       },
       onRemoteWorkspaceDeleted: (
         workspaceId: string,
