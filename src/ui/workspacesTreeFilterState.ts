@@ -14,6 +14,11 @@ import type { WorkspacesTreeProvider, SyncTreeElement } from "./workspacesTree.j
 export const WORKSPACES_NOTE_FILTER_KEY = "vscodesync.workspacesNoteFilter";
 export const WORKSPACES_TAG_FILTERS_KEY = "vscodesync.workspacesTagFilters";
 export const WORKSPACES_SHOW_ARCHIVED_KEY = "vscodesync.workspacesShowArchived";
+/**
+ * Which path space the file tree groups by. Absent ⇒ the workspace's own
+ * (cloud) structure — what every other machine receives when it seeds.
+ */
+export const WORKSPACES_CANONICAL_MODE_KEY = "vscodesync.workspacesCanonicalMode";
 
 /** Walk every open VS Code folder and gather a sorted union of tags from
  * the cached `vscodesync.json` entries. Case-insensitive dedup. */

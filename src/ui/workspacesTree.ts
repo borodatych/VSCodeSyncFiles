@@ -109,11 +109,17 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
   private _showArchived = false;
 
   /**
-   * Canonical mode: the tree groups by CLOUD paths (the space canonical-path
-   * edits and the seeding scenario live in) instead of local placement; the
-   * ⇄ badge flips to point at this machine's placement.
+   * Canonical mode: the tree groups by the WORKSPACE's own paths — the space
+   * canonical-path edits and seeding live in — instead of this machine's
+   * placement; the ⇄ badge flips to point at the local placement.
+   *
+   * On by default: the workspace tree should show the workspace, i.e. what a
+   * second machine receives when it seeds. Grouping by local placement made a
+   * cloud restructure look like it had not happened at all (the bytes never
+   * move — only keys do). For an unbound file both spaces are identical, so
+   * the common case looks the same either way.
    */
-  private _canonicalMode = false;
+  private _canonicalMode = true;
 
   getCanonicalMode(): boolean {
     return this._canonicalMode;
@@ -472,7 +478,10 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         item.iconPath = new vscode.ThemeIcon("sync~spin");
         item.contextValue = "vscodeSync.workspaceLoading";
       } else {
-        item.description = `${shortWorkspaceId(element.workspaceId)}${tagPart}`.slice(0, 96);
+        // Which path space the children are grouped by is not guessable from
+        // the paths themselves once the structures diverge — say it.
+        const spacePart = this._canonicalMode ? "" : " · как у меня";
+        item.description = `${shortWorkspaceId(element.workspaceId)}${tagPart}${spacePart}`.slice(0, 96);
         item.iconPath = new vscode.ThemeIcon(
           "cloud",
           workspaceHealthThemeColor(element.health.level),
@@ -488,8 +497,11 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
           : "";
       const machLines = formatMachinePresenceLines(element.manifestMachines, this._localMachineId);
       const machBlock = `\n\n**Машины (lastSeen в манифесте)**\n\n${machLines.map((l) => `- ${l}`).join("\n")}`;
+      const spaceBlock = this._canonicalMode
+        ? "\n\nФайлы показаны структурой воркспейса — по ней раскладываются другие машины при засеве."
+        : "\n\nФайлы показаны так, как лежат на этой машине. Структура воркспейса может отличаться — переключатель ⇄ в заголовке панели.";
       item.tooltip = new vscode.MarkdownString(
-        `**${element.note}**\n\n\`${element.workspaceId}\`\n\n${element.folderRoot.fsPath}${tagLine}${healthBlock}${machBlock}`,
+        `**${element.note}**\n\n\`${element.workspaceId}\`\n\n${element.folderRoot.fsPath}${spaceBlock}${tagLine}${healthBlock}${machBlock}`,
       );
       return item;
     }
@@ -787,13 +799,9 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       };
     };
 
-    if (parentPrefix === undefined && !treeGroupingEnabled() && !canonical) {
-      return rows.map((f) => toFileElement(f, f.localPath));
-    }
-
-    // Canonical mode flips the grouping space: the tree shows the CLOUD
-    // structure (the space path edits and the seeding scenario live in), and
-    // the ⇄ badge points back at this machine's placement instead.
+    // Canonical mode flips the grouping space: the tree shows the WORKSPACE's
+    // own structure (the space path edits and seeding live in), and the ⇄
+    // badge points back at this machine's placement instead.
     const planRows = canonical
       ? rows.map((f) => {
           const key = f.manifestPath ?? f.localPath;
@@ -804,6 +812,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
           };
         })
       : rows;
+
+    // `groupFilesByFolder: false` means a flat list in EITHER space — the
+    // setting is about grouping, not about which paths are shown.
+    if (parentPrefix === undefined && !treeGroupingEnabled()) {
+      return planRows.map((f, i) => toFileElement(rows[i], f.localPath, canonical ? f.localPath : undefined));
+    }
     const byPlanPath = new Map(planRows.map((f, i) => [f.localPath, rows[i]]));
     return planFileTreeChildren(planRows, parentPrefix ?? "").map((node) =>
       node.kind === "file"
