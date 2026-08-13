@@ -1,11 +1,13 @@
 /**
  * v2.6.7 — restore persisted Workspaces tree filters.
  *
- * Each VS Code window keeps three globalState keys for the Workspaces tree:
+ * Each VS Code window keeps four globalState keys for the Workspaces tree:
  *
  *   - `WORKSPACES_NOTE_FILTER_KEY` — last typed substring filter.
  *   - `WORKSPACES_TAG_FILTERS_KEY` — `string[]` of selected tags.
  *   - `WORKSPACES_SHOW_ARCHIVED_KEY` — boolean toggle.
+ *   - `WORKSPACES_CANONICAL_MODE_KEY` — which path space the file tree groups
+ *     by; absent means the default (the workspace's own structure).
  *
  * On activate the extension reads these and seeds the tree provider so the
  * filter chip / archive visibility survives a window restart. Pure shape
@@ -14,6 +16,7 @@
  */
 import type * as vscode from "vscode";
 import {
+  WORKSPACES_CANONICAL_MODE_KEY,
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_SHOW_ARCHIVED_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
@@ -32,6 +35,10 @@ export function restoreWorkspacesTreeFilters(
   workspacesTree.setTagFilters(tagList);
 
   workspacesTree.setShowArchived(context.globalState.get(WORKSPACES_SHOW_ARCHIVED_KEY) === true);
+
+  // Absent key ⇒ keep the default (workspace structure). Only an explicit
+  // `false` switches the tree back to this machine's placement.
+  workspacesTree.setCanonicalMode(context.globalState.get(WORKSPACES_CANONICAL_MODE_KEY) !== false);
 }
 
 export function sanitiseTagList(input: unknown): string[] {

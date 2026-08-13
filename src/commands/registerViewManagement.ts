@@ -15,6 +15,7 @@ import * as vscode from "vscode";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
 import {
+  WORKSPACES_CANONICAL_MODE_KEY,
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
   WORKSPACES_SHOW_ARCHIVED_KEY,
@@ -154,15 +155,17 @@ export function registerViewManagementCommands(
       await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
     }),
 
-    // Canonical path editing: flip the tree between this machine's placement
-    // and the cloud structure — the space the path edits live in.
-    vscode.commands.registerCommand("vscodesync.toggleTreeCanonicalMode", () => {
+    // Canonical path editing: flip the tree between the workspace's own
+    // structure (the default — what other machines seed by) and this
+    // machine's placement.
+    vscode.commands.registerCommand("vscodesync.toggleTreeCanonicalMode", async () => {
       const next = !workspacesTree.getCanonicalMode();
       workspacesTree.setCanonicalMode(next);
+      await context.globalState.update(WORKSPACES_CANONICAL_MODE_KEY, next);
       vscode.window.setStatusBarMessage(
         next
-          ? "VSCodeSync: дерево показывает канонические (облачные) пути"
-          : "VSCodeSync: дерево показывает локальное размещение",
+          ? "VSCodeSync: дерево показывает структуру воркспейса (по ней идёт засев на других машинах)"
+          : "VSCodeSync: дерево показывает, как файлы лежат на этой машине",
         4000,
       );
     }),
