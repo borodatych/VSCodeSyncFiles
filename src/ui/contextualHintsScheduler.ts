@@ -53,6 +53,7 @@ export function registerContextualHintsScheduler(deps: ContextualHintsSchedulerD
     if (folders.length === 0) return;
 
     let conflictCount = 0;
+    let missingLocalCount = 0;
     let activeCount = 0;
     let allFrozen = true;
     for (const folder of folders) {
@@ -60,6 +61,7 @@ export function registerContextualHintsScheduler(deps: ContextualHintsSchedulerD
         const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
         for (const f of wc.files) {
           if (f.syncStatus === "conflict") conflictCount += 1;
+          if (f.syncStatus === "missing_local") missingLocalCount += 1;
         }
         for (const ws of wc.activeWorkspaces) {
           activeCount += 1;
@@ -90,6 +92,7 @@ export function registerContextualHintsScheduler(deps: ContextualHintsSchedulerD
     const nowMs = Date.now();
     const hints: ContextualHint[] = planContextualHints({
       conflictCount,
+      missingLocalCount,
       allWorkspacesFrozen: allFrozen,
       activeWorkspaceCount: activeCount,
       autoSyncOffSinceMs,

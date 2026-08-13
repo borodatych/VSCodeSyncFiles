@@ -20,6 +20,27 @@ describe("planContextualHints", () => {
     expect(hints[0]?.severity).toBe("warn");
   });
 
+  it("files_missing_local предлагает привязку папки с порога", () => {
+    const hints = planContextualHints({ ...base(), missingLocalCount: 3 });
+    expect(hints).toHaveLength(1);
+    expect(hints[0]?.id).toBe("files_missing_local");
+    expect(hints[0]?.severity).toBe("info");
+    expect(hints[0]?.actionCommandId).toBe("vscodesync.bindLocalFolder");
+  });
+
+  it("ниже порога про отсутствующие файлы молчим", () => {
+    expect(planContextualHints({ ...base(), missingLocalCount: 2 })).toHaveLength(0);
+    expect(planContextualHints({ ...base() })).toHaveLength(0);
+  });
+
+  it("порог отсутствующих файлов настраивается", () => {
+    const hints = planContextualHints(
+      { ...base(), missingLocalCount: 1 },
+      { missingLocalThreshold: 1 },
+    );
+    expect(hints.map((h) => h.id)).toEqual(["files_missing_local"]);
+  });
+
   it("no many_conflicts below threshold", () => {
     expect(planContextualHints({ ...base(), conflictCount: 4 })).toHaveLength(0);
   });

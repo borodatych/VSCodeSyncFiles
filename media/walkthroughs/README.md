@@ -1,5 +1,11 @@
 # Onboarding video walkthroughs (v2.20.5)
 
+> **Снято с повестки 2026-08-13 (решение владельца).** Recordings are not
+> planned: the product is niche and not being sold, so screen capture is spend
+> without return. Everything below stays valid and ready for a swap-in, but do
+> not schedule, suggest or track it — only revisit on an explicit request.
+> Illustrate walkthrough steps with markdown media instead.
+
 Three short clips embedded in the VSCodeSync «getStarted» walkthrough.
 The spec lives in [`src/core/walkthroughVideoSpec.ts`](../../src/core/walkthroughVideoSpec.ts);
 this directory holds the actual recordings + their markdown wrappers.

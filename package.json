@@ -18,6 +18,7 @@
   },
   "icon": "media/vscodesync.png",
   "categories": [
+    "SCM Providers",
     "Other"
   ],
   "main": "./dist/extension.js",
@@ -749,6 +750,17 @@
             ]
           },
           {
+            "id": "crossMachineStructure",
+            "title": "Структура папок может отличаться",
+            "description": "На работе проект лежит в `promed/`, дома тот же самый в `php/` — это не повод отказываться от синхронизации. ПКМ по локальной папке в Explorer → «VSCodeSync: Привязать локальную папку к облачной…», и расширение запомнит, что здесь она называется иначе.\n\n[Привязать папку](command:vscodesync.bindLocalFolder)",
+            "media": {
+              "markdown": "media/steps/crossMachineStructure.md"
+            },
+            "completionEvents": [
+              "onCommand:vscodesync.bindLocalFolder"
+            ]
+          },
+          {
             "id": "snapshot",
             "title": "Сделайте снапшот",
             "description": "Снапшот — это точка восстановления для всего workspace. Можно настроить расписание через `vscodesync.snapshotSchedule` (например, `daily 03:00`).\n\n[Создать снапшот](command:vscodesync.createSnapshot)",
@@ -802,7 +814,7 @@
     "viewsWelcome": [
       {
         "view": "vscodesync.workspaces",
-        "contents": "В этом проекте пока нет подключённых workspace.\n\n[Создать первый workspace](command:vscodesync.createWorkspace)\n[Подключить существующий](command:vscodesync.connectCloudWorkspace)\n\nНе уверены с чего начать? Запустите [онбординг](command:vscodesync.startOnboarding) или откройте [гайд по провайдерам](command:vscodesync.showProviderSetupGuide).",
+        "contents": "В этом проекте пока нет подключённых workspace.\n\n[Создать первый workspace](command:vscodesync.createWorkspace)\n[Подключить существующий](command:vscodesync.connectCloudWorkspace)\n\nНе уверены с чего начать? Запустите [онбординг](command:vscodesync.startOnboarding) или откройте [гайд по провайдерам](command:vscodesync.showProviderSetupGuide).\n\nСтруктура папок на машинах не совпадает? Это не помеха: папку можно [привязать под другим именем](command:vscodesync.bindLocalFolder).",
         "when": "workspaceFolderCount != 0"
       },
       {
@@ -2254,5 +2266,23 @@
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev45.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "keywords": [
+    "sync",
+    "synchronization",
+    "settings sync",
+    "backup",
+    "cloud",
+    "onedrive",
+    "google drive",
+    "dropbox",
+    "yandex disk",
+    "dotfiles",
+    "multi-machine",
+    "snapshots"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
   }
 }
