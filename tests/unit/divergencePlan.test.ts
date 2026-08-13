@@ -257,6 +257,28 @@ describe("divergenceRowKey", () => {
   });
 });
 
+describe("parseDivergenceRequest — построчные действия", () => {
+  it("row с направлением и ключом принимается", () => {
+    expect(parseDivergenceRequest({ kind: "row", direction: "pull", key: "a\u0000b\u0000c.ts" })).toEqual({
+      kind: "row",
+      direction: "pull",
+      key: "a\u0000b\u0000c.ts",
+    });
+    expect(parseDivergenceRequest({ kind: "row", direction: "push", key: "k" })).toEqual({
+      kind: "row",
+      direction: "push",
+      key: "k",
+    });
+  });
+
+  it("чужое направление и пустой ключ отбрасываются", () => {
+    expect(parseDivergenceRequest({ kind: "row", direction: "conflict", key: "k" })).toBeNull();
+    expect(parseDivergenceRequest({ kind: "row", direction: "pull", key: "" })).toBeNull();
+    expect(parseDivergenceRequest({ kind: "row", direction: "pull" })).toBeNull();
+    expect(parseDivergenceRequest({ kind: "row", key: "k" })).toBeNull();
+  });
+});
+
 describe("parseDivergenceRequest — вебвью не доверяем", () => {
   it("принимает refresh", () => {
     expect(parseDivergenceRequest({ kind: "refresh" })).toEqual({ kind: "refresh" });
