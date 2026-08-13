@@ -124,6 +124,11 @@ export function registerWorkspaceTreeWiring(
     treeDataProvider: workspacesTree,
     showCollapseAll: false,
     dragAndDropController: workspacesTreeDnD,
+    // A hundred tracked files make one-by-one actions the bottleneck —
+    // especially with the "only diverged" filter on, where everything visible
+    // is something the user wants to act on. Tree context commands receive
+    // `(clickedItem, selection[])`.
+    canSelectMany: true,
   });
   context.subscriptions.push(treeView);
   void applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
