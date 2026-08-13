@@ -275,5 +275,6 @@
   "cmd.verifyBackup.title": "VSCodeSync: Проверить резервную копию во втором облаке",
   "cfg.backup.verifyEnabled.description": "Периодически проверять, что копия во втором облаке полная и свежая. Только чтение: расхождения показываются, ничего не копируется без вашей команды.",
   "cfg.backup.verifyIntervalDays.description": "Как часто проверять резервную копию (в днях). После неудачной проверки следующая выполняется раньше.",
-  "cmd.showQuotaDashboard.title": "VSCodeSync: Квота провайдера — сколько запросов израсходовано"
+  "cmd.showQuotaDashboard.title": "VSCodeSync: Квота провайдера — сколько запросов израсходовано",
+  "cmd.openVisualMerger.title": "VSCodeSync: Слияние по участкам (3 панели)"
 }

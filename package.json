@@ -1624,6 +1624,10 @@
       {
         "command": "vscodesync.showQuotaDashboard",
         "title": "%cmd.showQuotaDashboard.title%"
+      },
+      {
+        "command": "vscodesync.openVisualMerger",
+        "title": "%cmd.openVisualMerger.title%"
       }
     ],
     "menus": {

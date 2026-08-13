@@ -347,7 +347,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    ...registerConflictsCommands({ globalConfig, runWithEngine, notifiedConflictKeys }),
+    ...registerConflictsCommands({ context, globalConfig, runWithEngine, notifiedConflictKeys }),
   );
 
   context.subscriptions.push(
