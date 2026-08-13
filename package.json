@@ -30,6 +30,10 @@
       {
         "id": "vscodesync.submenu",
         "label": "VSCodeSync"
+      },
+      {
+        "id": "vscodesync.explorerSubmenu",
+        "label": "VSCodeSync"
       }
     ],
     "configuration": {
@@ -1735,6 +1739,14 @@
         {
           "command": "vscodesync.googleDriveSignInBrowser",
           "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFolderBind",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFolderPull",
+          "when": "false"
         }
       ],
       "statusBar/item/context": [
@@ -2062,7 +2074,7 @@
           "group": "vscodesync@3"
         },
         {
-          "submenu": "vscodesync.submenu",
+          "submenu": "vscodesync.explorerSubmenu",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "vscodesync@1"
         }
@@ -2135,6 +2147,63 @@
         },
         {
           "command": "vscodesync.openActivityFeed"
+        }
+      ],
+      "vscodesync.explorerSubmenu": [
+        {
+          "command": "vscodesync.addCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@1"
+        },
+        {
+          "command": "vscodesync.addToNewWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@2"
+        },
+        {
+          "command": "vscodesync.bindLocalFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@3"
+        },
+        {
+          "command": "vscodesync.sendQuickTransfer",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@4"
+        },
+        {
+          "command": "vscodesync.pushCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@1"
+        },
+        {
+          "command": "vscodesync.pullCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@2"
+        },
+        {
+          "command": "vscodesync.diffWithCloud",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@3"
+        },
+        {
+          "command": "vscodesync.showFileHistory",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@4"
+        },
+        {
+          "command": "vscodesync.openInCloudStorage",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@5"
+        },
+        {
+          "command": "vscodesync.moveCurrentFileToWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "vscodesync.removeFromSync",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@2"
         }
       ]
     },

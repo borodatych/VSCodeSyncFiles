@@ -17,7 +17,7 @@
 
 **Работает из коробки:**
 Для Яндекс Диска и Dropbox уже прописан токен по умолчанию — ничего настраивать не нужно.
-Если нужен собственный лимит на API — есть инструкция, как подключить свой токен.
+Если нужен собственный лимит на API — [как подключить свой ключ](https://github.com/borodatych/VSCodeSyncFiles/blob/main/docs/manuals/ownOAuthApp.md).
 
 ---
 
@@ -81,6 +81,7 @@
 ## Документация
 
 - [Разная структура папок на разных машинах](https://github.com/borodatych/VSCodeSyncFiles/blob/main/docs/manuals/crossMachinePaths.md) — как связать папки с разными именами, перестроить структуру в облаке и засеять по ней новую машину
+- [Свой OAuth-ключ провайдера](https://github.com/borodatych/VSCodeSyncFiles/blob/main/docs/manuals/ownOAuthApp.md) — когда нужен собственный Client ID, что прописать в консоли провайдера
 - [Каталог возможностей](https://github.com/borodatych/VSCodeSyncFiles/blob/main/docs/functional.md) — что умеет расширение, по темам
 - [Вся документация](https://github.com/borodatych/VSCodeSyncFiles/blob/main/docs/README.md) — мануалы, база знаний, планы и спеки
 
