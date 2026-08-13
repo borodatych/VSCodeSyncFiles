@@ -92,6 +92,16 @@ export interface ActiveWorkspaceEntry {
  */
 export type TrackedSyncStatus = "ok" | "conflict" | "pending_push" | "cloud_newer" | "missing_local";
 
+/**
+ * "Diverged" for every surface that filters or counts: anything the user still
+ * has to act on. `undefined` is NOT diverged — a row whose status was never
+ * computed would otherwise flood a filtered view with files that are probably
+ * fine.
+ */
+export function isDivergedSyncStatus(s: TrackedSyncStatus | undefined): boolean {
+  return s !== undefined && s !== "ok";
+}
+
 export interface TrackedFile {
   localPath: string;
   workspaceId: string;

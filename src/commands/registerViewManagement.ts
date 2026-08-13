@@ -14,8 +14,11 @@
 import * as vscode from "vscode";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { isDivergedSyncStatus } from "../core/types.js";
 import {
   WORKSPACES_CANONICAL_MODE_KEY,
+  WORKSPACES_ONLY_DIVERGED_KEY,
   WORKSPACES_NOTE_FILTER_KEY,
   WORKSPACES_TAG_FILTERS_KEY,
   WORKSPACES_SHOW_ARCHIVED_KEY,
@@ -153,6 +156,34 @@ export function registerViewManagementCommands(
       workspacesTree.setShowArchived(!workspacesTree.getShowArchived());
       await context.globalState.update(WORKSPACES_SHOW_ARCHIVED_KEY, workspacesTree.getShowArchived());
       await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
+    }),
+
+    // 100+ tracked files turn "find what diverged" into a needle hunt. The
+    // filter answers it in one click; the count in the toast tells the user
+    // whether an empty tree means "in sync" rather than "broken".
+    vscode.commands.registerCommand("vscodesync.toggleTreeOnlyDiverged", async () => {
+      const next = !workspacesTree.getOnlyDiverged();
+      workspacesTree.setOnlyDiverged(next);
+      await context.globalState.update(WORKSPACES_ONLY_DIVERGED_KEY, next);
+      await vscode.commands.executeCommand("setContext", "vscodesync.treeOnlyDiverged", next);
+      await applyWorkspacesTreeFilterChrome(treeView, workspacesTree);
+      if (!next) {
+        vscode.window.setStatusBarMessage("VSCodeSync: дерево показывает все файлы", 4000);
+        return;
+      }
+      let diverged = 0;
+      for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        try {
+          const wc = await WorkspaceConfigManager.load(folder.uri.fsPath);
+          diverged += wc.files.filter((f) => isDivergedSyncStatus(f.syncStatus)).length;
+        } catch { /* non-fatal: the toast is a courtesy */ }
+      }
+      vscode.window.setStatusBarMessage(
+        diverged === 0
+          ? "VSCodeSync: расхождений нет — дерево пустое, потому что всё синхронно"
+          : `VSCodeSync: показаны только расхождения (${String(diverged)})`,
+        4000,
+      );
     }),
 
     // Canonical path editing: flip the tree between the workspace's own

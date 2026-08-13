@@ -270,5 +270,6 @@
   "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Применить правки путей воркспейса",
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Возобновить прерванный перенос путей",
   "cmd.toggleTreeCanonicalMode.title": "Дерево: структура воркспейса ⇄ как лежит у меня",
-  "cmd.undoCanonicalRename.title": "VSCodeSync: Отменить последнее переименование путей"
+  "cmd.undoCanonicalRename.title": "VSCodeSync: Отменить последнее переименование путей",
+  "cmd.toggleTreeOnlyDiverged.title": "Дерево: только расхождения"
 }

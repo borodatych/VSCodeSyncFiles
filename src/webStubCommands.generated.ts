@@ -14,6 +14,7 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.treeFolderBind",
   "vscodesync.treeEditCanonicalPath",
   "vscodesync.toggleTreeCanonicalMode",
+  "vscodesync.toggleTreeOnlyDiverged",
   "vscodesync.treeRenameCloudFolder",
   "vscodesync.treeUnnestNode",
   "vscodesync.editWorkspacePaths",

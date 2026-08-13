@@ -10,7 +10,12 @@ import {
 import { workspaceHealthThemeColor } from "./workspaceHealthThemeColor.js";
 import { workspaceTreeContextValue } from "./workspaceTreeContext.js";
 import { planFileTreeChildren } from "../core/plan/planFileTree.js";
-import type { ManifestMachineCacheEntry, ProviderType, WorkspaceSyncState } from "../core/types.js";
+import {
+  isDivergedSyncStatus,
+  type ManifestMachineCacheEntry,
+  type ProviderType,
+  type WorkspaceSyncState,
+} from "../core/types.js";
 import { formatMachinePresenceLines } from "./workspaceMachinePresence.js";
 
 /** Элемент дерева для `TreeDataProvider<SyncTreeElement>` — в контекстное меню VS Code передаётся именно он. */
@@ -107,6 +112,12 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
 
   /** If false, workspaces tagged `archived` are hidden unless tag filter includes archived or this flag is on. */
   private _showArchived = false;
+  /**
+   * Show only files that still need action (anything but `ok`). A hundred
+   * tracked files make the handful of diverged ones a needle hunt; folders
+   * without a match disappear because the tree is derived from the rows.
+   */
+  private _onlyDiverged = false;
 
   /**
    * Canonical mode: the tree groups by the WORKSPACE's own paths — the space
@@ -324,6 +335,18 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       return;
     }
     this._showArchived = v;
+    this.refresh();
+  }
+
+  getOnlyDiverged(): boolean {
+    return this._onlyDiverged;
+  }
+
+  setOnlyDiverged(v: boolean): void {
+    if (v === this._onlyDiverged) {
+      return;
+    }
+    this._onlyDiverged = v;
     this.refresh();
   }
 
@@ -768,7 +791,11 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
     parentPrefix?: string,
   ): Promise<SyncTreeElement[]> {
     const wc = await WorkspaceConfigManager.load(ws.folderRoot.fsPath);
-    const rows = wc.files.filter((f) => f.workspaceId === ws.workspaceId);
+    const rows = wc.files.filter(
+      (f) =>
+        f.workspaceId === ws.workspaceId &&
+        (!this._onlyDiverged || isDivergedSyncStatus(f.syncStatus)),
+    );
     const note = wc.activeWorkspaces.find((a) => a.workspaceId === ws.workspaceId)?.workspaceNote ?? ws.note;
     const mn = this._machineName ?? "";
     const canonical = this._canonicalMode;

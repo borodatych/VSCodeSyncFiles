@@ -7,7 +7,10 @@ import {
   restoreWorkspacesTreeFilters,
   sanitiseTagList,
 } from "../../src/startup/restoreWorkspacesTreeFilters.js";
-import { WORKSPACES_CANONICAL_MODE_KEY } from "../../src/ui/workspacesTreeFilterState.js";
+import {
+  WORKSPACES_CANONICAL_MODE_KEY,
+  WORKSPACES_ONLY_DIVERGED_KEY,
+} from "../../src/ui/workspacesTreeFilterState.js";
 import type { WorkspacesTreeProvider } from "../../src/ui/workspacesTree.js";
 
 vi.mock("vscode", () => ({}));
@@ -37,6 +40,7 @@ describe("sanitiseTagList", () => {
 describe("restore пространства путей дерева", () => {
   function harness(stored: Record<string, unknown>) {
     const calls: boolean[] = [];
+    const divergedCalls: boolean[] = [];
     const context = {
       globalState: { get: (k: string) => stored[k] },
     } as unknown as Parameters<typeof restoreWorkspacesTreeFilters>[0];
@@ -45,20 +49,27 @@ describe("restore пространства путей дерева", () => {
       setTagFilters: () => undefined,
       setShowArchived: () => undefined,
       setCanonicalMode: (v: boolean) => calls.push(v),
+      setOnlyDiverged: (v: boolean) => divergedCalls.push(v),
     } as unknown as WorkspacesTreeProvider;
     restoreWorkspacesTreeFilters(context, tree);
-    return calls;
+    return { calls, divergedCalls };
   }
 
   it("без сохранённого значения — структура воркспейса (дефолт)", () => {
-    expect(harness({})).toEqual([true]);
+    expect(harness({}).calls).toEqual([true]);
   });
 
   it("явный false — размещение этой машины", () => {
-    expect(harness({ [WORKSPACES_CANONICAL_MODE_KEY]: false })).toEqual([false]);
+    expect(harness({ [WORKSPACES_CANONICAL_MODE_KEY]: false }).calls).toEqual([false]);
+  });
+
+  it("фильтр «только расхождения» выключен по умолчанию и включается сохранённым true", () => {
+    expect(harness({}).divergedCalls).toEqual([false]);
+    expect(harness({ [WORKSPACES_ONLY_DIVERGED_KEY]: true }).divergedCalls).toEqual([true]);
+    expect(harness({ [WORKSPACES_ONLY_DIVERGED_KEY]: false }).divergedCalls).toEqual([false]);
   });
 
   it("сохранённый true переживает перезапуск", () => {
-    expect(harness({ [WORKSPACES_CANONICAL_MODE_KEY]: true })).toEqual([true]);
+    expect(harness({ [WORKSPACES_CANONICAL_MODE_KEY]: true }).calls).toEqual([true]);
   });
 });

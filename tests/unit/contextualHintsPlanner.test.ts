@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planContextualHints, type ContextualHintsInput } from "../../src/core/contextualHintsPlanner.js";
+import { isDivergedSyncStatus } from "../../src/core/types.js";
 
 const base = (): ContextualHintsInput => ({
   conflictCount: 0,
@@ -92,5 +93,18 @@ describe("planContextualHints", () => {
       quotaUsageRatio: 0.99,
     });
     expect(hints.map((h) => h.id).sort()).toEqual(["many_conflicts", "quota_high"]);
+  });
+});
+
+describe("isDivergedSyncStatus", () => {
+  it("ok и неизвестный статус расхождением не считаются", () => {
+    expect(isDivergedSyncStatus("ok")).toBe(false);
+    expect(isDivergedSyncStatus(undefined)).toBe(false);
+  });
+
+  it("всё, что требует действия, — расхождение", () => {
+    for (const s of ["conflict", "pending_push", "cloud_newer", "missing_local"] as const) {
+      expect(isDivergedSyncStatus(s)).toBe(true);
+    }
   });
 });

@@ -916,6 +916,11 @@
         "icon": "$(arrow-swap)"
       },
       {
+        "command": "vscodesync.toggleTreeOnlyDiverged",
+        "title": "%cmd.toggleTreeOnlyDiverged.title%",
+        "icon": "$(filter)"
+      },
+      {
         "command": "vscodesync.treeRenameCloudFolder",
         "title": "%cmd.treeRenameCloudFolder.title%"
       },
@@ -1783,6 +1788,11 @@
           "command": "vscodesync.toggleTreeCanonicalMode",
           "when": "view == vscodesync.workspaces",
           "group": "navigation@1.5"
+        },
+        {
+          "command": "vscodesync.toggleTreeOnlyDiverged",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@6"
         },
         {
           "command": "vscodesync.filterWorkspaces",
