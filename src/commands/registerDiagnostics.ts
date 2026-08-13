@@ -278,6 +278,58 @@ export function registerDiagnosticsCommands(
       }
     }),
 
+    /**
+     * On-demand backup verification: same read-only comparison the scheduled
+     * tick performs, reported into its own channel. Answers "could I restore
+     * from the secondary cloud right now?" without copying anything.
+     */
+    vscode.commands.registerCommand("vscodesync.verifyBackup", async () => {
+      const { getAuthenticatedSecondary } = await import("../ui/crossCloudBackup.js");
+      const { runBackupVerify, describeOutcomes, worstSeverity } = await import(
+        "../ui/backupVerify.js"
+      );
+      const secondary = vscode.workspace
+        .getConfiguration("vscodesync")
+        .get<string>("backup.secondaryProvider", "");
+      if (!secondary) {
+        void vscode.window.showInformationMessage(
+          "VSCodeSync: второе облако не задано — настройка «vscodesync.backup.secondaryProvider».",
+        );
+        return;
+      }
+      const outcomes = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync: проверка резервной копии…" },
+        () =>
+          runBackupVerify({
+            registry,
+            tryAuthenticatedProvider,
+            getAuthenticatedSecondary: (type) =>
+              type === "onedrive" || type === "gdrive" || type === "dropbox" || type === "yandex"
+                ? getAuthenticatedSecondary(registry, type)
+                : Promise.resolve(null),
+          }),
+      );
+      if (outcomes.length === 0) {
+        void vscode.window.showWarningMessage(
+          "VSCodeSync: проверить нечего — второе облако недоступно или совпадает с основным.",
+        );
+        return;
+      }
+      healthCheckChannel.clear();
+      healthCheckChannel.appendLine("VSCodeSync · проверка резервной копии");
+      healthCheckChannel.appendLine("");
+      for (const line of describeOutcomes(outcomes)) healthCheckChannel.appendLine(line);
+      healthCheckChannel.show(true);
+      const severity = worstSeverity(outcomes);
+      if (severity === "ok") {
+        void vscode.window.showInformationMessage("VSCodeSync: резервная копия полная и свежая.");
+      } else {
+        void vscode.window.showWarningMessage(
+          `VSCodeSync: резервная копия требует внимания (${severity}). Подробности — в панели Output.`,
+        );
+      }
+    }),
+
     vscode.commands.registerCommand("vscodesync.profileSync", () => {
       const enabled = vscode.workspace
         .getConfiguration("vscodesync")

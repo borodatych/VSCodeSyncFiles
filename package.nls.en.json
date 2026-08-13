@@ -270,5 +270,13 @@
   "cmd.applyWorkspacePathsEdit.title": "VSCodeSync: Apply workspace path edits",
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Resume interrupted path move",
   "cmd.toggleTreeCanonicalMode.title": "Toggle tree: workspace structure ⇄ my local placement",
-  "cmd.undoCanonicalRename.title": "VSCodeSync: Undo last path rename"
+  "cmd.undoCanonicalRename.title": "VSCodeSync: Undo last path rename",
+  "cmd.toggleTreeOnlyDiverged.title": "Toggle tree: only diverged files",
+  "cmd.verifyBackup.title": "VSCodeSync: Verify secondary-cloud backup",
+  "cfg.backup.verifyEnabled.description": "Periodically check that the secondary-cloud copy is complete and fresh. Read-only: divergence is reported, nothing is copied without your command.",
+  "cfg.backup.verifyIntervalDays.description": "How often to verify the backup (days). A failed verification shortens the next interval.",
+  "cmd.showQuotaDashboard.title": "VSCodeSync: Provider quota usage",
+  "cmd.openVisualMerger.title": "VSCodeSync: Visual 3-way merge",
+  "cfg.selectiveSync.mode.description": "How ignore patterns (.vscodesync-ignore, manifest-shared, local) are read during sync. all-tracked — as before: patterns gate adding and manual push only. exclude-list — matching files stop syncing on this machine. include-list — ONLY matching files sync. Nothing is deleted from the cloud or from disk; the files simply stop syncing here.",
+  "cmd.selectiveSyncEditList.title": "VSCodeSync: Selective sync — mode and list"
 }

@@ -92,6 +92,8 @@ import { detectMassChange } from "./massChangeGuard.js";
 import { preserveConflictSharesLfCanonical } from "./preserveLineEndingConflict.js";
 import { mergeSyncignoreFromCloud, extractSyncignoreInners } from "../utils/syncignore.js";
 import { normalizeIgnorePatternStrings } from "../utils/ignorePatternNormalize.js";
+import { buildCombinedIgnoreRules } from "./workspaceIgnoreRules.js";
+import { shouldSyncUnderMode } from "./selectiveSyncMode.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
 import { assertMutationAllowed, mutationPolicy, type MutationOp } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
@@ -3054,6 +3056,13 @@ export class SyncEngine {
   ): Promise<void> {
     await this.withBatchedCfgWrites(cfgSync, async () => {
       const fileConcurrency = this.resolveFileConcurrency();
+      // Selective sync: the ignore patterns gate the sync pass only when the
+      // user switched the mode. A filtered-out file keeps its tracking row and
+      // its cloud copy — it just stops moving on this machine.
+      const mode = this.deps.selectiveSyncMode?.() ?? "all-tracked";
+      const entryForRules = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+      const selectiveRules =
+        mode === "all-tracked" ? [] : await buildCombinedIgnoreRules(this.deps.workspaceRoot, entryForRules);
       await parallelLimit(
         trackedFiles,
         async (file) => {
@@ -3063,6 +3072,7 @@ export class SyncEngine {
           const m = manifest.files.find((x) => x.path === manifestKeyOf(file) && !x.removedAt);
           if (!m) return;
           if (file.syncStatus === "conflict") return;
+          if (!shouldSyncUnderMode(file.localPath, selectiveRules, mode)) return;
           const ent = cfgSync.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
           if (!ent) return;
           // Skip files currently under a user-initiated pull/push to avoid

@@ -99,6 +99,19 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     ]
   },
   {
+    "key": "backup.verifyEnabled",
+    "type": "boolean",
+    "description": "Периодически проверять, что копия во втором облаке полная и свежая. Только чтение: расхождения показываются, ничего не копируется без вашей команды.",
+    "default": true
+  },
+  {
+    "key": "backup.verifyIntervalDays",
+    "type": "number",
+    "description": "Как часто проверять резервную копию (в днях). После неудачной проверки следующая выполняется раньше.",
+    "default": 1,
+    "minimum": 1
+  },
+  {
     "key": "batchAddWarnThreshold",
     "type": "number",
     "description": "Порог количества файлов для предупреждения при пакетном добавлении",
@@ -399,6 +412,17 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     "type": "boolean",
     "description": "Требовать одобрение новой машины в workspace",
     "default": false
+  },
+  {
+    "key": "selectiveSync.mode",
+    "type": "string",
+    "description": "Как читать паттерны исключений (.vscodesync-ignore, общие из манифеста, локальные) во время синхронизации. all-tracked — как раньше: паттерны действуют только при добавлении файлов и при ручной отправке. exclude-list — совпавшие файлы перестают синхронизироваться на этой машине. include-list — синхронизируются ТОЛЬКО совпавшие. Файлы не удаляются ни из облака, ни с диска: они просто перестают синхронизироваться здесь.",
+    "default": "all-tracked",
+    "enum": [
+      "all-tracked",
+      "exclude-list",
+      "include-list"
+    ]
   },
   {
     "key": "showFileDecorations",

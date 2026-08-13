@@ -19,6 +19,8 @@ export const WORKSPACES_SHOW_ARCHIVED_KEY = "vscodesync.workspacesShowArchived";
  * (cloud) structure — what every other machine receives when it seeds.
  */
 export const WORKSPACES_CANONICAL_MODE_KEY = "vscodesync.workspacesCanonicalMode";
+/** Show only files that still need action (anything but `ok`). */
+export const WORKSPACES_ONLY_DIVERGED_KEY = "vscodesync.workspacesOnlyDiverged";
 
 /** Walk every open VS Code folder and gather a sorted union of tags from
  * the cached `vscodesync.json` entries. Case-insensitive dedup. */
@@ -64,6 +66,11 @@ export async function applyWorkspacesTreeFilterChrome(
   }
   if (provider.getShowArchived()) {
     parts.push("+archived");
+  }
+  // The filtered tree hides files silently — say so, or an empty workspace
+  // reads as "everything is gone" rather than "everything is in sync".
+  if (provider.getOnlyDiverged()) {
+    parts.push("⚠ только расхождения");
   }
   const desc = parts.join(" · ");
   treeView.description = desc.length > 0 ? desc.slice(0, 120) : undefined;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planContextualHints, type ContextualHintsInput } from "../../src/core/contextualHintsPlanner.js";
+import { isDivergedSyncStatus } from "../../src/core/types.js";
 
 const base = (): ContextualHintsInput => ({
   conflictCount: 0,
@@ -18,6 +19,27 @@ describe("planContextualHints", () => {
     expect(hints).toHaveLength(1);
     expect(hints[0]?.id).toBe("many_conflicts");
     expect(hints[0]?.severity).toBe("warn");
+  });
+
+  it("files_missing_local предлагает привязку папки с порога", () => {
+    const hints = planContextualHints({ ...base(), missingLocalCount: 3 });
+    expect(hints).toHaveLength(1);
+    expect(hints[0]?.id).toBe("files_missing_local");
+    expect(hints[0]?.severity).toBe("info");
+    expect(hints[0]?.actionCommandId).toBe("vscodesync.bindLocalFolder");
+  });
+
+  it("ниже порога про отсутствующие файлы молчим", () => {
+    expect(planContextualHints({ ...base(), missingLocalCount: 2 })).toHaveLength(0);
+    expect(planContextualHints({ ...base() })).toHaveLength(0);
+  });
+
+  it("порог отсутствующих файлов настраивается", () => {
+    const hints = planContextualHints(
+      { ...base(), missingLocalCount: 1 },
+      { missingLocalThreshold: 1 },
+    );
+    expect(hints.map((h) => h.id)).toEqual(["files_missing_local"]);
   });
 
   it("no many_conflicts below threshold", () => {
@@ -71,5 +93,18 @@ describe("planContextualHints", () => {
       quotaUsageRatio: 0.99,
     });
     expect(hints.map((h) => h.id).sort()).toEqual(["many_conflicts", "quota_high"]);
+  });
+});
+
+describe("isDivergedSyncStatus", () => {
+  it("ok и неизвестный статус расхождением не считаются", () => {
+    expect(isDivergedSyncStatus("ok")).toBe(false);
+    expect(isDivergedSyncStatus(undefined)).toBe(false);
+  });
+
+  it("всё, что требует действия, — расхождение", () => {
+    for (const s of ["conflict", "pending_push", "cloud_newer", "missing_local"] as const) {
+      expect(isDivergedSyncStatus(s)).toBe(true);
+    }
   });
 });

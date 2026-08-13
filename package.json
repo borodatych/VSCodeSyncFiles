@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -18,6 +18,7 @@
   },
   "icon": "media/vscodesync.png",
   "categories": [
+    "SCM Providers",
     "Other"
   ],
   "main": "./dist/extension.js",
@@ -29,6 +30,10 @@
     "submenus": [
       {
         "id": "vscodesync.submenu",
+        "label": "VSCodeSync"
+      },
+      {
+        "id": "vscodesync.explorerSubmenu",
         "label": "VSCodeSync"
       }
     ],
@@ -609,6 +614,27 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "%cfg.hints.enabled.description%"
+        },
+        "vscodesync.backup.verifyEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.backup.verifyEnabled.description%"
+        },
+        "vscodesync.backup.verifyIntervalDays": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "%cfg.backup.verifyIntervalDays.description%"
+        },
+        "vscodesync.selectiveSync.mode": {
+          "type": "string",
+          "enum": [
+            "all-tracked",
+            "exclude-list",
+            "include-list"
+          ],
+          "default": "all-tracked",
+          "description": "%cfg.selectiveSync.mode.description%"
         }
       }
     },
@@ -745,6 +771,17 @@
             ]
           },
           {
+            "id": "crossMachineStructure",
+            "title": "Структура папок может отличаться",
+            "description": "На работе проект лежит в `promed/`, дома тот же самый в `php/` — это не повод отказываться от синхронизации. ПКМ по локальной папке в Explorer → «VSCodeSync: Привязать локальную папку к облачной…», и расширение запомнит, что здесь она называется иначе.\n\n[Привязать папку](command:vscodesync.bindLocalFolder)",
+            "media": {
+              "markdown": "media/steps/crossMachineStructure.md"
+            },
+            "completionEvents": [
+              "onCommand:vscodesync.bindLocalFolder"
+            ]
+          },
+          {
             "id": "snapshot",
             "title": "Сделайте снапшот",
             "description": "Снапшот — это точка восстановления для всего workspace. Можно настроить расписание через `vscodesync.snapshotSchedule` (например, `daily 03:00`).\n\n[Создать снапшот](command:vscodesync.createSnapshot)",
@@ -798,7 +835,7 @@
     "viewsWelcome": [
       {
         "view": "vscodesync.workspaces",
-        "contents": "В этом проекте пока нет подключённых workspace.\n\n[Создать первый workspace](command:vscodesync.createWorkspace)\n[Подключить существующий](command:vscodesync.connectCloudWorkspace)\n\nНе уверены с чего начать? Запустите [онбординг](command:vscodesync.startOnboarding) или откройте [гайд по провайдерам](command:vscodesync.showProviderSetupGuide).",
+        "contents": "В этом проекте пока нет подключённых workspace.\n\n[Создать первый workspace](command:vscodesync.createWorkspace)\n[Подключить существующий](command:vscodesync.connectCloudWorkspace)\n\nНе уверены с чего начать? Запустите [онбординг](command:vscodesync.startOnboarding) или откройте [гайд по провайдерам](command:vscodesync.showProviderSetupGuide).\n\nСтруктура папок на машинах не совпадает? Это не помеха: папку можно [привязать под другим именем](command:vscodesync.bindLocalFolder).",
         "when": "workspaceFolderCount != 0"
       },
       {
@@ -898,6 +935,11 @@
         "command": "vscodesync.toggleTreeCanonicalMode",
         "title": "%cmd.toggleTreeCanonicalMode.title%",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "vscodesync.toggleTreeOnlyDiverged",
+        "title": "%cmd.toggleTreeOnlyDiverged.title%",
+        "icon": "$(filter)"
       },
       {
         "command": "vscodesync.treeRenameCloudFolder",
@@ -1584,6 +1626,22 @@
       {
         "command": "vscodesync.prefetchActiveWorkspace",
         "title": "%cmd.prefetchActiveWorkspace.title%"
+      },
+      {
+        "command": "vscodesync.verifyBackup",
+        "title": "%cmd.verifyBackup.title%"
+      },
+      {
+        "command": "vscodesync.showQuotaDashboard",
+        "title": "%cmd.showQuotaDashboard.title%"
+      },
+      {
+        "command": "vscodesync.openVisualMerger",
+        "title": "%cmd.openVisualMerger.title%"
+      },
+      {
+        "command": "vscodesync.selectiveSyncEditList",
+        "title": "%cmd.selectiveSyncEditList.title%"
       }
     ],
     "menus": {
@@ -1735,6 +1793,14 @@
         {
           "command": "vscodesync.googleDriveSignInBrowser",
           "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFolderBind",
+          "when": "false"
+        },
+        {
+          "command": "vscodesync.treeFolderPull",
+          "when": "false"
         }
       ],
       "statusBar/item/context": [
@@ -1759,6 +1825,11 @@
           "command": "vscodesync.toggleTreeCanonicalMode",
           "when": "view == vscodesync.workspaces",
           "group": "navigation@1.5"
+        },
+        {
+          "command": "vscodesync.toggleTreeOnlyDiverged",
+          "when": "view == vscodesync.workspaces",
+          "group": "navigation@6"
         },
         {
           "command": "vscodesync.filterWorkspaces",
@@ -2062,7 +2133,7 @@
           "group": "vscodesync@3"
         },
         {
-          "submenu": "vscodesync.submenu",
+          "submenu": "vscodesync.explorerSubmenu",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
           "group": "vscodesync@1"
         }
@@ -2136,6 +2207,63 @@
         {
           "command": "vscodesync.openActivityFeed"
         }
+      ],
+      "vscodesync.explorerSubmenu": [
+        {
+          "command": "vscodesync.addCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@1"
+        },
+        {
+          "command": "vscodesync.addToNewWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@2"
+        },
+        {
+          "command": "vscodesync.bindLocalFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@3"
+        },
+        {
+          "command": "vscodesync.sendQuickTransfer",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_sync@4"
+        },
+        {
+          "command": "vscodesync.pushCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@1"
+        },
+        {
+          "command": "vscodesync.pullCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@2"
+        },
+        {
+          "command": "vscodesync.diffWithCloud",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@3"
+        },
+        {
+          "command": "vscodesync.showFileHistory",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@4"
+        },
+        {
+          "command": "vscodesync.openInCloudStorage",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_ops@5"
+        },
+        {
+          "command": "vscodesync.moveCurrentFileToWorkspace",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "vscodesync.removeFromSync",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "3_manage@2"
+        }
       ]
     },
     "keybindings": [
@@ -2185,5 +2313,23 @@
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev45.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "keywords": [
+    "sync",
+    "synchronization",
+    "settings sync",
+    "backup",
+    "cloud",
+    "onedrive",
+    "google drive",
+    "dropbox",
+    "yandex disk",
+    "dotfiles",
+    "multi-machine",
+    "snapshots"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
   }
 }

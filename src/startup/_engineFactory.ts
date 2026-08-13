@@ -32,6 +32,9 @@ import { SyncEngine } from "../core/syncEngine.js";
 import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import { wrapWithQueue } from "../core/queuedProvider.js";
+import { wrapWithQuotaTracking } from "../core/quotaProviderWrapper.js";
+import { parseSelectiveSyncMode } from "../core/selectiveSyncMode.js";
+import { sharedQuotaTracker } from "../core/quotaTrackerSingleton.js";
 import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
 import { warnLog } from "../utils/log.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
@@ -255,7 +258,9 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
     const key = encryptionOn ? cachedEncKey : null;
     return new SyncEngine({
       workspaceRoot,
-      provider: wrapWithQueue(provider),
+      // Queue first, then quota: the tracker counts calls that actually go
+      // out, not the ones still waiting in the queue.
+      provider: wrapWithQuotaTracking(wrapWithQueue(provider), sharedQuotaTracker()),
       machineId,
       machineName,
       trigger,
@@ -266,6 +271,10 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       localBackupEnabled,
       localBackupRetentionDays,
       tombstonePurgeDays,
+      selectiveSyncMode: () =>
+        parseSelectiveSyncMode(
+          vscode.workspace.getConfiguration(CFG_SECTION).get<string>("selectiveSync.mode", "all-tracked"),
+        ),
       // `encryptionRequired` lets the engine refuse when the setting is on but
       // the key is absent, instead of silently working in plaintext.
       encryptionRequired: encryptionOn,

@@ -376,4 +376,9 @@ ACL parser / status registry / config watcher) и backends удалены.
 - v2.20.2 SCTP smoke — нужен self-hosted CI runner с `@roamhq/wrtc` binding + 2 машины. **Auto-unblock** при появлении runner с label `p2p-smoke`.
 - v2.20.4 SSE — auto-unblock когда провайдер объявит `available: true`.
 - v2.20.4 PAR — auto-unblock когда провайдер опубликует PAR endpoint.
-- v2.20.5 onboarding videos — нужен человек для screen capture. **Human-blocked.**
+- ~~v2.20.5 onboarding videos~~ — **снято с повестки 2026-08-13 решением владельца.**
+  Продукт нишевый и не продаётся: съёмка роликов и скриншотов — расход времени
+  без отдачи. Не предлагать и не держать в «осталось»; вернуть в работу только
+  по явной просьбе. Механика (`walkthroughVideoSpec.ts`, `media/walkthroughs/`,
+  гейт `walkthroughMediaIntegrity`) остаётся рабочей и ждёт swap-in без правок
+  кода. Иллюстрировать шаги — текстом: markdown-медиа в walkthrough.

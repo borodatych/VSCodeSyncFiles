@@ -236,6 +236,8 @@ export function divergenceRowKey(row: {
 export type DivergencePanelRequest =
   | { kind: "refresh" }
   | { kind: "bulk"; direction: "push" | "pull"; keys: string[] }
+  /** One row, one action — the per-file twin of `bulk`. */
+  | { kind: "row"; direction: "push" | "pull"; key: string }
   | { kind: "compare"; key: string }
   | { kind: "resolve"; key: string }
   | { kind: "bind"; key: string };
@@ -257,6 +259,11 @@ export function parseDivergenceRequest(raw: unknown): DivergencePanelRequest | n
     const keys = m.keys.filter((k): k is string => typeof k === "string");
     if (keys.length !== m.keys.length) return null;
     return { kind: "bulk", direction: m.direction, keys };
+  }
+  if (m.kind === "row") {
+    if (m.direction !== "push" && m.direction !== "pull") return null;
+    if (typeof m.key !== "string" || m.key.length === 0) return null;
+    return { kind: "row", direction: m.direction, key: m.key };
   }
   if (m.kind === "compare" || m.kind === "resolve" || m.kind === "bind") {
     if (typeof m.key !== "string" || m.key.length === 0) return null;

@@ -37,6 +37,63 @@ export interface FileTreeContextCommandsDeps {
   logSyncActivity: (ev: ActivityEventInput) => void;
 }
 
+type FileElement = Extract<SyncTreeElement, { kind: "file" }>;
+
+/**
+ * The file nodes a tree command should act on. VS Code hands context-menu
+ * commands `(clickedItem, selection[])`; the click target is not always in the
+ * selection, and the selection can mix in folder/workspace nodes. Multi-root
+ * batches are refused rather than half-executed — every downstream call is
+ * scoped to one workspace root.
+ */
+function selectedFiles(
+  clicked: SyncTreeElement | undefined,
+  selection: readonly SyncTreeElement[] | undefined,
+): FileElement[] {
+  const pool = selection && selection.length > 0 ? selection : clicked ? [clicked] : [];
+  const files = pool.filter((e): e is FileElement => e.kind === "file");
+  if (files.length === 0) {
+    return [];
+  }
+  const root = files[0].folderRoot.fsPath;
+  const sameRoot = files.filter((f) => f.folderRoot.fsPath === root);
+  if (sameRoot.length !== files.length) {
+    void vscode.window.showWarningMessage(
+      "VSCodeSync: выделены файлы из разных папок проекта — выполнено только для первой.",
+    );
+  }
+  // The clicked node wins when the user right-clicks outside their selection.
+  if (clicked?.kind === "file" && !sameRoot.some((f) => f.localPath === clicked.localPath)) {
+    return [clicked];
+  }
+  return sameRoot;
+}
+
+/** One toast per batch: N done, M already current, failures named. */
+function reportBatch(
+  verb: string,
+  done: number,
+  failed: readonly string[],
+  total: number,
+  alreadyCurrent = 0,
+): void {
+  if (total === 1 && failed.length === 0) {
+    void vscode.window.showInformationMessage(
+      alreadyCurrent === 1 ? `${verb}: уже актуален.` : `${verb}: готово.`,
+    );
+    return;
+  }
+  const parts = [`${verb}: ${String(done)} из ${String(total)}`];
+  if (alreadyCurrent > 0) parts.push(`уже актуальны: ${String(alreadyCurrent)}`);
+  if (failed.length > 0) parts.push(`ошибок: ${String(failed.length)}`);
+  const text = `VSCodeSync — ${parts.join(", ")}`;
+  if (failed.length > 0) {
+    void vscode.window.showWarningMessage(`${text}. ${failed[0]}${failed.length > 1 ? " …" : ""}`);
+  } else {
+    void vscode.window.showInformationMessage(text);
+  }
+}
+
 export function registerFileTreeContextCommands(
   deps: FileTreeContextCommandsDeps,
 ): vscode.Disposable[] {
@@ -58,69 +115,117 @@ export function registerFileTreeContextCommands(
   return [
     vscode.commands.registerCommand(
       "vscodesync.treeFilePush",
-      async (el: SyncTreeElement | undefined) => {
-        if (el?.kind !== "file") {
+      async (el: SyncTreeElement | undefined, selection?: readonly SyncTreeElement[]) => {
+        const files = selectedFiles(el, selection);
+        if (files.length === 0) {
           return;
         }
-        const rootPath = el.folderRoot.fsPath;
+        const rootPath = files[0].folderRoot.fsPath;
         const wc = await WorkspaceConfigManager.load(rootPath);
         const gconf = await globalConfig.load();
-        const abs = trackedLocalAbsolutePath(rootPath, wc.pathMapping, gconf.machineName, el.localPath);
-        if (!(await guardPathsBeforePush([abs]))) {
+        const absPaths = files.map((f) =>
+          trackedLocalAbsolutePath(rootPath, wc.pathMapping, gconf.machineName, f.localPath),
+        );
+        // One guard call for the whole batch — the check is about the paths,
+        // and asking N times is how a bulk action becomes unusable.
+        if (!(await guardPathsBeforePush(absPaths))) {
           return;
         }
         await runWithEngine(async (engine, root) => {
           const cfg = await WorkspaceConfigManager.load(root);
-          const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId);
-          if (!entry) {
-            await vscode.window.showErrorMessage("Workspace не найден в конфиге.");
-            return;
+          let done = 0;
+          const failed: string[] = [];
+          for (const f of files) {
+            const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === f.workspaceId);
+            if (!entry) {
+              failed.push(`${f.localPath}: workspace не найден в конфиге`);
+              continue;
+            }
+            try {
+              await engine.pushFile(cfg, f.workspaceId, f.localPath, entry);
+              done += 1;
+            } catch (e) {
+              failed.push(`${f.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+            }
           }
-          await engine.pushFile(cfg, el.workspaceId, el.localPath, entry);
-          void vscode.window.showInformationMessage(`Push ${el.localPath}: готово.`);
+          reportBatch("Push", done, failed, files.length);
         }, rootPath);
       },
     ),
 
     vscode.commands.registerCommand(
       "vscodesync.treeFilePull",
-      async (el: SyncTreeElement | undefined) => {
-        if (el?.kind !== "file") {
+      async (el: SyncTreeElement | undefined, selection?: readonly SyncTreeElement[]) => {
+        const files = selectedFiles(el, selection);
+        if (files.length === 0) {
           return;
         }
-        const rootPath = el.folderRoot.fsPath;
+        const rootPath = files[0].folderRoot.fsPath;
 
         // Link Bindings (stage 2) — placement choice for a file that has no
         // bytes on this machine yet: sender's structure, a custom spot (bind +
         // pull), or bind to an existing local file (no download at all).
-        let pullRel = el.localPath;
-        if (el.syncStatus === "missing_local") {
-          const outcome = await chooseMissingFilePlacement(
-            runWithEngine,
-            el.folderRoot,
-            el.workspaceId,
-            el.localPath,
-            el.manifestPath ?? el.localPath,
+        // A batch asks ONCE for the whole set (same contract as Pull All);
+        // per-file questions are opt-in.
+        const pullRelByPath = new Map<string, string>();
+        const missing = files.filter((f) => f.syncStatus === "missing_local");
+        let perFile = missing.length > 0 && files.length === 1;
+        if (missing.length > 0 && files.length > 1) {
+          const choice = await vscode.window.showInformationMessage(
+            `${String(missing.length)} из ${String(files.length)} файлов ещё нет на этой машине. ` +
+              "Разложить их по записанным путям (структура воркспейса или ваши привязки)?",
+            { modal: true },
+            "Принять",
+            "Разобрать по одному",
           );
-          if (outcome.kind !== "pull") {
+          if (choice === undefined) {
             return;
           }
-          pullRel = outcome.pullRel;
+          perFile = choice === "Разобрать по одному";
+        }
+        if (perFile) {
+          for (const f of missing) {
+            const outcome = await chooseMissingFilePlacement(
+              runWithEngine,
+              f.folderRoot,
+              f.workspaceId,
+              f.localPath,
+              f.manifestPath ?? f.localPath,
+            );
+            if (outcome.kind === "cancelled") {
+              return;
+            }
+            if (outcome.kind !== "pull") {
+              // Bound to an existing local file — nothing to download.
+              pullRelByPath.set(f.localPath, "");
+              continue;
+            }
+            pullRelByPath.set(f.localPath, outcome.pullRel);
+          }
         }
 
         await runWithEngine(async (engine, root) => {
           const cfg = await WorkspaceConfigManager.load(root);
-          const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId);
-          if (!entry) {
-            await vscode.window.showErrorMessage("Workspace не найден в конфиге.");
-            return;
+          let done = 0;
+          let current = 0;
+          const failed: string[] = [];
+          for (const f of files) {
+            const pullRel = pullRelByPath.get(f.localPath) ?? f.localPath;
+            if (pullRel === "") continue;
+            const entry = cfg.activeWorkspaces.find((w) => w.workspaceId === f.workspaceId);
+            if (!entry) {
+              failed.push(`${f.localPath}: workspace не найден в конфиге`);
+              continue;
+            }
+            try {
+              const result = await engine.pullFile(cfg, f.workspaceId, pullRel, entry);
+              if (result === "already_current") current += 1;
+              else done += 1;
+            } catch (e) {
+              failed.push(`${f.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+            }
           }
-          const result = await engine.pullFile(cfg, el.workspaceId, pullRel, entry);
-          if (result === "already_current") {
-            void vscode.window.showInformationMessage(`${pullRel}: уже актуален.`);
-          } else {
-            void vscode.window.showInformationMessage(`Pull ${pullRel}: готово.`);
-          }
+          reportBatch("Pull", done, failed, files.length, current);
         }, rootPath);
       },
     ),

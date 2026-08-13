@@ -11,7 +11,8 @@ export type ContextualHintKind =
   | "many_conflicts"
   | "all_workspaces_frozen"
   | "quota_high"
-  | "auto_sync_paused_long";
+  | "auto_sync_paused_long"
+  | "files_missing_local";
 
 export interface ContextualHint {
   id: ContextualHintKind;
@@ -25,6 +26,12 @@ export interface ContextualHint {
 export interface ContextualHintsInput {
   /** Total conflicts across all workspaces. */
   conflictCount: number;
+  /**
+   * Files tracked but absent from this disk (`missing_local`). A handful of
+   * these usually means the same files live here under different names — the
+   * moment to mention folder binding.
+   */
+  missingLocalCount?: number;
   /** All active workspaces are in frozen state. */
   allWorkspacesFrozen: boolean;
   /** Active workspace count (used to confirm "all frozen" isn't trivially 0). */
@@ -44,6 +51,8 @@ export interface ContextualHintsOptions {
   quotaHighThreshold?: number;
   /** "auto sync paused long" appears after this many days. Default 7. */
   autoSyncPausedDays?: number;
+  /** Suggest folder binding from this many `missing_local` files. Default 3. */
+  missingLocalThreshold?: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -64,6 +73,19 @@ export function planContextualHints(
       severity: "warn",
       text: `VSCodeSync: ${String(input.conflictCount)} файлов в состоянии conflict. Хотите разрешить разом?`,
       actionCommandId: "vscodesync.resolveConflicts",
+    });
+  }
+  // Several files "in the cloud but not here" is the classic symptom of a
+  // structure that differs between machines: the bytes are on this disk, just
+  // under other names. Point at binding rather than at a mass download.
+  if ((input.missingLocalCount ?? 0) >= Math.max(1, opts.missingLocalThreshold ?? 3)) {
+    hints.push({
+      id: "files_missing_local",
+      severity: "info",
+      text:
+        `VSCodeSync: ${String(input.missingLocalCount ?? 0)} файлов есть в облаке, но нет на этой машине. ` +
+        "Если они лежат здесь под другими именами — привяжите папку, и скачивать ничего не придётся.",
+      actionCommandId: "vscodesync.bindLocalFolder",
     });
   }
   if (input.activeWorkspaceCount > 0 && input.allWorkspacesFrozen) {

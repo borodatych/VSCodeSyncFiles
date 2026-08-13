@@ -86,12 +86,23 @@ function buildHtml(nonce: string, cspSource: string): string {
     .susp { color: var(--vscode-editorWarning-foreground); font-size: 0.8em; }
     .row { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-bottom: 1px solid var(--vscode-widget-border, #2a2a2a); }
     .row:hover { background: var(--vscode-list-hoverBackground); }
-    .row .dir { min-width: 96px; font-size: 0.85em; }
-    .row .dir.conflict { color: var(--vscode-editorError-foreground); }
+    /* State, not an action. Deliberately unlike a button: no frame, muted,
+       small caps and a leading dot — users clicked it expecting a download. */
+    .row .dir {
+      min-width: 104px; font-size: 0.75em; letter-spacing: .04em;
+      text-transform: uppercase; opacity: .65; cursor: default; user-select: none;
+    }
+    .row .dir::before { content: "• "; }
+    .row .dir.conflict { color: var(--vscode-editorError-foreground); opacity: .9; }
     .row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row .reason { font-size: 0.82em; opacity: 0.7; min-width: 170px; }
     .row .acts { display: flex; gap: 4px; }
     .row .acts button { padding: 2px 8px; font-size: 0.8em; }
+    .row .acts button.secondary {
+      background: transparent; color: var(--vscode-foreground);
+      border: 1px solid var(--vscode-button-secondaryBackground, var(--vscode-panel-border)); opacity: .8;
+    }
+    .row .acts button.secondary:hover:not(:disabled) { opacity: 1; }
     .empty { padding: 24px 4px; opacity: 0.75; }
     .busy { opacity: 0.55; pointer-events: none; }
   </style>
@@ -168,10 +179,18 @@ function buildHtml(nonce: string, cspSource: string): string {
           '</header>';
         var rows = g.rows.map(function (r) {
           var k = keyOf(r);
-          var acts = '<button type="button" data-act="compare" data-key="' + esc(k) + '">Сравнить</button>' +
-            (r.direction === 'conflict'
-              ? '<button type="button" data-act="resolve" data-key="' + esc(k) + '">Разрешить</button>'
-              : '') +
+          // Per-row actions. The direction the row already wants is primary;
+          // the opposite one is offered too (the user may deliberately
+          // overwrite) but marked as secondary and confirmed on the host side.
+          var rowActs = r.direction === 'conflict'
+            ? '<button type="button" data-act="resolve" data-key="' + esc(k) + '">Разрешить</button>'
+            : (r.direction === 'pull'
+                ? '<button type="button" class="primary" data-act="pull" data-key="' + esc(k) + '">↓ Скачать</button>' +
+                  '<button type="button" class="secondary" data-act="push" data-key="' + esc(k) + '" title="Отправить локальную версию поверх более новой облачной">↑ Отправить</button>'
+                : '<button type="button" class="primary" data-act="push" data-key="' + esc(k) + '">↑ Отправить</button>' +
+                  '<button type="button" class="secondary" data-act="pull" data-key="' + esc(k) + '" title="Скачать облачную версию поверх локальных изменений">↓ Скачать</button>');
+          var acts = rowActs +
+            '<button type="button" data-act="compare" data-key="' + esc(k) + '">Сравнить</button>' +
             (r.missingLocal
               ? '<button type="button" data-act="bind" data-key="' + esc(k) + '">Привязать…</button>'
               : '');
@@ -224,7 +243,13 @@ function buildHtml(nonce: string, cspSource: string): string {
     document.getElementById('list').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-act]');
       if (!b) return;
-      vscode.postMessage({ kind: b.getAttribute('data-act'), key: b.getAttribute('data-key') });
+      var act = b.getAttribute('data-act');
+      var key = b.getAttribute('data-key');
+      if (act === 'push' || act === 'pull') {
+        vscode.postMessage({ kind: 'row', direction: act, key: key });
+        return;
+      }
+      vscode.postMessage({ kind: act, key: key });
     });
     document.getElementById('btnPush').addEventListener('click', function () {
       vscode.postMessage({ kind: 'bulk', direction: 'push', keys: selectedKeys() });
@@ -332,6 +357,29 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
               .filter((r): r is DivergenceRow => r?.direction === req.direction);
             if (rows.length === 0) return;
             const report = await handlers.bulk(req.direction, rows);
+            void vscode.window.showInformationMessage(report);
+            updateDivergencePanel(await handlers.refresh());
+            return;
+          }
+          if (req.kind === "row") {
+            const target = index.get(req.key);
+            if (target === undefined) return;
+            // Acting against the detected direction overwrites the side that
+            // is currently ahead — the one case in this panel where a single
+            // click can lose work, so it asks first.
+            if (target.direction !== req.direction) {
+              const detail =
+                req.direction === "push"
+                  ? "В облаке лежит более новая версия. Отправка запишет поверх неё вашу локальную — облачные изменения будут потеряны."
+                  : "Локально есть изменения. Скачивание запишет поверх них облачную версию — локальные изменения будут потеряны.";
+              const go = await vscode.window.showWarningMessage(
+                `VSCodeSync — ${target.posixRel}`,
+                { modal: true, detail },
+                req.direction === "push" ? "Всё равно отправить" : "Всё равно скачать",
+              );
+              if (go === undefined) return;
+            }
+            const report = await handlers.bulk(req.direction, [target]);
             void vscode.window.showInformationMessage(report);
             updateDivergencePanel(await handlers.refresh());
             return;

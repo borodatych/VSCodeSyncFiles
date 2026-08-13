@@ -32,7 +32,7 @@ export function wrapWithQuotaTracking(
 ): ICloudProvider {
   const record = (): void => { tracker.recordCall(provider.type); };
 
-  return {
+  const wrapped: ICloudProvider = {
     get type() {
       return provider.type;
     },
@@ -70,4 +70,28 @@ export function wrapWithQuotaTracking(
       return provider.createFolder(cloudPath);
     },
   };
+
+  // Optional methods must be forwarded, not dropped: a wrapper that silently
+  // loses `moveFile` demotes every canonical rename back to a full
+  // download+upload, and the caller has no way to notice. Same trap the queue
+  // wrapper fell into. `moveFile` and `purgeFilePermanently` are data-plane —
+  // they count; `getWebViewLink` builds a URL and does not.
+  if (provider.moveFile !== undefined) {
+    wrapped.moveFile = (from: string, to: string): Promise<UploadResult> => {
+      record();
+      return provider.moveFile!(from, to);
+    };
+  }
+  if (provider.purgeFilePermanently !== undefined) {
+    wrapped.purgeFilePermanently = (cloudPath: string): Promise<void> => {
+      record();
+      return provider.purgeFilePermanently!(cloudPath);
+    };
+  }
+  if (provider.getWebViewLink !== undefined) {
+    wrapped.getWebViewLink = (cloudPath: string): Promise<string | null> =>
+      provider.getWebViewLink!(cloudPath);
+  }
+
+  return wrapped;
 }

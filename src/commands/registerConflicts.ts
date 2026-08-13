@@ -30,9 +30,11 @@ import { pickRoot } from "./_shared.js";
 import { resolveFileTarget } from "./_fileTargetHelpers.js";
 import { runAiMergeForConflict, runConflict3WayDiff } from "./_engineFlows.js";
 import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
+import { openVisualMergerPanel } from "../ui/visualMergerPanel.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 export interface ConflictsCommandsDeps {
+  context: vscode.ExtensionContext;
   globalConfig: GlobalConfigManager;
   runWithEngine: RunWithEngineFn;
   /** Shared instance of the soft-lock / conflict-notification dedupe set —
@@ -44,7 +46,7 @@ export interface ConflictsCommandsDeps {
 export function registerConflictsCommands(
   deps: ConflictsCommandsDeps,
 ): vscode.Disposable[] {
-  const { globalConfig, runWithEngine, notifiedConflictKeys } = deps;
+  const { context, globalConfig, runWithEngine, notifiedConflictKeys } = deps;
   const runConflict3WayDiffAt = (target: { root: string; fsPath: string }): Promise<void> =>
     runConflict3WayDiff(runWithEngine, target);
   const runAiMergeForConflictAt = (
@@ -143,6 +145,68 @@ export function registerConflictsCommands(
         return;
       }
       await runConflict3WayDiffAt(target);
+    }),
+
+    /**
+     * Per-hunk conflict resolution. Whole-file "keep mine" / "take theirs"
+     * answers the easy cases; this one is for the file where both sides have
+     * changes worth keeping. Base is the newest cloud history snapshot —
+     * without it there is nothing to three-way against, and the command says
+     * so instead of guessing.
+     */
+    vscode.commands.registerCommand("vscodesync.openVisualMerger", async (uri?: vscode.Uri) => {
+      const target = await resolveFileTarget(uri);
+      if (!target) {
+        return;
+      }
+      const posixRel = path.relative(target.root, target.fsPath).split(path.sep).join("/");
+      const localUri = vscode.Uri.file(target.fsPath);
+      let localText: string;
+      try {
+        localText = Buffer.from(await vscode.workspace.fs.readFile(localUri)).toString("utf8");
+      } catch {
+        void vscode.window.showErrorMessage("VSCodeSync: локальный файл недоступен для чтения.");
+        return;
+      }
+      let cloudText: string | undefined;
+      let baseText: string | undefined;
+      await runWithEngine(async (engine) => {
+        try {
+          const { body } = await engine.downloadTrackedBlob(posixRel);
+          cloudText = body.toString("utf8");
+        } catch { /* no cloud copy — reported below */ }
+        try {
+          const hist = await engine.listCloudHistoryForTrackedFile(posixRel);
+          if (hist.length > 0 && hist[0]) {
+            const baseBody = await engine.downloadHistorySnapshotIfOwned(posixRel, hist[0].cloudPath);
+            baseText = baseBody.toString("utf8");
+          }
+        } catch { /* no history — reported below */ }
+      }, target.root);
+
+      if (cloudText === undefined) {
+        void vscode.window.showWarningMessage(
+          "VSCodeSync: облачная версия недоступна — сливать не с чем.",
+        );
+        return;
+      }
+      if (baseText === undefined) {
+        void vscode.window.showWarningMessage(
+          "VSCodeSync: нет снимка истории — общей отправной точки для трёхстороннего слияния не существует. " +
+            "Используйте «Оставить моё» / «Взять чужое» или сравнение с облаком.",
+        );
+        return;
+      }
+      openVisualMergerPanel(
+        context,
+        {
+          base: baseText.split(/\r?\n/),
+          local: localText.split(/\r?\n/),
+          cloud: cloudText.split(/\r?\n/),
+          label: path.basename(target.fsPath),
+          targetUri: localUri,
+        },
+      );
     }),
 
     vscode.commands.registerCommand("vscodesync.resolveConflicts", async () => {
