@@ -108,7 +108,7 @@ export function planStrategyImpact(
   };
 }
 
-/** Severity classification consistent with selectiveSyncTemplate so callers
+/** Severity classification consistent with `selectiveSyncMode` so callers
  * can route both impact reports through the same modal. */
 export type StrategyImpactSeverity = "noop" | "info" | "warn" | "danger";
 

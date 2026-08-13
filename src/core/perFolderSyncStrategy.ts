@@ -4,7 +4,7 @@
  * Syntax (per line):
  *   <pattern>   <strategy>
  *
- * Patterns: gitignore-ish globs (re-uses selectiveSyncFilter shape).
+ * Patterns: gitignore-ish globs, same shape the ignore rules use.
  * Strategies: never | local-only | p2p-only | cloud (default).
  *
  * Example:

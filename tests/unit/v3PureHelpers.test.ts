@@ -12,10 +12,6 @@ import {
   isQuietHour,
   learnAutoPauseSchedule,
 } from "../../src/core/autoPauseLearner.js";
-import {
-  evaluateSelectiveSync,
-  parseSelectiveSyncFile,
-} from "../../src/core/selectiveSyncFilter.js";
 import { planKeyRotation } from "../../src/core/keyRotationPlan.js";
 
 describe("quotaTracker — recordCall + snapshot", () => {
@@ -154,61 +150,6 @@ describe("autoPauseLearner — learnAutoPauseSchedule", () => {
   });
 });
 
-describe("selectiveSyncFilter — evaluateSelectiveSync", () => {
-  it("all-tracked passes through", () => {
-    expect(evaluateSelectiveSync("anything.txt", { mode: "all-tracked", patterns: [] })).toBe(true);
-  });
-
-  it("include-list matches single-segment glob", () => {
-    expect(
-      evaluateSelectiveSync("docs/readme.md", {
-        mode: "include-list",
-        patterns: ["docs/*.md"],
-      }),
-    ).toBe(true);
-    expect(
-      evaluateSelectiveSync("src/x.ts", {
-        mode: "include-list",
-        patterns: ["docs/*.md"],
-      }),
-    ).toBe(false);
-  });
-
-  it("** matches across slashes", () => {
-    expect(
-      evaluateSelectiveSync("a/b/c/file.ts", {
-        mode: "include-list",
-        patterns: ["**/file.ts"],
-      }),
-    ).toBe(true);
-  });
-
-  it("trailing slash matches all paths under directory", () => {
-    expect(
-      evaluateSelectiveSync("secrets/key.pem", {
-        mode: "exclude-list",
-        patterns: ["secrets/"],
-      }),
-    ).toBe(false);
-    expect(
-      evaluateSelectiveSync("public/x.txt", {
-        mode: "exclude-list",
-        patterns: ["secrets/"],
-      }),
-    ).toBe(true);
-  });
-
-  it("parseSelectiveSyncFile strips comments and blank lines", () => {
-    expect(
-      parseSelectiveSyncFile(`
-        # comment
-        node_modules/
-
-        src/**/*.ts
-      `),
-    ).toEqual(["node_modules/", "src/**/*.ts"]);
-  });
-});
 
 describe("keyRotationPlan — planKeyRotation", () => {
   it("packs items into batches respecting size + count caps", () => {

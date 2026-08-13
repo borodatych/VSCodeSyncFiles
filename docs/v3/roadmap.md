@@ -28,8 +28,13 @@ per-file. Хочется per-file include/exclude по паттернам с и�
   не было: инвертированный режим и фильтрация во время самой синхронизации —
   раньше правила работали только при добавлении и ручной отправке, движок их
   не спрашивал ни разу (`buildCombinedIgnoreRules` в `syncEngine.ts` = 0 вызовов).
-  Модули `selectiveSyncFilter.ts` / `selectiveSyncTemplate.ts` остались без
-  потребителей — кандидаты на удаление отдельным решением.
+  Модули `selectiveSyncFilter.ts` / `selectiveSyncTemplate.ts` удалены
+  (2026-08-13, решение владельца): их замысел реализован, но другим способом,
+  и держать второй матчер глобов рядом с рабочим — приглашение к расхождению.
+  Перед удалением проверено, что ссылок на них в коде нет (только два
+  комментария, поправлены); тесты `selectiveSyncTemplate.test.ts` и блок в
+  `v3PureHelpers.test.ts` сняты вместе с кодом — их предмет закрыт тестами
+  `selectiveSyncMode.test.ts`, которые проверяют рантаймовый вердикт.
 - [x] Pure filter `src/core/selectiveSyncFilter.ts`: `evaluateSelectiveSync(relPath, { mode, patterns })` + `parseSelectiveSyncFile(text)`. Поддержка `*` / `**` / `?` / trailing slash для директорий. 5 unit-тестов.
 - [x] UI команда `vscodesync.selectiveSyncEditList` — ✅ (2026-08-13) режим + открытие списка паттернов; было: — pure template renderer `renderSelectiveSyncIncludeTemplate(mode)` готов в `src/core/selectiveSyncTemplate.ts` (mode-aware header + glob-syntax shorthand + explicit "negation NOT supported" note). Webview/`workspace.fs.writeFile` обвязка остаётся.
 - [x] Diff-preview перед переключением — ✅ (2026-08-13) `summariseModeSwitch`/`scoreModeSwitch` поверх рантаймового вердикта (превью не может разойтись с движком), модалка с поимённым списком и отдельным подтверждением от 10 остановок; было: — pure helper `summariseSelectiveSyncImpact({ trackedRelPaths, prevMode, prevPatterns, nextMode, nextPatterns })` возвращает `{ wouldStop[], wouldStart[], unchangedCount }` + `scoreSelectiveSyncImpact(impact)` severity ladder (`noop` / `info` / `warn` / `danger` ≥ 10 stops). 9 unit-тестов. UI modal обвязка остаётся.
