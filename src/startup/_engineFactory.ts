@@ -33,6 +33,7 @@ import type { PurgeLostFileItem, SyncProfileSample } from "../core/syncEngine.js
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import { wrapWithQueue } from "../core/queuedProvider.js";
 import { wrapWithQuotaTracking } from "../core/quotaProviderWrapper.js";
+import { parseSelectiveSyncMode } from "../core/selectiveSyncMode.js";
 import { sharedQuotaTracker } from "../core/quotaTrackerSingleton.js";
 import { createWorkspaceSnapshot } from "../core/snapshotsEngine.js";
 import { warnLog } from "../utils/log.js";
@@ -270,6 +271,10 @@ export function createEngineFactory(factoryDeps: EngineFactoryDeps): EngineFacto
       localBackupEnabled,
       localBackupRetentionDays,
       tombstonePurgeDays,
+      selectiveSyncMode: () =>
+        parseSelectiveSyncMode(
+          vscode.workspace.getConfiguration(CFG_SECTION).get<string>("selectiveSync.mode", "all-tracked"),
+        ),
       // `encryptionRequired` lets the engine refuse when the setting is on but
       // the key is absent, instead of silently working in plaintext.
       encryptionRequired: encryptionOn,

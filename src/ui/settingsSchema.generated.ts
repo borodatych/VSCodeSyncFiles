@@ -414,6 +414,17 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     "default": false
   },
   {
+    "key": "selectiveSync.mode",
+    "type": "string",
+    "description": "Как читать паттерны исключений (.vscodesync-ignore, общие из манифеста, локальные) во время синхронизации. all-tracked — как раньше: паттерны действуют только при добавлении файлов и при ручной отправке. exclude-list — совпавшие файлы перестают синхронизироваться на этой машине. include-list — синхронизируются ТОЛЬКО совпавшие. Файлы не удаляются ни из облака, ни с диска: они просто перестают синхронизироваться здесь.",
+    "default": "all-tracked",
+    "enum": [
+      "all-tracked",
+      "exclude-list",
+      "include-list"
+    ]
+  },
+  {
     "key": "showFileDecorations",
     "type": "boolean",
     "description": "Показывать значки синхронизации на файлах в проводнике",

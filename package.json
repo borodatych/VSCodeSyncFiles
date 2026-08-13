@@ -625,6 +625,16 @@
           "default": 1,
           "minimum": 1,
           "description": "%cfg.backup.verifyIntervalDays.description%"
+        },
+        "vscodesync.selectiveSync.mode": {
+          "type": "string",
+          "enum": [
+            "all-tracked",
+            "exclude-list",
+            "include-list"
+          ],
+          "default": "all-tracked",
+          "description": "%cfg.selectiveSync.mode.description%"
         }
       }
     },
@@ -1628,6 +1638,10 @@
       {
         "command": "vscodesync.openVisualMerger",
         "title": "%cmd.openVisualMerger.title%"
+      },
+      {
+        "command": "vscodesync.selectiveSyncEditList",
+        "title": "%cmd.selectiveSyncEditList.title%"
       }
     ],
     "menus": {

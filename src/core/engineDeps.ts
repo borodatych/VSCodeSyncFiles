@@ -13,6 +13,7 @@
  * `SyncEngineDeps` stays their intersection: the 24 construction sites pass one
  * flat object, and nesting it would be churn without a reader benefit.
  */
+import type { SelectiveSyncMode } from "./selectiveSyncMode.js";
 import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import type { SyncTrigger } from "./syncPolicy.js";
 import type { MassChangeReport } from "./massChangeGuard.js";
@@ -112,6 +113,14 @@ export interface EngineConfig {
   compressUploads?: boolean;
   /** Days after which tombstone entries (removedAt) are purged from the manifest on next PUT. Default 30. */
   tombstonePurgeDays?: number;
+  /**
+   * Selective sync: how this machine reads its ignore patterns during sync.
+   * `all-tracked` (default) keeps them as an add-time / manual-push guard
+   * only; `exclude-list` and `include-list` also filter the sync pass. A
+   * filtered-out file stays tracked and untouched in the cloud — it simply
+   * stops syncing here (same contract as `syncScopes`).
+   */
+  selectiveSyncMode?: () => SelectiveSyncMode;
   /**
    * Returns the current `vscodesync.canonicalHashAlgo` setting. When the
    * caller resolves `"blake3"` or `"dual"`, `pushFile` writes both `hash`

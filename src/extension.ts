@@ -51,6 +51,7 @@ import { registerLinkBindingsCommands } from "./commands/registerLinkBindings.js
 import { registerFolderActionsCommands } from "./commands/registerFolderActions.js";
 import { offerResumePendingCanonicalRename, registerCanonicalRenameCommands } from "./commands/registerCanonicalRename.js";
 import { registerSyncOpsCommands } from "./commands/registerSyncOps.js";
+import { registerSelectiveSyncCommands } from "./commands/registerSelectiveSync.js";
 import { registerDivergenceNotice, registerDivergencesCommands, type DivergencesCommandsDeps } from "./commands/registerDivergences.js";
 import { registerWorkspaceMgmtCommands } from "./commands/registerWorkspaceMgmt.js";
 import { registerHeavyMiscCommands } from "./commands/registerHeavyMisc.js";
@@ -354,6 +355,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerWorkspaceCreateCommands({ context, runWithEngine }),
 
     ...registerSyncOpsCommands({ runWithEngine }),
+    ...registerSelectiveSyncCommands(),
 
     ...registerDivergencesCommands(divergencesDeps),
 
