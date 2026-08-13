@@ -16,6 +16,7 @@
 import * as vscode from "vscode";
 import { openMachineGraphPanel } from "../ui/machineGraphPanel.js";
 import { openQuickTransferDropPanel } from "../ui/quickTransferDropPanel.js";
+import { openQuotaDashboardPanel } from "../ui/quotaDashboardPanel.js";
 import { openSankeyChartPanel } from "../ui/sankeyChartPanel.js";
 
 export interface PanelCommandsDeps {
@@ -33,6 +34,9 @@ export function registerPanelCommands(deps: PanelCommandsDeps): vscode.Disposabl
     }),
     vscode.commands.registerCommand("vscodesync.openSankeyChart", () => {
       openSankeyChartPanel(deps.context, deps.storageDir);
+    }),
+    vscode.commands.registerCommand("vscodesync.showQuotaDashboard", () => {
+      openQuotaDashboardPanel(deps.context);
     }),
   ];
 }

@@ -274,5 +274,6 @@
   "cmd.toggleTreeOnlyDiverged.title": "Toggle tree: only diverged files",
   "cmd.verifyBackup.title": "VSCodeSync: Verify secondary-cloud backup",
   "cfg.backup.verifyEnabled.description": "Periodically check that the secondary-cloud copy is complete and fresh. Read-only: divergence is reported, nothing is copied without your command.",
-  "cfg.backup.verifyIntervalDays.description": "How often to verify the backup (days). A failed verification shortens the next interval."
+  "cfg.backup.verifyIntervalDays.description": "How often to verify the backup (days). A failed verification shortens the next interval.",
+  "cmd.showQuotaDashboard.title": "VSCodeSync: Provider quota usage"
 }

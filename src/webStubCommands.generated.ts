@@ -183,5 +183,6 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.showWorkspaceReadme",
   "vscodesync.exportEncryptedBundle",
   "vscodesync.prefetchActiveWorkspace",
-  "vscodesync.verifyBackup"
+  "vscodesync.verifyBackup",
+  "vscodesync.showQuotaDashboard"
 ];

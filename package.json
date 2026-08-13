@@ -1620,6 +1620,10 @@
       {
         "command": "vscodesync.verifyBackup",
         "title": "%cmd.verifyBackup.title%"
+      },
+      {
+        "command": "vscodesync.showQuotaDashboard",
+        "title": "%cmd.showQuotaDashboard.title%"
       }
     ],
     "menus": {
