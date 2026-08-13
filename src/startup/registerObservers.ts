@@ -11,12 +11,14 @@
  * thread through, so packing them into one helper is purely mechanical.
  */
 import * as vscode from "vscode";
+import type { ProviderType } from "../core/types.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { tryAuthenticatedProvider } from "../commands/_providerFactory.js";
 import { SmartConflictPredictionService } from "../ui/smartConflictPredictionService.js";
 import { registerPresenceHeartbeat } from "../ui/presenceHeartbeat.js";
-import { registerCrossCloudBackup } from "../ui/crossCloudBackup.js";
+import { getAuthenticatedSecondary, registerCrossCloudBackup } from "../ui/crossCloudBackup.js";
+import { registerBackupVerify } from "../ui/backupVerify.js";
 
 export interface ObserverWiringDeps {
   context: vscode.ExtensionContext;
@@ -44,4 +46,23 @@ export function registerObservers(deps: ObserverWiringDeps): void {
     registry,
     tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
   });
+
+  // Copying a backup and knowing it is restorable are different questions —
+  // the mirror job answered only the first until now.
+  const verifyChannel = vscode.window.createOutputChannel("VSCodeSync · Проверка бэкапа");
+  context.subscriptions.push(verifyChannel);
+  registerBackupVerify(
+    context,
+    {
+      registry,
+      tryAuthenticatedProvider: () => tryAuthenticatedProvider(registry),
+      getAuthenticatedSecondary: (type) =>
+        isProviderTypeName(type) ? getAuthenticatedSecondary(registry, type) : Promise.resolve(null),
+    },
+    verifyChannel,
+  );
+}
+
+function isProviderTypeName(s: string): s is ProviderType {
+  return s === "onedrive" || s === "gdrive" || s === "dropbox" || s === "yandex";
 }

@@ -25,8 +25,10 @@ const SKELETONS = [
   "trustedTeammatesInvitePlanner",
   "undoableActionRegistry",
   "perGlobScheduler",
-  "backupVerifyScheduler",
   "autoPauseTickPlanner",
+  // `backupVerifyScheduler` left this list when the verification flow was
+  // wired (ui/backupVerify.ts): it now ships on purpose. A skeleton entering
+  // the bundle is a bug only while nothing calls it.
 ];
 
 describe("скелеты фазы 24 не попадают в бандл", () => {

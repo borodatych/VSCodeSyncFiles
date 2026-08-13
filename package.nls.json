@@ -271,5 +271,8 @@
   "cmd.resumeCanonicalRename.title": "VSCodeSync: Возобновить прерванный перенос путей",
   "cmd.toggleTreeCanonicalMode.title": "Дерево: структура воркспейса ⇄ как лежит у меня",
   "cmd.undoCanonicalRename.title": "VSCodeSync: Отменить последнее переименование путей",
-  "cmd.toggleTreeOnlyDiverged.title": "Дерево: только расхождения"
+  "cmd.toggleTreeOnlyDiverged.title": "Дерево: только расхождения",
+  "cmd.verifyBackup.title": "VSCodeSync: Проверить резервную копию во втором облаке",
+  "cfg.backup.verifyEnabled.description": "Периодически проверять, что копия во втором облаке полная и свежая. Только чтение: расхождения показываются, ничего не копируется без вашей команды.",
+  "cfg.backup.verifyIntervalDays.description": "Как часто проверять резервную копию (в днях). После неудачной проверки следующая выполняется раньше."
 }

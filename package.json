@@ -614,6 +614,17 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "%cfg.hints.enabled.description%"
+        },
+        "vscodesync.backup.verifyEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.backup.verifyEnabled.description%"
+        },
+        "vscodesync.backup.verifyIntervalDays": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "%cfg.backup.verifyIntervalDays.description%"
         }
       }
     },
@@ -1605,6 +1616,10 @@
       {
         "command": "vscodesync.prefetchActiveWorkspace",
         "title": "%cmd.prefetchActiveWorkspace.title%"
+      },
+      {
+        "command": "vscodesync.verifyBackup",
+        "title": "%cmd.verifyBackup.title%"
       }
     ],
     "menus": {

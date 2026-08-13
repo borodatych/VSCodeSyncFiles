@@ -99,6 +99,19 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     ]
   },
   {
+    "key": "backup.verifyEnabled",
+    "type": "boolean",
+    "description": "Периодически проверять, что копия во втором облаке полная и свежая. Только чтение: расхождения показываются, ничего не копируется без вашей команды.",
+    "default": true
+  },
+  {
+    "key": "backup.verifyIntervalDays",
+    "type": "number",
+    "description": "Как часто проверять резервную копию (в днях). После неудачной проверки следующая выполняется раньше.",
+    "default": 1,
+    "minimum": 1
+  },
+  {
     "key": "batchAddWarnThreshold",
     "type": "number",
     "description": "Порог количества файлов для предупреждения при пакетном добавлении",

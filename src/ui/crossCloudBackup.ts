@@ -213,7 +213,7 @@ function isProviderType(s: string): s is ProviderType {
   return s === "onedrive" || s === "gdrive" || s === "yandex" || s === "dropbox";
 }
 
-async function getAuthenticatedSecondary(
+export async function getAuthenticatedSecondary(
   registry: ProviderRegistry,
   type: ProviderType,
 ): Promise<ICloudProvider | null> {
