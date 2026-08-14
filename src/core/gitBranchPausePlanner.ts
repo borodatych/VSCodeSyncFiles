@@ -30,6 +30,14 @@ export interface BranchPauseEntryInput {
   autoPausedFromBranch?: string;
 }
 
+/** The subset of an `ActiveWorkspaceEntry` this module writes. */
+export interface BranchPauseConfigEntry {
+  workspaceId: string;
+  syncState?: "active" | "suspended" | "frozen";
+  lastSeenGitBranch?: string;
+  autoPausedFromBranch?: string;
+}
+
 export interface BranchPausePlanInput {
   /** Normalized current branch, or undefined when HEAD is detached/unreadable. */
   currentBranch: string | undefined;
@@ -112,4 +120,39 @@ export function describeAutoPause(actions: readonly BranchPauseAction[], current
     parts.push(`возобновлено ${String(resumed.length)} — вернулись на «${currentBranch}»`);
   }
   return `VSCodeSync: ${parts.join("; ")}.`;
+}
+
+/**
+ * Write a plan into the local config. Pure — the caller runs it inside the
+ * config store's serialised mutate, so the whole plan lands as one write.
+ *
+ * Returns the ids that were resumed: their statuses stopped updating while
+ * paused, so the caller recounts them when it can reach the cloud.
+ */
+export function applyBranchPausePlanToConfig(
+  cfg: { activeWorkspaces: BranchPauseConfigEntry[] },
+  plan: BranchPausePlan,
+  currentBranch: string,
+): string[] {
+  const resumed: string[] = [];
+  const byId = new Map(cfg.activeWorkspaces.map((e) => [e.workspaceId, e]));
+  for (const action of plan.actions) {
+    const entry = byId.get(action.workspaceId);
+    if (!entry) continue;
+    if (action.kind === "suspend") {
+      entry.syncState = "suspended";
+      entry.autoPausedFromBranch = action.fromBranch;
+    } else {
+      // `undefined`, not "active": the field is absent for active workspaces,
+      // and the config writer drops undefined keys.
+      entry.syncState = undefined;
+      entry.autoPausedFromBranch = undefined;
+      resumed.push(action.workspaceId);
+    }
+  }
+  for (const wsId of plan.rememberBranchFor) {
+    const entry = byId.get(wsId);
+    if (entry) entry.lastSeenGitBranch = currentBranch;
+  }
+  return resumed;
 }
