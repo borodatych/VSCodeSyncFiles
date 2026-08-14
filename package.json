@@ -390,6 +390,11 @@
           "default": true,
           "description": "%cfg.gitBranchAutoSync.description%"
         },
+        "vscodesync.git.autoSuspendUnbound": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.git.autoSuspendUnbound.description%"
+        },
         "vscodesync.tasks.allowFileMutations": {
           "type": "boolean",
           "default": false,
@@ -1444,6 +1449,14 @@
         "title": "%cmd.repairState.title%"
       },
       {
+        "command": "vscodesync.suspendWorkspaces",
+        "title": "%cmd.suspendWorkspaces.title%"
+      },
+      {
+        "command": "vscodesync.resumeWorkspaces",
+        "title": "%cmd.resumeWorkspaces.title%"
+      },
+      {
         "command": "vscodesync.suspendWorkspace",
         "title": "%cmd.suspendWorkspace.title%"
       },
@@ -1811,6 +1824,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "vscodesync.suspendWorkspaces",
+          "when": "view == vscodesync.workspaces",
+          "group": "1_pause@0"
+        },
+        {
+          "command": "vscodesync.resumeWorkspaces",
+          "when": "view == vscodesync.workspaces",
+          "group": "1_pause@1"
+        },
         {
           "command": "vscodesync.createWorkspace",
           "when": "view == vscodesync.workspaces",

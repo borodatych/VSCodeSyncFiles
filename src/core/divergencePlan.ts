@@ -153,9 +153,18 @@ export function filterDivergences(
     .filter((g) => g.rows.length > 0);
 }
 
+/**
+ * Counts for the status bar, the headline and the conflict toast.
+ *
+ * Suspended and frozen groups are excluded: their statuses are frozen at
+ * whatever the detector last recorded, so counting them would keep announcing
+ * divergences the user deliberately paused. The panel still lists those rows —
+ * seeing them is fine, being nagged about them is not.
+ */
 export function summariseDivergences(groups: readonly DivergenceGroup[]): DivergenceCounts {
   const counts: DivergenceCounts = { push: 0, pull: 0, conflict: 0, total: 0 };
   for (const g of groups) {
+    if (g.suspended) continue;
     for (const r of g.rows) {
       counts[r.direction] += 1;
       counts.total += 1;

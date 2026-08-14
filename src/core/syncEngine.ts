@@ -614,6 +614,20 @@ export class SyncEngine {
     });
   }
 
+  /** Bookkeeping for the git-branch auto-pause (`gitBranchPausePlanner`):
+   *  local-only, like `syncState`. `null` clears a field — that is how a
+   *  resume forgets the pause was ever automatic. */
+  async setWorkspaceBranchPauseState(
+    workspaceId: string,
+    patch: { lastSeenGitBranch?: string | null; autoPausedFromBranch?: string | null },
+  ): Promise<void> {
+    const entryPatch: Partial<ActiveWorkspaceEntry> = {};
+    for (const k of ["lastSeenGitBranch", "autoPausedFromBranch"] as const) {
+      if (patch[k] !== undefined) entryPatch[k] = patch[k] ?? undefined;
+    }
+    await this.patchEntry(workspaceId, entryPatch);
+  }
+
   /** Suspend/Freeze блокируют любые операции с файлами (pull и push). */
   private async ensureWorkspaceNotSuspendedNorFrozen(workspaceId: string): Promise<void> {
     const cfg = await this.loadCfg();
@@ -3165,6 +3179,15 @@ export class SyncEngine {
    * is allowed to run, so its guarantees have to hold without a checkpoint.
    */
   async checkWorkspaceStatus(workspaceId: string): Promise<void> {
+    // Suspend/Freeze silence the detector too, not just the writers: a paused
+    // workspace whose statuses keep churning defeats the point of pausing it —
+    // a git checkout would refill the tree with `pending_push`. Bailing here
+    // also spares the manifest download.
+    const cfgBefore = await this.loadCfg();
+    const entryBefore = cfgBefore.activeWorkspaces.find((w) => w.workspaceId === workspaceId);
+    if (entryBefore && normalizeWorkspaceSyncState(entryBefore) !== "active") {
+      return;
+    }
     const ctx = await this.loadWorkspaceSyncContext(workspaceId);
     if (!ctx) return;
     await this.iterateTrackedFiles(ctx.cfg, workspaceId, ctx.manifest, ctx.trackedFiles, ctx.meta, true);

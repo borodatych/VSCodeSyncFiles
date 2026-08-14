@@ -181,6 +181,12 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     "maximum": 86400
   },
   {
+    "key": "git.autoSuspendUnbound",
+    "type": "boolean",
+    "description": "Авто-пауза по git-ветке для воркспейсов БЕЗ привязки gitBranch: при переключении на другую ветку они уходят в Suspend (статусы перестают обновляться, дерево не заливается «pending push» от checkout), при возврате на прежнюю ветку возобновляются с пересчётом статусов. Паузу, поставленную вручную, авто-возобновление не трогает. Работает при включённом vscodesync.gitBranchAutoSync.",
+    "default": false
+  },
+  {
     "key": "gitBranchAutoSync",
     "type": "boolean",
     "description": "При смене git-ветки: Suspend для воркспейсов с другим gitBranch в манифесте; активация совпадающих, пересчёт их статусов и предложение накопившихся изменений уведомлением. Файлы двигаются только после вашего подтверждения. Требует расширение Git и настройку gitBranch.",
