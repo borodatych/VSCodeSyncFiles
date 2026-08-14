@@ -163,10 +163,14 @@ function buildHtml(nonce: string, cspSource: string): string {
       var vis = visibleGroups();
       var list = document.getElementById('list');
       if (vis.length === 0) {
+        // An empty centre under a non-empty header reads as a bug: say how many
+        // rows the "all" chip would show, so the filter explains itself.
+        var totalRows = 0;
+        groups.forEach(function (g) { totalRows += g.rows.length; });
         list.innerHTML = '<div class="empty">' +
           (groups.length === 0
             ? 'Расхождений нет — локальное состояние совпадает с облаком.'
-            : 'Под выбранный фильтр ничего не подходит.') + '</div>';
+            : 'Под выбранный фильтр ничего не подходит. Под фильтром «Все» — ' + totalRows + '.') + '</div>';
         updateButtons();
         return;
       }
@@ -295,13 +299,17 @@ function indexRows(groups: readonly DivergenceGroup[]): Map<string, DivergenceRo
 
 function postState(target: vscode.WebviewPanel, groups: readonly DivergenceGroup[]): void {
   const counts = summariseDivergences(groups);
+  // Paused rows are listed but not counted, so "nothing diverges" would be a
+  // lie when the only rows left belong to a paused workspace. Say which it is.
+  const pausedRows = groups.reduce((n, g) => n + (g.suspended ? g.rows.length : 0), 0);
+  const pausedTail = pausedRows === 0 ? "" : ` На паузе — ${String(pausedRows)}, они не учитываются.`;
   void target.webview.postMessage({
     kind: "state",
     groups,
     summary:
       counts.total === 0
-        ? "Локальное состояние совпадает с облаком."
-        : `${describeDivergenceCounts(counts)} — всего ${String(counts.total)}. Ничего не выполняется без вашей команды.`,
+        ? `Локальное состояние совпадает с облаком.${pausedTail}`
+        : `${describeDivergenceCounts(counts)} — всего ${String(counts.total)}. Ничего не выполняется без вашей команды.${pausedTail}`,
   });
 }
 
