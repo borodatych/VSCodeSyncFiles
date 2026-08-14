@@ -10,9 +10,13 @@ import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import type { WorkspaceConfig } from "../core/types.js";
 import { normalizeWorkspaceSyncState } from "../core/types.js";
 import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
-import { describeAutoPause, planUnboundBranchPause } from "../core/gitBranchPausePlanner.js";
+import {
+  applyBranchPausePlanToConfig,
+  describeAutoPause,
+  planUnboundBranchPause,
+} from "../core/gitBranchPausePlanner.js";
 import { parseGitHead } from "../core/gitHeadCompare.js";
-import { warnLog } from "../utils/log.js";
+import { verboseLog, warnLog } from "../utils/log.js";
 
 const CFG = "vscodesync";
 
@@ -104,9 +108,9 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * showing whatever the checkout left behind.
  */
 async function applyUnboundBranchPause(
+  root: string,
   currentBranch: string,
   wc: WorkspaceConfig,
-  engine: SyncEngine,
   deps: GitBranchAutoActivationDeps,
 ): Promise<void> {
   const enabled = vscode.workspace
@@ -125,36 +129,39 @@ async function applyUnboundBranchPause(
     })),
   });
   if (plan.actions.length === 0 && plan.rememberBranchFor.length === 0) {
+    verboseLog("gitBranch", `auto-pause: нечего делать на «${currentBranch}» (включено: ${String(enabled)})`);
     return;
   }
 
-  for (const action of plan.actions) {
-    try {
-      if (action.kind === "suspend") {
-        await engine.setWorkspaceSyncState(action.workspaceId, "suspended");
-        await engine.setWorkspaceBranchPauseState(action.workspaceId, {
-          autoPausedFromBranch: action.fromBranch,
-        });
-      } else {
-        await engine.setWorkspaceSyncState(action.workspaceId, "active");
-        await engine.setWorkspaceBranchPauseState(action.workspaceId, {
-          autoPausedFromBranch: null,
-        });
-        await engine.checkWorkspaceStatus(action.workspaceId);
-      }
-    } catch (e) {
-      warnLog(
-        "gitBranch",
-        `auto-pause ${action.kind} ${action.workspaceId}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
+  // One serialised read-modify-write for the whole plan. Deliberately NOT via
+  // the engine: pausing is a local decision, and routing it through the engine
+  // put it behind an authenticated provider — offline, signed out, or in a
+  // fork with its own secret storage the pause silently never happened.
+  const resumed = await WorkspaceConfigManager.mutate(root, (cfg) =>
+    applyBranchPausePlanToConfig(cfg, plan, currentBranch),
+  );
+  verboseLog(
+    "gitBranch",
+    `auto-pause на «${currentBranch}»: ${String(plan.actions.filter((a) => a.kind === "suspend").length)} пауза, ` +
+      `${String(resumed.length)} возобновлено, ${String(plan.rememberBranchFor.length)} запомнено`,
+  );
 
-  for (const wsId of plan.rememberBranchFor) {
-    try {
-      await engine.setWorkspaceBranchPauseState(wsId, { lastSeenGitBranch: currentBranch });
-    } catch (e) {
-      warnLog("gitBranch", `remember branch ${wsId}: ${e instanceof Error ? e.message : String(e)}`);
+  // Recount is best-effort: it needs the cloud, and the pause must not depend
+  // on it. Without a provider the statuses catch up on the next ordinary pass.
+  if (resumed.length > 0) {
+    const provider = await deps.tryAuthenticatedProvider();
+    if (provider) {
+      const gc = await deps.globalConfig.load();
+      const engine = deps.makeEngine(root, provider, gc.machineId, gc.machineName, "auto");
+      for (const wsId of resumed) {
+        try {
+          await engine.checkWorkspaceStatus(wsId);
+        } catch (e) {
+          warnLog("gitBranch", `recount after auto-resume ${wsId}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    } else {
+      verboseLog("gitBranch", "auto-resume: провайдера нет — пересчёт статусов отложен");
     }
   }
 
@@ -178,10 +185,12 @@ async function applyUnboundBranchPause(
  */
 export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAutoActivationDeps): Promise<void> {
   if (!vscode.workspace.isTrusted) {
+    verboseLog("gitBranch", "проход пропущен: папке не выдано доверие");
     return;
   }
   const enabled = vscode.workspace.getConfiguration(CFG).get<boolean>("gitBranchAutoSync", true);
   if (!enabled) {
+    verboseLog("gitBranch", "проход пропущен: gitBranchAutoSync выключен");
     return;
   }
   // `off` promises silence — no provider round-trips from a branch switch.
@@ -189,10 +198,12 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
     vscode.workspace.getConfiguration(CFG).get<string>("autoSyncMode", "check-only"),
   );
   if (!isAutoCheckEnabled(autoMode)) {
+    verboseLog("gitBranch", "проход пропущен: autoSyncMode=off");
     return;
   }
   const wc0 = await WorkspaceConfigManager.load(root);
   if (wc0.activeWorkspaces.length === 0) {
+    verboseLog("gitBranch", `проход пропущен: в «${root}» нет подключённых воркспейсов`);
     return;
   }
   const git = await getGitAPI();
@@ -210,11 +221,19 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
   // without this the whole policy was unreachable on those setups.
   currentBranch ??= await readBranchFromHeadFile(root);
   if (currentBranch === undefined) {
+    verboseLog("gitBranch", "проход пропущен: ветка не определена (detached HEAD или не git-репозиторий)");
     return;
   }
 
+  // Unbound workspaces: pause while the tree is on a foreign branch, resume on
+  // return. Runs FIRST and without the engine — the decision is local, so it
+  // must not depend on being signed in to the cloud. Never touches a workspace
+  // that has a `gitBranch`: those follow their binding, not their history.
+  await applyUnboundBranchPause(root, currentBranch, wc0, deps);
+
   const provider = await deps.tryAuthenticatedProvider();
   if (!provider) {
+    verboseLog("gitBranch", "привязка к ветке пропущена: нет авторизованного провайдера");
     return;
   }
   const gc = await deps.globalConfig.load();
@@ -222,11 +241,6 @@ export async function applyBranchPolicyForRoot(root: string, deps: GitBranchAuto
   // Built on click, not in advance: the button press is what makes it "user".
   const userEngine = (): SyncEngine =>
     deps.makeEngine(root, provider, gc.machineId, gc.machineName, "user");
-
-  // Unbound workspaces: pause while the tree is on a foreign branch, resume on
-  // return. Runs before the binding policy below and never touches a workspace
-  // that has a `gitBranch` — those follow their binding, not their history.
-  await applyUnboundBranchPause(currentBranch, wc0, engine, deps);
 
   const toSuspend: string[] = [];
   const toActivate: string[] = [];

@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  applyBranchPausePlanToConfig,
   describeAutoPause,
   planUnboundBranchPause,
   type BranchPauseEntryInput,
@@ -124,5 +125,57 @@ describe("describeAutoPause", () => {
     );
     expect(text).toContain("приостановлено 1");
     expect(text).toContain("возобновлено 1");
+  });
+});
+
+describe("applyBranchPausePlanToConfig", () => {
+  it("ставит паузу с пометкой ветки и запоминает текущую", () => {
+    const cfg = { activeWorkspaces: [{ workspaceId: "w1", lastSeenGitBranch: "main" }] };
+    const plan = planUnboundBranchPause({
+      currentBranch: "feature",
+      enabled: true,
+      entries: [entry({ lastSeenGitBranch: "main" })],
+    });
+    const resumed = applyBranchPausePlanToConfig(cfg, plan, "feature");
+    expect(resumed).toEqual([]);
+    expect(cfg.activeWorkspaces[0]).toEqual({
+      workspaceId: "w1",
+      syncState: "suspended",
+      autoPausedFromBranch: "main",
+      lastSeenGitBranch: "feature",
+    });
+  });
+
+  it("возобновление снимает и состояние, и пометку автоматизма", () => {
+    const cfg = {
+      activeWorkspaces: [
+        {
+          workspaceId: "w1",
+          syncState: "suspended" as const,
+          autoPausedFromBranch: "main",
+          lastSeenGitBranch: "feature",
+        },
+      ],
+    };
+    const plan = planUnboundBranchPause({
+      currentBranch: "main",
+      enabled: true,
+      entries: [entry({ syncState: "suspended", autoPausedFromBranch: "main", lastSeenGitBranch: "feature" })],
+    });
+    const resumed = applyBranchPausePlanToConfig(cfg, plan, "main");
+    expect(resumed).toEqual(["w1"]);
+    expect(cfg.activeWorkspaces[0]?.syncState).toBeUndefined();
+    expect(cfg.activeWorkspaces[0]?.autoPausedFromBranch).toBeUndefined();
+    expect(cfg.activeWorkspaces[0]?.lastSeenGitBranch).toBe("main");
+  });
+
+  it("строку, исчезнувшую из конфига между планом и записью, пропускает", () => {
+    const cfg = { activeWorkspaces: [] as { workspaceId: string }[] };
+    const plan = planUnboundBranchPause({
+      currentBranch: "feature",
+      enabled: true,
+      entries: [entry({ lastSeenGitBranch: "main" })],
+    });
+    expect(() => applyBranchPausePlanToConfig(cfg, plan, "feature")).not.toThrow();
   });
 });
