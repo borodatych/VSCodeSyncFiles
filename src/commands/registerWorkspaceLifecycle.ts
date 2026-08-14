@@ -24,6 +24,9 @@ import { normalizeWorkspaceSyncState } from "../core/types.js";
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
 import { hasArchivedTag } from "../utils/workspaceLastActivity.js";
+import { trackedAbsolutePathFor } from "../core/trackedPathResolver.js";
+import { warnLog } from "../utils/log.js";
+import { registerWorkspacePauseBatchCommands } from "./registerWorkspacePauseBatch.js";
 import { applyArchivedTagAndSuspend, stripArchivedTagAndActivate } from "../ui/workspaceArchiveOps.js";
 import { confirmTreeWorkspaceBulkSyncIfNeeded } from "../ui/syncPreviewUi.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
@@ -82,7 +85,18 @@ export function registerWorkspaceLifecycleCommands(
     runWithEngine,
   } = deps;
 
+  const refreshUi = async (): Promise<void> => {
+    workspacesTree.refresh();
+    fileDecorations.refresh();
+    refreshActiveEditor();
+    await statusBar.refresh();
+  };
+
   return [
+    // Batch pause/resume lives in its own module but belongs to this lifecycle:
+    // it is the same transition applied to several workspaces at once.
+    ...registerWorkspacePauseBatchCommands({ runWithEngine, refreshUi }),
+
     vscode.commands.registerCommand("vscodesync.suspendWorkspace", async (arg?: unknown) => {
       let root: string | undefined;
       let wsId: string | undefined;
@@ -115,8 +129,11 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.setWorkspaceSyncState(ws, next);
+          // A hand-made pause must not be mistaken for the branch watcher's
+          // own, or returning to the branch would silently undo it.
+          await engine.setWorkspaceBranchPauseState(ws, { autoPausedFromBranch: null });
           void vscode.window.showInformationMessage(
-            "VSCodeSync: workspace приостановлен (Suspend) — push/pull файлов отключены; манифест можно обновлять.",
+            "VSCodeSync: workspace приостановлен (Suspend) — push/pull файлов и обновление статусов отключены; манифест можно обновлять.",
           );
         },
         rt,
@@ -157,7 +174,17 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(
         async (engine) => {
           await engine.setWorkspaceSyncState(ws, next);
-          void vscode.window.showInformationMessage("VSCodeSync: workspace снова активен (Resume).");
+          await engine.setWorkspaceBranchPauseState(ws, { autoPausedFromBranch: null });
+          // Statuses stopped updating while paused: recount before the user
+          // sees the tree, otherwise it shows the pre-pause snapshot.
+          try {
+            await engine.checkWorkspaceStatus(ws);
+          } catch (e) {
+            warnLog("lifecycle", `resume recount ${ws}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          void vscode.window.showInformationMessage(
+            "VSCodeSync: workspace снова активен (Resume) — статусы пересчитаны.",
+          );
         },
         rt,
       );
@@ -374,6 +401,25 @@ export function registerWorkspaceLifecycleCommands(
       await runWithEngine(async (engine) => {
         await engine.setWorkspaceSyncState(ws, next);
         await engine.repairLocalStateFromCloud(ws);
+        // Unfreeze used to sync unconditionally: files moved both ways off a
+        // button that only promised to lift the freeze. Same preview gate as
+        // Unarchive — declining leaves the workspace active and untouched.
+        const wcLabel = await WorkspaceConfigManager.load(rt);
+        const noteRaw = wcLabel.activeWorkspaces.find((w) => w.workspaceId === ws)?.workspaceNote.trim();
+        const label = noteRaw === undefined || noteRaw === "" ? ws : noteRaw;
+        const proceed = await confirmTreeWorkspaceBulkSyncIfNeeded(
+          engine,
+          syncPreviewChannel,
+          ws,
+          label,
+          "sync",
+        );
+        if (!proceed) {
+          void vscode.window.showInformationMessage(
+            "VSCodeSync: Freeze снят — синхронизация не выполнялась.",
+          );
+          return;
+        }
         await engine.syncWorkspace(ws);
         void vscode.window.showInformationMessage(
           "VSCodeSync: Freeze снят — подтянуты метаданные с облака и выполнен sync workspace.",
@@ -434,7 +480,16 @@ export function registerWorkspaceLifecycleCommands(
             const wc = await WorkspaceConfigManager.load(rt);
             const savedEntry = wc.activeWorkspaces.find((e) => e.workspaceId === ws);
             const savedFiles = wc.files.filter((f) => f.workspaceId === ws);
-            const localPaths = savedFiles.map((f) => path.join(rt, ...f.localPath.split("/")));
+            // Resolve through `pathMapping` (and thus Link Bindings), like every
+            // other place that touches a tracked file on disk. Joining the root
+            // by hand missed the real location on any machine with a mapping,
+            // and the misses were swallowed by the `unlink` catch below — the
+            // toast then reported a deletion count lower than promised.
+            const localPaths: string[] = [];
+            for (const f of savedFiles) {
+              const abs = await trackedAbsolutePathFor(rt, f.localPath);
+              localPaths.push(abs ?? path.join(rt, ...f.localPath.split("/")));
+            }
 
             workspacesTree.markPendingDelete(ws);
             workspacesTree.invalidateRemoteCache();

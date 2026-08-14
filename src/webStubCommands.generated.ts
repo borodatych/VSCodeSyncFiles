@@ -137,6 +137,8 @@ export const WEB_STUB_COMMAND_IDS: readonly string[] = [
   "vscodesync.createSnapshot",
   "vscodesync.restoreSnapshot",
   "vscodesync.repairState",
+  "vscodesync.suspendWorkspaces",
+  "vscodesync.resumeWorkspaces",
   "vscodesync.suspendWorkspace",
   "vscodesync.resumeWorkspace",
   "vscodesync.freezeWorkspace",

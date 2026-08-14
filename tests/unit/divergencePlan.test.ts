@@ -201,6 +201,19 @@ describe("summariseDivergences / describeDivergenceCounts", () => {
     );
   });
 
+  it("строки приостановленного воркспейса не считаются", () => {
+    const groups = buildDivergencePlan([
+      root("/a", {
+        activeWorkspaces: [ws("w1", "Активный"), ws("w2", "Пауза", { syncState: "suspended" })],
+        files: [file("w1", "p.ts", "pending_push"), file("w2", "susp.ts", "pending_push")],
+      }),
+    ]);
+    // Обе группы видны в панели...
+    expect(groups).toHaveLength(2);
+    // ...но счётчик (статус-бар, тост) знает только активную.
+    expect(summariseDivergences(groups)).toEqual({ push: 1, pull: 0, conflict: 0, total: 1 });
+  });
+
   it("нулевые направления не попадают в строку", () => {
     expect(describeDivergenceCounts({ push: 0, pull: 3, conflict: 0, total: 3 })).toBe("↓3");
   });

@@ -131,6 +131,8 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
    * the common case looks the same either way.
    */
   private _canonicalMode = true;
+  /** `root|workspaceId` of workspaces in Suspend/Freeze — see `filesUnderWorkspace`. */
+  private readonly _pausedWorkspaceKeys = new Set<string>();
 
   getCanonicalMode(): boolean {
     return this._canonicalMode;
@@ -504,7 +506,14 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
         // Which path space the children are grouped by is not guessable from
         // the paths themselves once the structures diverge — say it.
         const spacePart = this._canonicalMode ? "" : " · как у меня";
-        item.description = `${shortWorkspaceId(element.workspaceId)}${tagPart}${spacePart}`.slice(0, 96);
+        const pausedPart =
+          element.syncState === "suspended" || element.syncState === "frozen"
+            ? " · статусы заморожены"
+            : "";
+        item.description = `${shortWorkspaceId(element.workspaceId)}${tagPart}${spacePart}${pausedPart}`.slice(
+          0,
+          96,
+        );
         item.iconPath = new vscode.ThemeIcon(
           "cloud",
           workspaceHealthThemeColor(element.health.level),
@@ -607,6 +616,13 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
       item.contextValue = "vscodeSync.fileMissing";
     } else {
       item.contextValue = "vscodeSync.file";
+    }
+    // Paused workspace: the detector no longer touches these statuses, so the
+    // arrows are a snapshot, not the truth. Saying so beats showing a confident
+    // "pending push" that nothing is updating.
+    if (this._pausedWorkspaceKeys.has(`${element.folderRoot.fsPath}|${element.workspaceId}`)) {
+      item.description = [item.description, "⏸ статус заморожен"].filter(Boolean).join(" · ");
+      item.iconPath = new vscode.ThemeIcon("debug-pause");
     }
     const bound = element.manifestPath !== undefined && element.manifestPath !== element.localPath;
     if (bound) {
@@ -767,6 +783,14 @@ export class WorkspacesTreeProvider implements vscode.TreeDataProvider<SyncTreeE
     });
     return visible.map((e) => {
       const health = workspaceHealthFromLocalCfg(wc, e.workspaceId);
+      // File rows have no parent state of their own; remember which workspaces
+      // are paused so their (now frozen) statuses can be marked as stale.
+      const pauseKey = `${folder.uri.fsPath}|${e.workspaceId}`;
+      if (e.syncState === "suspended" || e.syncState === "frozen") {
+        this._pausedWorkspaceKeys.add(pauseKey);
+      } else {
+        this._pausedWorkspaceKeys.delete(pauseKey);
+      }
       return {
         kind: "workspace" as const,
         folderRoot: folder.uri,

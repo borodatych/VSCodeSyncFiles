@@ -189,7 +189,14 @@ export function registerDivergencesCommands(deps: DivergencesCommandsDeps): vsco
   return [
     vscode.commands.registerCommand("vscodesync.openDivergences", () => {
       openDivergencePanel({
-        refresh: () => loadPlan(deps, true),
+        // The recount rewrites statuses in the config; the tree reads the same
+        // statuses, so refreshing one surface without the other leaves them
+        // visibly disagreeing.
+        refresh: async () => {
+          const plan = await loadPlan(deps, true);
+          await deps.refreshUi();
+          return plan;
+        },
         bulk: (direction, rows) => runBulk(deps, direction, rows),
         compare: (row) => openCompare(row),
         resolve: (row) => resolveConflict(deps, row),

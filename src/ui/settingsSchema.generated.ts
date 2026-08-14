@@ -150,7 +150,7 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
   {
     "key": "diagnostics.profileSync",
     "type": "boolean",
-    "description": "Включить сбор тайминга push/pull (hash ms / network ms / verify ms) для команды «VSCodeSync: Профиль синка». Минимальный оверхед, выкл по умолчанию.",
+    "description": "Включить сбор тайминга push/pull (hash ms / network ms / verify ms) для команды «VibeSync: Профиль синка». Минимальный оверхед, выкл по умолчанию.",
     "default": false
   },
   {
@@ -179,6 +179,12 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
     "default": 600,
     "minimum": 0,
     "maximum": 86400
+  },
+  {
+    "key": "git.autoSuspendUnbound",
+    "type": "boolean",
+    "description": "Авто-пауза по git-ветке для воркспейсов БЕЗ привязки gitBranch: при переключении на другую ветку они уходят в Suspend (статусы перестают обновляться, дерево не заливается «pending push» от checkout), при возврате на прежнюю ветку возобновляются с пересчётом статусов. Паузу, поставленную вручную, авто-возобновление не трогает. Работает при включённом vscodesync.gitBranchAutoSync.",
+    "default": false
   },
   {
     "key": "gitBranchAutoSync",
