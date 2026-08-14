@@ -150,7 +150,7 @@ export const SETTINGS_SCHEMA: readonly GeneratedSettingSchema[] = [
   {
     "key": "diagnostics.profileSync",
     "type": "boolean",
-    "description": "Включить сбор тайминга push/pull (hash ms / network ms / verify ms) для команды «VSCodeSync: Профиль синка». Минимальный оверхед, выкл по умолчанию.",
+    "description": "Включить сбор тайминга push/pull (hash ms / network ms / verify ms) для команды «VibeSync: Профиль синка». Минимальный оверхед, выкл по умолчанию.",
     "default": false
   },
   {

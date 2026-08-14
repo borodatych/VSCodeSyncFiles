@@ -885,775 +885,964 @@
     "commands": [
       {
         "command": "vscodesync.showStatus",
+        "category": "VibeSync",
         "title": "%cmd.showStatus.title%"
       },
       {
         "command": "vscodesync.createWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.createWorkspace.title%",
         "icon": "$(add)"
       },
       {
         "command": "vscodesync.quickSwitchWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.quickSwitchWorkspace.title%"
       },
       {
         "command": "vscodesync.connectCloudWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.connectCloudWorkspace.title%"
       },
       {
         "command": "vscodesync.startOnboarding",
+        "category": "VibeSync",
         "title": "%cmd.startOnboarding.title%"
       },
       {
         "command": "vscodesync.addCurrentFile",
+        "category": "VibeSync",
         "title": "%cmd.addCurrentFile.title%"
       },
       {
         "command": "vscodesync.addFolderToSync",
+        "category": "VibeSync",
         "title": "%cmd.addFolderToSync.title%"
       },
       {
         "command": "vscodesync.addToNewWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.addToNewWorkspace.title%"
       },
       {
         "command": "vscodesync.bindLocalFile",
+        "category": "VibeSync",
         "title": "%cmd.bindLocalFile.title%"
       },
       {
         "command": "vscodesync.bindLocalFolder",
+        "category": "VibeSync",
         "title": "%cmd.bindLocalFolder.title%"
       },
       {
         "command": "vscodesync.renameLinkName",
+        "category": "VibeSync",
         "title": "%cmd.renameLinkName.title%"
       },
       {
         "command": "vscodesync.treeFolderBind",
+        "category": "VibeSync",
         "title": "%cmd.treeFolderBind.title%"
       },
       {
         "command": "vscodesync.treeEditCanonicalPath",
+        "category": "VibeSync",
         "title": "%cmd.treeEditCanonicalPath.title%"
       },
       {
         "command": "vscodesync.toggleTreeCanonicalMode",
+        "category": "VibeSync",
         "title": "%cmd.toggleTreeCanonicalMode.title%",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "vscodesync.toggleTreeOnlyDiverged",
+        "category": "VibeSync",
         "title": "%cmd.toggleTreeOnlyDiverged.title%",
         "icon": "$(filter)"
       },
       {
         "command": "vscodesync.treeRenameCloudFolder",
+        "category": "VibeSync",
         "title": "%cmd.treeRenameCloudFolder.title%"
       },
       {
         "command": "vscodesync.treeUnnestNode",
+        "category": "VibeSync",
         "title": "%cmd.treeUnnestNode.title%"
       },
       {
         "command": "vscodesync.editWorkspacePaths",
+        "category": "VibeSync",
         "title": "%cmd.editWorkspacePaths.title%"
       },
       {
         "command": "vscodesync.applyWorkspacePathsEdit",
+        "category": "VibeSync",
         "title": "%cmd.applyWorkspacePathsEdit.title%"
       },
       {
         "command": "vscodesync.resumeCanonicalRename",
+        "category": "VibeSync",
         "title": "%cmd.resumeCanonicalRename.title%"
       },
       {
         "command": "vscodesync.undoCanonicalRename",
+        "category": "VibeSync",
         "title": "%cmd.undoCanonicalRename.title%"
       },
       {
         "command": "vscodesync.treeFolderPull",
+        "category": "VibeSync",
         "title": "%cmd.treeFolderPull.title%"
       },
       {
         "command": "vscodesync.pickSyncScopes",
+        "category": "VibeSync",
         "title": "%cmd.pickSyncScopes.title%"
       },
       {
         "command": "vscodesync.pushAll",
+        "category": "VibeSync",
         "title": "%cmd.pushAll.title%"
       },
       {
         "command": "vscodesync.bulkPush",
+        "category": "VibeSync",
         "title": "%cmd.bulkPush.title%"
       },
       {
         "command": "vscodesync.pullAll",
+        "category": "VibeSync",
         "title": "%cmd.pullAll.title%"
       },
       {
         "command": "vscodesync.goHomePreflight",
+        "category": "VibeSync",
         "title": "%cmd.goHomePreflight.title%"
       },
       {
         "command": "vscodesync.showSmartPullDigest",
+        "category": "VibeSync",
         "title": "%cmd.showSmartPullDigest.title%"
       },
       {
         "command": "vscodesync.compareWithCloud",
+        "category": "VibeSync",
         "title": "%cmd.compareWithCloud.title%"
       },
       {
         "command": "vscodesync.sendWebhookDigest",
+        "category": "VibeSync",
         "title": "%cmd.sendWebhookDigest.title%"
       },
       {
         "command": "vscodesync.syncWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.syncWorkspace.title%"
       },
       {
         "command": "vscodesync.pushWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.pushWorkspace.title%"
       },
       {
         "command": "vscodesync.pullWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.pullWorkspace.title%"
       },
       {
         "command": "vscodesync.detachWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.detachWorkspace.title%"
       },
       {
         "command": "vscodesync.renameWorkspaceNote",
+        "category": "VibeSync",
         "title": "%cmd.renameWorkspaceNote.title%"
       },
       {
         "command": "vscodesync.openSyncSettings",
+        "category": "VibeSync",
         "title": "%cmd.openSyncSettings.title%",
         "icon": "$(settings-gear)"
       },
       {
         "command": "vscodesync.toggleTelemetry",
+        "category": "VibeSync",
         "title": "%cmd.toggleTelemetry.title%"
       },
       {
         "command": "vscodesync.showSyncSummary",
+        "category": "VibeSync",
         "title": "%cmd.showSyncSummary.title%"
       },
       {
         "command": "vscodesync.openDivergences",
+        "category": "VibeSync",
         "title": "%cmd.openDivergences.title%",
         "icon": "$(diff)"
       },
       {
         "command": "vscodesync.previewSync",
+        "category": "VibeSync",
         "title": "%cmd.previewSync.title%"
       },
       {
         "command": "vscodesync.resolveConflicts",
+        "category": "VibeSync",
         "title": "%cmd.resolveConflicts.title%"
       },
       {
         "command": "vscodesync.keepMine",
+        "category": "VibeSync",
         "title": "%cmd.keepMine.title%"
       },
       {
         "command": "vscodesync.takeTheirs",
+        "category": "VibeSync",
         "title": "%cmd.takeTheirs.title%"
       },
       {
         "command": "vscodesync.openConflictDiff3way",
+        "category": "VibeSync",
         "title": "%cmd.openConflictDiff3way.title%"
       },
       {
         "command": "vscodesync.setActiveProvider",
+        "category": "VibeSync",
         "title": "%cmd.setActiveProvider.title%"
       },
       {
         "command": "vscodesync.migrateToAnotherProvider",
+        "category": "VibeSync",
         "title": "%cmd.migrateToAnotherProvider.title%"
       },
       {
         "command": "vscodesync.signIn",
+        "category": "VibeSync",
         "title": "%cmd.signIn.title%"
       },
       {
         "command": "vscodesync.openDashboard",
+        "category": "VibeSync",
         "title": "%cmd.openDashboard.title%"
       },
       {
         "command": "vscodesync.onedriveSignInBrowser",
+        "category": "VibeSync",
         "title": "%cmd.onedriveSignInBrowser.title%"
       },
       {
         "command": "vscodesync.googleDriveSignInBrowser",
+        "category": "VibeSync",
         "title": "%cmd.googleDriveSignInBrowser.title%"
       },
       {
         "command": "vscodesync.onedriveSignIn",
+        "category": "VibeSync",
         "title": "%cmd.onedriveSignIn.title%"
       },
       {
         "command": "vscodesync.onedriveSignInHeadless",
+        "category": "VibeSync",
         "title": "%cmd.onedriveSignInHeadless.title%"
       },
       {
         "command": "vscodesync.googleDriveSignIn",
+        "category": "VibeSync",
         "title": "%cmd.googleDriveSignIn.title%"
       },
       {
         "command": "vscodesync.googleDriveSignInHeadless",
+        "category": "VibeSync",
         "title": "%cmd.googleDriveSignInHeadless.title%"
       },
       {
         "command": "vscodesync.dropboxSignIn",
+        "category": "VibeSync",
         "title": "%cmd.dropboxSignIn.title%"
       },
       {
         "command": "vscodesync.dropboxSignInHeadless",
+        "category": "VibeSync",
         "title": "%cmd.dropboxSignInHeadless.title%"
       },
       {
         "command": "vscodesync.yandexDiskSignIn",
+        "category": "VibeSync",
         "title": "%cmd.yandexDiskSignIn.title%"
       },
       {
         "command": "vscodesync.yandexDiskSignInHeadless",
+        "category": "VibeSync",
         "title": "%cmd.yandexDiskSignInHeadless.title%"
       },
       {
         "command": "vscodesync.yandexDiskEnterToken",
+        "category": "VibeSync",
         "title": "%cmd.yandexDiskEnterToken.title%"
       },
       {
         "command": "vscodesync.showProviderSetupGuide",
+        "category": "VibeSync",
         "title": "%cmd.showProviderSetupGuide.title%",
         "icon": "$(book)"
       },
       {
         "command": "vscodesync.showCommandCenter",
+        "category": "VibeSync",
         "title": "%cmd.showCommandCenter.title%",
         "icon": "$(list-unordered)"
       },
       {
         "command": "vscodesync.showSettingsPanel",
+        "category": "VibeSync",
         "title": "%cmd.showSettingsPanel.title%",
         "icon": "$(settings-gear)"
       },
       {
         "command": "vscodesync.collapseAllWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.collapseAllWorkspaces.title%",
         "icon": "$(collapse-all)"
       },
       {
         "command": "vscodesync.showSyncDashboard",
+        "category": "VibeSync",
         "title": "%cmd.showSyncDashboard.title%"
       },
       {
         "command": "vscodesync.focusWorkspacesView",
+        "category": "VibeSync",
         "title": "%cmd.focusWorkspacesView.title%"
       },
       {
         "command": "vscodesync.takeSyncOwnership",
+        "category": "VibeSync",
         "title": "%cmd.takeSyncOwnership.title%"
       },
       {
         "command": "vscodesync.refreshWorkspacesView",
+        "category": "VibeSync",
         "title": "%cmd.refreshWorkspacesView.title%",
         "icon": "$(refresh)"
       },
       {
         "command": "vscodesync.filterWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.filterWorkspaces.title%",
         "icon": "$(filter)"
       },
       {
         "command": "vscodesync.clearWorkspacesFilter",
+        "category": "VibeSync",
         "title": "%cmd.clearWorkspacesFilter.title%",
         "icon": "$(clear-all)"
       },
       {
         "command": "vscodesync.pickWorkspaceTagFilters",
+        "category": "VibeSync",
         "title": "%cmd.pickWorkspaceTagFilters.title%",
         "icon": "$(tag)"
       },
       {
         "command": "vscodesync.toggleShowArchivedWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.toggleShowArchivedWorkspaces.title%",
         "icon": "$(archive)"
       },
       {
         "command": "vscodesync.treeWorkspacePushAll",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspacePushAll.title%"
       },
       {
         "command": "vscodesync.treeWorkspacePullAll",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspacePullAll.title%"
       },
       {
         "command": "vscodesync.treeWorkspaceSync",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceSync.title%"
       },
       {
         "command": "vscodesync.treeWorkspaceDetach",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceDetach.title%"
       },
       {
         "command": "vscodesync.deleteWorkspaceFromCloud",
+        "category": "VibeSync",
         "title": "%cmd.deleteWorkspaceFromCloud.title%"
       },
       {
         "command": "vscodesync.treeWorkspaceRenameNote",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceRenameNote.title%"
       },
       {
         "command": "vscodesync.treeWorkspaceHealthCheck",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceHealthCheck.title%"
       },
       {
         "command": "vscodesync.treeRemoteWorkspaceConnect",
+        "category": "VibeSync",
         "title": "%cmd.treeRemoteWorkspaceConnect.title%",
         "icon": "$(add)"
       },
       {
         "command": "vscodesync.treeRemoteWorkspaceDelete",
+        "category": "VibeSync",
         "title": "%cmd.treeRemoteWorkspaceDelete.title%",
         "icon": "$(trash)"
       },
       {
         "command": "vscodesync.treeWorkspaceShowMenu",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceShowMenu.title%",
         "icon": "$(ellipsis)"
       },
       {
         "command": "vscodesync.treeWorkspaceAddTagToPanelFilter",
+        "category": "VibeSync",
         "title": "%cmd.treeWorkspaceAddTagToPanelFilter.title%"
       },
       {
         "command": "vscodesync.treeFilePush",
+        "category": "VibeSync",
         "title": "%cmd.treeFilePush.title%"
       },
       {
         "command": "vscodesync.treeFilePull",
+        "category": "VibeSync",
         "title": "%cmd.treeFilePull.title%"
       },
       {
         "command": "vscodesync.treeFileShowHistory",
+        "category": "VibeSync",
         "title": "%cmd.treeFileShowHistory.title%"
       },
       {
         "command": "vscodesync.treeFileOpenInCloud",
+        "category": "VibeSync",
         "title": "%cmd.treeFileOpenInCloud.title%"
       },
       {
         "command": "vscodesync.treeFileKeepMine",
+        "category": "VibeSync",
         "title": "%cmd.treeFileKeepMine.title%"
       },
       {
         "command": "vscodesync.setNotificationLevel",
+        "category": "VibeSync",
         "title": "%cmd.setNotificationLevel.title%"
       },
       {
         "command": "vscodesync.removeFromSync",
+        "category": "VibeSync",
         "title": "%cmd.removeFromSync.title%"
       },
       {
         "command": "vscodesync.pushCurrentFile",
+        "category": "VibeSync",
         "title": "%cmd.pushCurrentFile.title%"
       },
       {
         "command": "vscodesync.pullCurrentFile",
+        "category": "VibeSync",
         "title": "%cmd.pullCurrentFile.title%"
       },
       {
         "command": "vscodesync.moveCurrentFileToWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.moveCurrentFileToWorkspace.title%"
       },
       {
         "command": "vscodesync.diffWithCloud",
+        "category": "VibeSync",
         "title": "%cmd.diffWithCloud.title%"
       },
       {
         "command": "vscodesync.showFileHistory",
+        "category": "VibeSync",
         "title": "%cmd.showFileHistory.title%"
       },
       {
         "command": "vscodesync.openInCloudStorage",
+        "category": "VibeSync",
         "title": "%cmd.openInCloudStorage.title%"
       },
       {
         "command": "vscodesync.treeFileTakeTheirs",
+        "category": "VibeSync",
         "title": "%cmd.treeFileTakeTheirs.title%"
       },
       {
         "command": "vscodesync.treeFileForceSync",
+        "category": "VibeSync",
         "title": "%cmd.treeFileForceSync.title%"
       },
       {
         "command": "vscodesync.sendQuickTransfer",
+        "category": "VibeSync",
         "title": "%cmd.sendQuickTransfer.title%"
       },
       {
         "command": "vscodesync.togglePause",
+        "category": "VibeSync",
         "title": "%cmd.togglePause.title%"
       },
       {
         "command": "vscodesync.resume",
+        "category": "VibeSync",
         "title": "%cmd.resume.title%"
       },
       {
         "command": "vscodesync.enableWatchMode",
+        "category": "VibeSync",
         "title": "%cmd.enableWatchMode.title%"
       },
       {
         "command": "vscodesync.disableWatchMode",
+        "category": "VibeSync",
         "title": "%cmd.disableWatchMode.title%"
       },
       {
         "command": "vscodesync.toggleWatchMode",
+        "category": "VibeSync",
         "title": "%cmd.toggleWatchMode.title%"
       },
       {
         "command": "vscodesync.cycleAutoSyncMode",
+        "category": "VibeSync",
         "title": "%cmd.cycleAutoSyncMode.title%"
       },
       {
         "command": "vscodesync.profileSync",
+        "category": "VibeSync",
         "title": "%cmd.profileSync.title%"
       },
       {
         "command": "vscodesync.repairCloudManifest",
+        "category": "VibeSync",
         "title": "%cmd.repairCloudManifest.title%"
       },
       {
         "command": "vscodesync.explainFileSyncState",
+        "category": "VibeSync",
         "title": "%cmd.explainFileSyncState.title%"
       },
       {
         "command": "vscodesync.resolveConflictKeepBoth",
+        "category": "VibeSync",
         "title": "%cmd.resolveConflictKeepBoth.title%"
       },
       {
         "command": "vscodesync.aiExplainConflict",
+        "category": "VibeSync",
         "title": "%cmd.aiExplainConflict.title%"
       },
       {
         "command": "vscodesync.exportSupportBundle",
+        "category": "VibeSync",
         "title": "%cmd.exportSupportBundle.title%"
       },
       {
         "command": "vscodesync.copyShareUri",
+        "category": "VibeSync",
         "title": "%cmd.copyShareUri.title%"
       },
       {
         "command": "vscodesync.exportSbom",
+        "category": "VibeSync",
         "title": "%cmd.exportSbom.title%"
       },
       {
         "command": "vscodesync.generateInviteLink",
+        "category": "VibeSync",
         "title": "%cmd.generateInviteLink.title%"
       },
       {
         "command": "vscodesync.acceptInviteLink",
+        "category": "VibeSync",
         "title": "%cmd.acceptInviteLink.title%"
       },
       {
         "command": "vscodesync.addTrustedMachine",
+        "category": "VibeSync",
         "title": "%cmd.addTrustedMachine.title%"
       },
       {
         "command": "vscodesync.removeTrustedMachine",
+        "category": "VibeSync",
         "title": "%cmd.removeTrustedMachine.title%"
       },
       {
         "command": "vscodesync.listTrustedMachines",
+        "category": "VibeSync",
         "title": "%cmd.listTrustedMachines.title%"
       },
       {
         "command": "vscodesync.exportWorkspaceStructure",
+        "category": "VibeSync",
         "title": "%cmd.exportWorkspaceStructure.title%"
       },
       {
         "command": "vscodesync.exportWorkspaceToFolder",
+        "category": "VibeSync",
         "title": "%cmd.exportWorkspaceToFolder.title%"
       },
       {
         "command": "vscodesync.restoreFromCloud",
+        "category": "VibeSync",
         "title": "%cmd.restoreFromCloud.title%"
       },
       {
         "command": "vscodesync.aiPathMapper",
+        "category": "VibeSync",
         "title": "%cmd.aiPathMapper.title%"
       },
       {
         "command": "vscodesync.showConflictHeatmap",
+        "category": "VibeSync",
         "title": "%cmd.showConflictHeatmap.title%"
       },
       {
         "command": "vscodesync.showStorageReport",
+        "category": "VibeSync",
         "title": "%cmd.showStorageReport.title%"
       },
       {
         "command": "vscodesync.showInsightsWeeklyDigest",
+        "category": "VibeSync",
         "title": "%cmd.showInsightsWeeklyDigest.title%"
       },
       {
         "command": "vscodesync.showAchievements",
+        "category": "VibeSync",
         "title": "%cmd.showAchievements.title%"
       },
       {
         "command": "vscodesync.installWorkspaceTemplate",
+        "category": "VibeSync",
         "title": "%cmd.installWorkspaceTemplate.title%"
       },
       {
         "command": "vscodesync.diffSnapshots",
+        "category": "VibeSync",
         "title": "%cmd.diffSnapshots.title%"
       },
       {
         "command": "vscodesync.openTimeTravelScrubber",
+        "category": "VibeSync",
         "title": "%cmd.openTimeTravelScrubber.title%"
       },
       {
         "command": "vscodesync.detectGarbageTracked",
+        "category": "VibeSync",
         "title": "%cmd.detectGarbageTracked.title%"
       },
       {
         "command": "vscodesync.startSyncRecording",
+        "category": "VibeSync",
         "title": "%cmd.startSyncRecording.title%"
       },
       {
         "command": "vscodesync.stopSyncRecording",
+        "category": "VibeSync",
         "title": "%cmd.stopSyncRecording.title%"
       },
       {
         "command": "vscodesync.openSyncReplayViewer",
+        "category": "VibeSync",
         "title": "%cmd.openSyncReplayViewer.title%"
       },
       {
         "command": "vscodesync.importWorkspaceStructure",
+        "category": "VibeSync",
         "title": "%cmd.importWorkspaceStructure.title%"
       },
       {
         "command": "vscodesync.openStats",
+        "category": "VibeSync",
         "title": "%cmd.openStats.title%"
       },
       {
         "command": "vscodesync.createSnapshot",
+        "category": "VibeSync",
         "title": "%cmd.createSnapshot.title%"
       },
       {
         "command": "vscodesync.restoreSnapshot",
+        "category": "VibeSync",
         "title": "%cmd.restoreSnapshot.title%"
       },
       {
         "command": "vscodesync.repairState",
+        "category": "VibeSync",
         "title": "%cmd.repairState.title%"
       },
       {
         "command": "vscodesync.suspendWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.suspendWorkspaces.title%"
       },
       {
         "command": "vscodesync.resumeWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.resumeWorkspaces.title%"
       },
       {
         "command": "vscodesync.suspendWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.suspendWorkspace.title%"
       },
       {
         "command": "vscodesync.resumeWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.resumeWorkspace.title%"
       },
       {
         "command": "vscodesync.freezeWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.freezeWorkspace.title%"
       },
       {
         "command": "vscodesync.unfreezeWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.unfreezeWorkspace.title%"
       },
       {
         "command": "vscodesync.openActivityFeed",
+        "category": "VibeSync",
         "title": "%cmd.openActivityFeed.title%"
       },
       {
         "command": "vscodesync.aiSessionSummary",
+        "category": "VibeSync",
         "title": "%cmd.aiSessionSummary.title%"
       },
       {
         "command": "vscodesync.aiSuggestWorkspaceTags",
+        "category": "VibeSync",
         "title": "%cmd.aiSuggestWorkspaceTags.title%"
       },
       {
         "command": "vscodesync.smartPauseDropdown",
+        "category": "VibeSync",
         "title": "%cmd.smartPauseDropdown.title%"
       },
       {
         "command": "vscodesync.diffWorkspaceManifest",
+        "category": "VibeSync",
         "title": "%cmd.diffWorkspaceManifest.title%"
       },
       {
         "command": "vscodesync.forcePullFromMachine",
+        "category": "VibeSync",
         "title": "%cmd.forcePullFromMachine.title%"
       },
       {
         "command": "vscodesync.shareWorkspaceLink",
+        "category": "VibeSync",
         "title": "%cmd.shareWorkspaceLink.title%"
       },
       {
         "command": "vscodesync.activitySaveCurrentSearch",
+        "category": "VibeSync",
         "title": "%cmd.activitySaveCurrentSearch.title%"
       },
       {
         "command": "vscodesync.activityApplySavedSearch",
+        "category": "VibeSync",
         "title": "%cmd.activityApplySavedSearch.title%"
       },
       {
         "command": "vscodesync.activityDeleteSavedSearch",
+        "category": "VibeSync",
         "title": "%cmd.activityDeleteSavedSearch.title%"
       },
       {
         "command": "vscodesync.activityToggleAlertingForSearch",
+        "category": "VibeSync",
         "title": "%cmd.activityToggleAlertingForSearch.title%"
       },
       {
         "command": "vscodesync.pinFileForSync",
+        "category": "VibeSync",
         "title": "%cmd.pinFileForSync.title%"
       },
       {
         "command": "vscodesync.openMachinesGraph",
+        "category": "VibeSync",
         "title": "%cmd.openMachinesGraph.title%"
       },
       {
         "command": "vscodesync.openQuickTransferDrop",
+        "category": "VibeSync",
         "title": "%cmd.openQuickTransferDrop.title%"
       },
       {
         "command": "vscodesync.openSankeyChart",
+        "category": "VibeSync",
         "title": "%cmd.openSankeyChart.title%"
       },
       {
         "command": "vscodesync.configurePathMapping",
+        "category": "VibeSync",
         "title": "%cmd.configurePathMapping.title%"
       },
       {
         "command": "vscodesync.editWorkspaceIgnorePatterns",
+        "category": "VibeSync",
         "title": "%cmd.editWorkspaceIgnorePatterns.title%"
       },
       {
         "command": "vscodesync.exportEncryptionKey",
+        "category": "VibeSync",
         "title": "%cmd.exportEncryptionKey.title%"
       },
       {
         "command": "vscodesync.importEncryptionKey",
+        "category": "VibeSync",
         "title": "%cmd.importEncryptionKey.title%"
       },
       {
         "command": "vscodesync.rotateEncryptionKey",
+        "category": "VibeSync",
         "title": "%cmd.rotateEncryptionKey.title%"
       },
       {
         "command": "vscodesync.archiveWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.archiveWorkspace.title%"
       },
       {
         "command": "vscodesync.unarchiveWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.unarchiveWorkspace.title%"
       },
       {
         "command": "vscodesync.setGitBranchWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.setGitBranchWorkspace.title%"
       },
       {
         "command": "vscodesync.editWorkspaceTags",
+        "category": "VibeSync",
         "title": "%cmd.editWorkspaceTags.title%"
       },
       {
         "command": "vscodesync.purgeEncryptedWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.purgeEncryptedWorkspace.title%"
       },
       {
         "command": "vscodesync.healthCheck",
+        "category": "VibeSync",
         "title": "%cmd.healthCheck.title%"
       },
       {
         "command": "vscodesync.mergeWorkspaces",
+        "category": "VibeSync",
         "title": "%cmd.mergeWorkspaces.title%"
       },
       {
         "command": "vscodesync.checkBlake3Migration",
+        "category": "VibeSync",
         "title": "%cmd.checkBlake3Migration.title%"
       },
       {
         "command": "vscodesync.completeBlake3Migration",
+        "category": "VibeSync",
         "title": "%cmd.completeBlake3Migration.title%"
       },
       {
         "command": "vscodesync.installWorkspaceTemplateFromMarketplace",
+        "category": "VibeSync",
         "title": "%cmd.installWorkspaceTemplateFromMarketplace.title%"
       },
       {
         "command": "vscodesync.signInDeviceCode",
+        "category": "VibeSync",
         "title": "%cmd.signInDeviceCode.title%"
       },
       {
         "command": "vscodesync.startP2PSession",
+        "category": "VibeSync",
         "title": "%cmd.startP2PSession.title%"
       },
       {
         "command": "vscodesync.disconnectP2PSession",
+        "category": "VibeSync",
         "title": "%cmd.disconnectP2PSession.title%"
       },
       {
         "command": "vscodesync.showPasskeySettings",
+        "category": "VibeSync",
         "title": "%cmd.showPasskeySettings.title%"
       },
       {
         "command": "vscodesync.enrollPasskey",
+        "category": "VibeSync",
         "title": "%cmd.enrollPasskey.title%"
       },
       {
         "command": "vscodesync.unlockWithPasskey",
+        "category": "VibeSync",
         "title": "%cmd.unlockWithPasskey.title%"
       },
       {
         "command": "vscodesync.removePasskey",
+        "category": "VibeSync",
         "title": "%cmd.removePasskey.title%"
       },
       {
         "command": "vscodesync.passkeyFallback",
+        "category": "VibeSync",
         "title": "%cmd.passkeyFallback.title%"
       },
       {
         "command": "vscodesync.exportConflictsToSarif",
+        "category": "VibeSync",
         "title": "%cmd.exportConflictsToSarif.title%"
       },
       {
         "command": "vscodesync.showWorkspaceReadme",
+        "category": "VibeSync",
         "title": "%cmd.showWorkspaceReadme.title%"
       },
       {
         "command": "vscodesync.exportEncryptedBundle",
+        "category": "VibeSync",
         "title": "%cmd.exportEncryptedBundle.title%"
       },
       {
         "command": "vscodesync.prefetchActiveWorkspace",
+        "category": "VibeSync",
         "title": "%cmd.prefetchActiveWorkspace.title%"
       },
       {
         "command": "vscodesync.verifyBackup",
+        "category": "VibeSync",
         "title": "%cmd.verifyBackup.title%"
       },
       {
         "command": "vscodesync.showQuotaDashboard",
+        "category": "VibeSync",
         "title": "%cmd.showQuotaDashboard.title%"
       },
       {
         "command": "vscodesync.openVisualMerger",
+        "category": "VibeSync",
         "title": "%cmd.openVisualMerger.title%"
       },
       {
         "command": "vscodesync.selectiveSyncEditList",
+        "category": "VibeSync",
         "title": "%cmd.selectiveSyncEditList.title%"
       }
     ],
