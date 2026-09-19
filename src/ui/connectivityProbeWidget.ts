@@ -9,6 +9,10 @@
  * `shouldSuppressAutoSync` (exposed here as a singleton getter).
  */
 import * as vscode from "vscode";
+import {
+  currentPollIntervalMs,
+  onBackgroundPollProfileChanged,
+} from "./backgroundPollSettings.js";
 import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import {
   INITIAL_STATE,
@@ -100,7 +104,23 @@ export function registerConnectivityProbeWidget(
     render();
   };
 
-  const pollTimer = setInterval(() => { void probeOnce(); }, POLL_INTERVAL_MS);
+  // Poll cadence follows the background profile: this widget is the most
+  // frequent cloud caller we have, so it is the first thing a user on a
+  // metered connection wants turned down.
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  const armPollTimer = (): void => {
+    if (pollTimer !== undefined) {
+      clearInterval(pollTimer);
+      pollTimer = undefined;
+    }
+    const interval = currentPollIntervalMs(POLL_INTERVAL_MS);
+    if (interval === null) {
+      return;
+    }
+    pollTimer = setInterval(() => { void probeOnce(); }, interval);
+  };
+  armPollTimer();
+  const profileSub = onBackgroundPollProfileChanged(armPollTimer);
   const decayTimer = setInterval(() => {
     const prev = currentState;
     currentState = decayConnectivity(currentState, Date.now());
@@ -111,7 +131,10 @@ export function registerConnectivityProbeWidget(
   const initTimer = setTimeout(() => { void probeOnce(); }, 5_000);
 
   const disposable = new vscode.Disposable(() => {
-    clearInterval(pollTimer);
+    if (pollTimer !== undefined) {
+      clearInterval(pollTimer);
+    }
+    profileSub.dispose();
     clearInterval(decayTimer);
     clearTimeout(initTimer);
     item.dispose();

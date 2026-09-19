@@ -27,6 +27,17 @@ import {
   peekWorkspaceInstanceLockHolder,
 } from "../core/workspaceInstanceLock.js";
 import { buildHealthCheckReport } from "../ui/healthCheckReport.js";
+import { showDiagnosticsChannel } from "../utils/logVscode.js";
+import { warnLog } from "../utils/log.js";
+import { CLOUD_ROOT_DIR } from "../core/cloudLayout.js";
+import { providerDisplayName } from "../core/providerLabel.js";
+import { ProviderError } from "../providers/cloudProviderTypes.js";
+import {
+  adviceForCloudConnectionVerdict,
+  describeCloudConnectionVerdict,
+  verdictForCloudProbe,
+  type CloudConnectionVerdict,
+} from "../core/cloudConnectionReport.js";
 import { formatBytes } from "../core/storageUsageReport.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import {
@@ -74,8 +85,59 @@ export function registerDiagnosticsCommands(
   } = deps;
   void registry;
   const profileChannel = vscode.window.createOutputChannel("VSCodeSync · Profile");
+  const DIAGNOSTICS_LABEL = "Показать журнал";
 
   return [
+    // Reveals the log the failure toasts point at. Without it "Подробнее" would
+    // send the user hunting through the Output dropdown.
+    vscode.commands.registerCommand("vscodesync.showDiagnosticsChannel", () => {
+      showDiagnosticsChannel();
+    }),
+
+    // "Is it me, the network, or the service?" — answered in one click, with
+    // the unwrapped transport cause instead of `fetch failed`.
+    vscode.commands.registerCommand("vscodesync.checkCloudConnection", async () => {
+      const verdict = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "VSCodeSync · Проверка связи с облаком" },
+        async (): Promise<CloudConnectionVerdict> => {
+          const provider = await tryAuthenticatedProvider();
+          if (!provider) {
+            return { kind: "no_provider" };
+          }
+          const label = providerDisplayName(provider.type);
+          const startedMs = Date.now();
+          try {
+            await provider.listFolder(CLOUD_ROOT_DIR);
+            return verdictForCloudProbe({ provider: label, elapsedMs: Date.now() - startedMs });
+          } catch (e: unknown) {
+            const code = e instanceof ProviderError ? e.code : undefined;
+            const retryAfterMs = e instanceof ProviderError ? e.retryAfterMs : undefined;
+            return verdictForCloudProbe({
+              provider: label,
+              elapsedMs: Date.now() - startedMs,
+              error: e,
+              ...(code === undefined ? {} : { errorCode: code }),
+              ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+            });
+          }
+        },
+      );
+      const summary = describeCloudConnectionVerdict(verdict);
+      const advice = adviceForCloudConnectionVerdict(verdict);
+      // The channel keeps the answer after the toast is gone — the toast is
+      // read once, the log is what gets pasted into a bug report.
+      warnLog("cloud-check", advice === undefined ? summary : `${summary} ${advice}`);
+      const show = verdict.kind === "ok"
+        ? await vscode.window.showInformationMessage(summary, DIAGNOSTICS_LABEL)
+        : await vscode.window.showWarningMessage(
+            advice === undefined ? summary : `${summary}\n\n${advice}`,
+            DIAGNOSTICS_LABEL,
+          );
+      if (show === DIAGNOSTICS_LABEL) {
+        showDiagnosticsChannel();
+      }
+    }),
+
     vscode.commands.registerCommand("vscodesync.takeSyncOwnership", async () => {
       const storageDir = globalConfig.getStorageDir();
       const currentRoots = roots().map((f) => f.uri.fsPath);

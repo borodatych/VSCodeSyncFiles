@@ -21,6 +21,12 @@ export interface ConflictHeatmapTimelineInput {
   toIso?: string;
   /** Top files per bucket. Default 3. */
   topPerBucket?: number;
+  /**
+   * "Now" for the default 90-day window. Injected so the function is pure:
+   * reading the clock inside made the result depend on the day it ran, and the
+   * unit tests silently rotted once their fixture dates aged past the window.
+   */
+  nowMs?: number;
 }
 
 export interface ConflictHeatmapTimeline {
@@ -43,7 +49,7 @@ export function buildConflictHeatmapTimeline(
   // it when neither `fromIso` nor `toIso` is supplied (was: accept events
   // from 1970, contradicting documented behaviour).
   const DEFAULT_WINDOW_DAYS = 90;
-  const nowMs = Date.now();
+  const nowMs = input.nowMs ?? Date.now();
   const fromMs = input.fromIso
     ? Date.parse(input.fromIso)
     : input.toIso === undefined

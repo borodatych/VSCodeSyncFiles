@@ -17,6 +17,7 @@ import { isAutoCheckEnabled, parseAutoSyncMode } from "../core/autoSyncMode.js";
 import { syncAutoPause } from "../core/syncAutoPause.js";
 import { syncSessionPause } from "../core/syncSessionPause.js";
 import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInstanceReadOnly.js";
+import { cloudProbeAllowedNow } from "../core/cloudProbeBackoff.js";
 
 export function backgroundCloudAllowed(): boolean {
   if (!vscode.workspace.isTrusted) {
@@ -32,6 +33,12 @@ export function backgroundCloudAllowed(): boolean {
     return false;
   }
   if (isSecondaryWorkspaceInstanceReadOnly()) {
+    return false;
+  }
+  // Cloud unreachable: poll on the backoff schedule instead of once a minute.
+  // Every attempt while it is down costs a 10 s hung connection and answers a
+  // question already answered.
+  if (!cloudProbeAllowedNow()) {
     return false;
   }
   return true;

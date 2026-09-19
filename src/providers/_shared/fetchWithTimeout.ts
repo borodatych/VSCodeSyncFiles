@@ -1,4 +1,5 @@
 import { verboseLog, warnLog } from "../../utils/log.js";
+import { describeTransportFailure } from "../../core/transportFailureReason.js";
 
 /** Defaults used when a provider doesn't override. */
 export const DEFAULT_API_TIMEOUT_MS = 30_000;
@@ -86,7 +87,10 @@ export async function fetchWithTimeout(
       headers: res.headers,
     });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Log the unwrapped cause, not `fetch failed`: a log full of the outer
+    // message cannot tell a blocked port from a dead DNS, and that difference
+    // is the entire diagnosis.
+    const msg = describeTransportFailure(e).text;
     warnLog(opts.channel, `ERROR ${msg} in ${String(Date.now() - t0)}ms — ${short}`);
     // An abort raised by our own timer is a timeout, not a cancellation: say so,
     // otherwise the caller sees a bare "The operation was aborted".

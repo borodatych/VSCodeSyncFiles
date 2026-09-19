@@ -1,4 +1,5 @@
 import type { WorkspaceFolder } from "vscode";
+import { providerDisplayName } from "../core/providerLabel.js";
 import type { ProviderType } from "../core/types.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
@@ -15,20 +16,6 @@ import { isSecondaryWorkspaceInstanceReadOnly } from "../core/syncWorkspaceInsta
 
 const DAY_MS = 24 * 3600_000;
 
-function providerLabel(type: ProviderType | null): string {
-  switch (type) {
-    case "onedrive":
-      return "OneDrive";
-    case "gdrive":
-      return "Google Drive";
-    case "yandex":
-      return "Yandex Disk";
-    case "dropbox":
-      return "Dropbox";
-    default:
-      return "—";
-  }
-}
 
 export interface StaleLockTarget {
   folderRoot: string;
@@ -72,8 +59,8 @@ export async function buildHealthCheckReport(ctx: {
   const roots = ctx.workspaceFolders.map((f) => f.uri.fsPath);
   lines.push(
     ctx.provider
-      ? `✅ ${providerLabel(ctx.activeProviderType)}: подключен (авторизация OK)`
-      : `❌ Провайдер ${providerLabel(ctx.activeProviderType)}: нет активной сессии — выполните вход`,
+      ? `✅ ${providerDisplayName(ctx.activeProviderType)}: подключен (авторизация OK)`
+      : `❌ Провайдер ${providerDisplayName(ctx.activeProviderType)}: нет активной сессии — выполните вход`,
   );
 
   if (ctx.provider) {

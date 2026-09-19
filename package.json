@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -389,6 +389,23 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.gitBranchAutoSync.description%"
+        },
+        "vscodesync.background.pollProfile": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "relaxed",
+            "minimal",
+            "off"
+          ],
+          "default": "normal",
+          "enumDescriptions": [
+            "Обычный ритм фоновых проверок.",
+            "Обращений к облаку вчетверо меньше.",
+            "Редкие проверки — для медленной или платной сети.",
+            "Фоновых опросов нет: только по вашей команде."
+          ],
+          "description": "%cfg.background.pollProfile.description%"
         },
         "vscodesync.git.autoSuspendUnbound": {
           "type": "boolean",
@@ -1584,6 +1601,16 @@
         "command": "vscodesync.repairState",
         "category": "VibeSync",
         "title": "%cmd.repairState.title%"
+      },
+      {
+        "command": "vscodesync.checkCloudConnection",
+        "category": "VibeSync",
+        "title": "%cmd.checkCloudConnection.title%"
+      },
+      {
+        "command": "vscodesync.showDiagnosticsChannel",
+        "category": "VibeSync",
+        "title": "%cmd.showDiagnosticsChannel.title%"
       },
       {
         "command": "vscodesync.suspendWorkspaces",
