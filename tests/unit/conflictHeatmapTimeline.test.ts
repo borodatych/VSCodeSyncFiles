@@ -1,16 +1,29 @@
+/**
+ * Шкала конфликтов — детерминированно.
+ *
+ * Прежняя версия брала «сейчас» из системных часов внутри функции, а тест
+ * пользовался вбитыми майскими датами. Пока разница не превысила окно в
+ * 90 дней, всё было зелено; потом тест начал падать сам по себе, без единой
+ * правки кода. Теперь «сейчас» передаётся явно — календарь на результат
+ * больше не влияет.
+ */
 import { describe, expect, it } from "vitest";
 import { buildConflictHeatmapTimeline } from "../../src/core/conflictHeatmapTimeline.js";
 
+/** Фиксированное «сейчас» для всех проверок окна. */
+const NOW_MS = Date.parse("2026-05-23T00:00:00Z");
+
 describe("buildConflictHeatmapTimeline", () => {
-  it("empty input → empty timeline", () => {
-    const t = buildConflictHeatmapTimeline({ events: [] });
+  it("пустой вход → пустая шкала", () => {
+    const t = buildConflictHeatmapTimeline({ events: [], nowMs: NOW_MS });
     expect(t.buckets).toEqual([]);
     expect(t.peak).toBeNull();
     expect(t.total).toBe(0);
   });
 
-  it("groups events by day", () => {
+  it("группирует события по дням", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "2026-05-21T10:00:00Z", posixRel: "a" },
         { atIso: "2026-05-21T20:00:00Z", posixRel: "a" },
@@ -23,8 +36,9 @@ describe("buildConflictHeatmapTimeline", () => {
     expect(t.buckets[1]?.dayIso).toBe("2026-05-22");
   });
 
-  it("identifies peak day", () => {
+  it("находит пиковый день", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "2026-05-21T10:00:00Z", posixRel: "a" },
         { atIso: "2026-05-22T01:00:00Z", posixRel: "b" },
@@ -36,8 +50,9 @@ describe("buildConflictHeatmapTimeline", () => {
     expect(t.peak?.count).toBe(3);
   });
 
-  it("topFiles per bucket sorted by count", () => {
+  it("топ файлов внутри дня отсортирован по числу событий", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "2026-05-21T10:00:00Z", posixRel: "popular" },
         { atIso: "2026-05-21T10:00:00Z", posixRel: "popular" },
@@ -49,8 +64,9 @@ describe("buildConflictHeatmapTimeline", () => {
     expect(t.buckets[0]?.topFiles[0]?.count).toBe(3);
   });
 
-  it("respects fromIso/toIso window", () => {
+  it("учитывает явное окно fromIso", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "2026-04-01T00:00:00Z", posixRel: "old" },
         { atIso: "2026-05-21T00:00:00Z", posixRel: "new" },
@@ -60,8 +76,21 @@ describe("buildConflictHeatmapTimeline", () => {
     expect(t.total).toBe(1);
   });
 
-  it("respects topPerBucket cap", () => {
+  it("по умолчанию отбрасывает события старше 90 дней от «сейчас»", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
+      events: [
+        { atIso: "2025-11-01T00:00:00Z", posixRel: "ancient" },
+        { atIso: "2026-05-21T00:00:00Z", posixRel: "recent" },
+      ],
+    });
+    expect(t.total).toBe(1);
+    expect(t.buckets[0]?.topFiles[0]?.posixRel).toBe("recent");
+  });
+
+  it("соблюдает ограничение topPerBucket", () => {
+    const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "2026-05-21T10:00:00Z", posixRel: "a" },
         { atIso: "2026-05-21T11:00:00Z", posixRel: "b" },
@@ -72,8 +101,9 @@ describe("buildConflictHeatmapTimeline", () => {
     expect(t.buckets[0]?.topFiles).toHaveLength(2);
   });
 
-  it("skips malformed timestamps", () => {
+  it("пропускает битые отметки времени", () => {
     const t = buildConflictHeatmapTimeline({
+      nowMs: NOW_MS,
       events: [
         { atIso: "not-a-date", posixRel: "bad" },
         { atIso: "2026-05-21T00:00:00Z", posixRel: "good" },

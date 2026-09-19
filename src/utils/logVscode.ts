@@ -30,8 +30,20 @@ export function readRecentLogLines(): readonly string[] {
   return [...logRing];
 }
 
+/**
+ * The Diagnostics channel, kept module-level so "Подробнее" on a failure toast
+ * can reveal it. Undefined until `initLog` runs (CLI and tests never call it).
+ */
+let diagnosticsChannel: vscode.OutputChannel | undefined;
+
+/** Reveal the Diagnostics channel; a no-op before `initLog`. */
+export function showDiagnosticsChannel(): void {
+  diagnosticsChannel?.show(true);
+}
+
 export function initLog(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("VSCodeSync · Diagnostics");
+  diagnosticsChannel = channel;
   context.subscriptions.push(channel);
 
   const sink: LogSink = {

@@ -43,7 +43,9 @@ export interface RunWithEngineDeps {
 export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
   const { registry, globalConfig, statusBar, workspacesTree, fileDecorations, makeEngine } = deps;
   let seq = 0;
-  return async (
+  // Named so the failure report can offer "Повторить" by re-running exactly
+  // this wrapper with the same arguments.
+  const runWithEngine: RunWithEngineFn = async (
     fn: (engine: SyncEngine, root: string, gc: GlobalConfigManager) => Promise<void>,
     workspaceRoot?: string,
     options?: { showErrorDialog?: boolean; trigger?: SyncTrigger; cancellable?: string },
@@ -123,8 +125,13 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
     if (options?.showErrorDialog === false) throw toError(failure);
     // Fire-and-forget: the dialog only offers a follow-up action, so the
     // command promise must not hang on the user reading it.
-    void reportEngineFailure(failure, globalConfig);
+    // The retry runs the very same command again — that is what the user means
+    // by "Повторить" after a network blip, and it keeps the offer honest.
+    void reportEngineFailure(failure, globalConfig, () =>
+      runWithEngine(fn, workspaceRoot, options),
+    );
   };
+  return runWithEngine;
 }
 
 /** Normalise anything a rejected promise may carry into a real `Error`. */
@@ -136,10 +143,14 @@ function toError(value: unknown): Error {
   return new Error(JSON.stringify(value));
 }
 
+const RETRY_LABEL = "Повторить";
+const DETAILS_LABEL = "Подробнее";
+
 /** Surface a failed engine run. Never awaited by the caller — see `finally` above. */
 async function reportEngineFailure(
   failure: unknown,
   globalConfig: GlobalConfigManager,
+  retry?: () => Promise<void>,
 ): Promise<void> {
   if (failure instanceof ProviderError && failure.code === "UNAUTHORIZED") {
     const gc = await globalConfig.load();
@@ -150,6 +161,22 @@ async function reportEngineFailure(
     );
     if (choice === "Войти снова") {
       await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+    }
+    return;
+  }
+  // A dead network is a condition, not a fault of the user's command: it gets
+  // a warning with something to do, not a red toast with a bare string. The
+  // message already carries the unwrapped cause (`transportFailureReason`).
+  if (failure instanceof ProviderError && failure.code === "NETWORK_ERROR") {
+    const choice = await vscode.window.showWarningMessage(
+      `VSCodeSync: нет связи с облаком — ${failure.message}. Файлы не тронуты.`,
+      RETRY_LABEL,
+      DETAILS_LABEL,
+    );
+    if (choice === RETRY_LABEL && retry) {
+      await retry();
+    } else if (choice === DETAILS_LABEL) {
+      await vscode.commands.executeCommand("vscodesync.showDiagnosticsChannel");
     }
     return;
   }

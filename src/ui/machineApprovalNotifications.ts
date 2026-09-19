@@ -1,4 +1,8 @@
 import * as vscode from "vscode";
+import {
+  currentPollIntervalMs,
+  onBackgroundPollProfileChanged,
+} from "./backgroundPollSettings.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncEngine } from "../core/syncEngine.js";
 import type { SyncTrigger } from "../core/syncPolicy.js";
@@ -152,9 +156,20 @@ export function scheduleMachineApprovalNotifier(context: vscode.ExtensionContext
       deps.startupChannel?.appendLine(`Machine approval notifier: ${msg}`);
     });
   };
+  const arm = (): void => {
+    if (timer !== undefined) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+    const interval = currentPollIntervalMs(POLL_MS);
+    if (interval === null) {
+      return;
+    }
+    timer = setInterval(tick, interval);
+  };
   const handle = setTimeout(() => {
     tick();
-    timer = setInterval(tick, POLL_MS);
+    arm();
   }, 28_000);
   context.subscriptions.push(
     new vscode.Disposable(() => {
@@ -163,6 +178,7 @@ export function scheduleMachineApprovalNotifier(context: vscode.ExtensionContext
         clearInterval(timer);
       }
     }),
+    onBackgroundPollProfileChanged(arm),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(`${CFG}.requireMachineApproval`)) {
         tick();

@@ -390,6 +390,23 @@
           "default": true,
           "description": "%cfg.gitBranchAutoSync.description%"
         },
+        "vscodesync.background.pollProfile": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "relaxed",
+            "minimal",
+            "off"
+          ],
+          "default": "normal",
+          "enumDescriptions": [
+            "Обычный ритм фоновых проверок.",
+            "Обращений к облаку вчетверо меньше.",
+            "Редкие проверки — для медленной или платной сети.",
+            "Фоновых опросов нет: только по вашей команде."
+          ],
+          "description": "%cfg.background.pollProfile.description%"
+        },
         "vscodesync.git.autoSuspendUnbound": {
           "type": "boolean",
           "default": false,
@@ -1584,6 +1601,16 @@
         "command": "vscodesync.repairState",
         "category": "VibeSync",
         "title": "%cmd.repairState.title%"
+      },
+      {
+        "command": "vscodesync.checkCloudConnection",
+        "category": "VibeSync",
+        "title": "%cmd.checkCloudConnection.title%"
+      },
+      {
+        "command": "vscodesync.showDiagnosticsChannel",
+        "category": "VibeSync",
+        "title": "%cmd.showDiagnosticsChannel.title%"
       },
       {
         "command": "vscodesync.suspendWorkspaces",

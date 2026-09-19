@@ -19,6 +19,8 @@ import { SmartConflictPredictionService } from "../ui/smartConflictPredictionSer
 import { registerPresenceHeartbeat } from "../ui/presenceHeartbeat.js";
 import { getAuthenticatedSecondary, registerCrossCloudBackup } from "../ui/crossCloudBackup.js";
 import { registerBackupVerify } from "../ui/backupVerify.js";
+import { setCloudProbeBackoffListener } from "../core/cloudProbeBackoff.js";
+import { warnLog } from "../utils/log.js";
 
 export interface ObserverWiringDeps {
   context: vscode.ExtensionContext;
@@ -28,6 +30,25 @@ export interface ObserverWiringDeps {
 
 export function registerObservers(deps: ObserverWiringDeps): void {
   const { context, globalConfig, registry } = deps;
+
+  // Name the moment background polling thins out and the moment it comes back.
+  // Without these two lines a day of unreachable cloud reads as random silence,
+  // and the reason has to be reconstructed from request durations.
+  setCloudProbeBackoffListener((unreachable, nextProbeInMs) => {
+    // `warn`, not `verbose`: a degraded mode the user can feel must be visible
+    // in the channel without turning diagnostics up first.
+    warnLog(
+      "cloud-probe",
+      unreachable
+        ? `облако недоступно — следующая фоновая проба через ${String(Math.round(nextProbeInMs / 1000))} с`
+        : "облако снова отвечает — фоновые проверки в обычном режиме",
+    );
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      setCloudProbeBackoffListener(undefined);
+    }),
+  );
 
   const conflictPredictor = new SmartConflictPredictionService(
     globalConfig,

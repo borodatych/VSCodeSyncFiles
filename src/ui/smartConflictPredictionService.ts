@@ -18,6 +18,10 @@
  *    walk every open editor on every keystroke.
  */
 import * as vscode from "vscode";
+import {
+  currentPollIntervalMs,
+  onBackgroundPollProfileChanged,
+} from "./backgroundPollSettings.js";
 import { backgroundCloudAllowed } from "./backgroundCloudGate.js";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { GlobalConfigManager } from "../core/globalConfigManager.js";
@@ -47,6 +51,8 @@ export class SmartConflictPredictionService implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | null = null;
   private presenceTimer: NodeJS.Timeout | null = null;
+  /** Active presence interval — the background poll profile may widen it. */
+  private presenceIntervalMs = PRESENCE_FETCH_INTERVAL_MS;
   private readonly presenceCache: PresenceCache = createPresenceCache();
   private lastPresenceFetchMs = 0;
 
@@ -72,11 +78,10 @@ export class SmartConflictPredictionService implements vscode.Disposable {
         }
       }),
     );
+    // Local refresh keeps its own rhythm: it reads the cache, not the cloud.
     this.timer = setInterval(() => { void this.refresh(); }, REFRESH_INTERVAL_MS);
-    if (this.tryAuthenticatedProvider) {
-      this.presenceTimer = setInterval(() => { void this.fetchPresence(); }, PRESENCE_FETCH_INTERVAL_MS);
-      void this.fetchPresence();
-    }
+    this.armPresenceTimer();
+    this.disposables.push(onBackgroundPollProfileChanged(() => { this.armPresenceTimer(); }));
     void this.refresh();
   }
 
@@ -97,6 +102,27 @@ export class SmartConflictPredictionService implements vscode.Disposable {
   /** v2.9.3 — pull `_machines.json` and refresh the in-memory presence cache.
    *  v0.8 — guarded by `lastPresenceFetchMs` so back-to-back triggers
    *  (e.g. editor flip + save in <1s) don't double up the provider call. */
+  /**
+   * (Re)arm the presence poller from the background poll profile. The profile
+   * is a user setting, so it must take effect without a window reload.
+   */
+  private armPresenceTimer(): void {
+    if (this.presenceTimer !== null) {
+      clearInterval(this.presenceTimer);
+      this.presenceTimer = null;
+    }
+    if (!this.tryAuthenticatedProvider) {
+      return;
+    }
+    const interval = currentPollIntervalMs(PRESENCE_FETCH_INTERVAL_MS);
+    if (interval === null) {
+      return; // profile "off": no timer at all, not a very slow one
+    }
+    this.presenceIntervalMs = interval;
+    this.presenceTimer = setInterval(() => { void this.fetchPresence(); }, interval);
+    void this.fetchPresence();
+  }
+
   private async fetchPresence(): Promise<void> {
     if (!this.tryAuthenticatedProvider) return;
     if (!backgroundCloudAllowed()) return;
@@ -104,7 +130,7 @@ export class SmartConflictPredictionService implements vscode.Disposable {
     // Throttle: skip if we already fetched within the last (interval − 1s).
     // Allows the timer-driven fetch to always succeed, while debouncing
     // ad-hoc callers that may invoke fetchPresence sooner.
-    if (nowMs - this.lastPresenceFetchMs < PRESENCE_FETCH_INTERVAL_MS - 1_000) {
+    if (nowMs - this.lastPresenceFetchMs < this.presenceIntervalMs - 1_000) {
       return;
     }
     this.lastPresenceFetchMs = nowMs;

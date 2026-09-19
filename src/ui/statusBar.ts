@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { providerDisplayName } from "../core/providerLabel.js";
 import * as path from "node:path";
 import type { ProviderType, WorkspaceConfig } from "../core/types.js";
 import { EXTENSION_SETTINGS_QUERY } from "../core/extensionIdentity.js";
@@ -69,20 +70,6 @@ async function buildSparkSuffix(storageDir: string): Promise<string> {
   return text;
 }
 
-function providerLabel(type: ProviderType | null): string {
-  switch (type) {
-    case "onedrive":
-      return "OneDrive";
-    case "gdrive":
-      return "Google Drive";
-    case "yandex":
-      return "Yandex Disk";
-    case "dropbox":
-      return "Dropbox";
-    default:
-      return "—";
-  }
-}
 
 function formatLastSync(iso: string | undefined): string {
   if (!iso) {
@@ -286,7 +273,7 @@ export class SyncStatusBarController implements vscode.Disposable {
 
     const gc = await this.deps.globalConfig.load();
     const providerType = gc.activeProvider;
-    const plabel = providerLabel(providerType);
+    const plabel = providerDisplayName(providerType);
     const readOnlySecondary = isSecondaryWorkspaceInstanceReadOnly();
     const sessionPaused = syncSessionPause.isPaused();
     const pendingDuringPause = syncSessionPause.getPendingDocCount();
@@ -525,7 +512,7 @@ export class SyncStatusBarController implements vscode.Disposable {
     }
     const loaded = await this.loadAllFolderStates();
     const gc = await this.deps.globalConfig.load();
-    const label = providerLabel(gc.activeProvider);
+    const label = providerDisplayName(gc.activeProvider);
 
     const lines: string[] = [`Провайдер: ${label}`, ""];
     if (syncSessionPause.isPaused()) {
