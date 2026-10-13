@@ -78,7 +78,7 @@
   "cmd.detachWorkspace.title": "Отвязать воркспейс...",
   "cmd.renameWorkspaceNote.title": "Переименовать заметку воркспейса",
   "cmd.showSyncSummary.title": "Показать сводку синхронизации",
-  "cmd.openDivergences.title": "Показать расхождения (отправить / скачать / конфликты)",
+  "cmd.openDivergences.title": "Показать расхождения",
   "cmd.previewSync.title": "Предпросмотр синхронизации...",
   "cmd.signIn.title": "Войти в облако",
   "cmd.openDashboard.title": "Открыть панель…",

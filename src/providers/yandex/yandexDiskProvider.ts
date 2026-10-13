@@ -30,6 +30,8 @@ const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
 // Yandex Disk returns 423 / DiskResourceLockedError when another operation holds a transient lock.
 const LOCKED_RETRY_MAX = 3;
+/** Transfers of one file, each over a freshly issued link. */
+const DOWNLOAD_ATTEMPTS = 3;
 const LOCKED_RETRY_DELAY_MS = 1500;
 
 const API_TIMEOUT_MS = 30_000;   // metadata / auth requests
@@ -45,8 +47,14 @@ function fetchWithTimeout(
   init: RequestInit,
   timeoutMs: number,
   signal?: AbortSignal,
+  label?: string,
 ): Promise<Response> {
-  return sharedFetchWithTimeout(url, init, { channel: "yandex.fetch", timeoutMs, signal });
+  return sharedFetchWithTimeout(url, init, {
+    channel: "yandex.fetch",
+    timeoutMs,
+    signal,
+    ...(label === undefined ? {} : { label }),
+  });
 }
 
 /** API path in `disk:/relative` or `app:/relative` form (Yandex Disk REST). */
@@ -80,6 +88,7 @@ export class YandexDiskProvider implements ICloudProvider {
 
   /** Owns the SecretStorage key and the per-instance refresh mutex (E4/E14). */
   private readonly tokens: TokenStore<YandexTokenBundle>;
+  private readonly inFlightDownloads = new Map<string, Promise<DownloadResult>>();
 
   constructor(
     private readonly secrets: SecretStore,
@@ -336,19 +345,35 @@ export class YandexDiskProvider implements ICloudProvider {
     return { etag: after?.etag };
   }
 
+  /**
+   * Concurrent downloads of one file share a single request.
+   * Two pollers asking for the same registry file at the same moment used to
+   * open two identical transfers — and wait out two identical stalls.
+   */
   async downloadFile(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
-    let preCheckedEtag: string | undefined;
-    if (options?.ifNoneMatch) {
-      const meta = await this.getMetadata(cloudPath).catch(() => null);
-      if (meta?.etag && meta.etag === options.ifNoneMatch) {
-        return { body: Buffer.alloc(0), notModified: true };
-      }
-      preCheckedEtag = meta?.etag;
+    // A caller with its own abort signal keeps its own request: sharing would
+    // let one caller's cancel kill the other's download.
+    if (options?.signal !== undefined) {
+      return this.downloadFileOnce(cloudPath, options);
     }
+    const key = `${cloudPath}\u0000${options?.ifNoneMatch ?? ""}`;
+    const pending = this.inFlightDownloads.get(key);
+    if (pending) {
+      return pending;
+    }
+    const started = this.downloadFileOnce(cloudPath, options).finally(() => {
+      this.inFlightDownloads.delete(key);
+    });
+    this.inFlightDownloads.set(key, started);
+    return started;
+  }
+
+  /** Ask the API for a fresh one-time download link, riding out 423 locks. */
+  private async resolveDownloadHref(cloudPath: string, signal?: AbortSignal): Promise<string> {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
     let rDl!: Response;
     for (let attempt = 0; attempt <= LOCKED_RETRY_MAX; attempt++) {
-      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`, undefined, options?.signal);
+      rDl = await this.apiFetch(`resources/download?path=${pathEnc}`, undefined, signal);
       if (rDl.status === 404) {
         throw new ProviderError("NOT_FOUND", cloudPath);
       }
@@ -370,11 +395,32 @@ export class YandexDiskProvider implements ICloudProvider {
     if (!dl.href) {
       throw new ProviderError("NETWORK_ERROR", "Yandex Disk: no download href");
     }
-    let r: Response;
-    try {
-      r = await fetchWithTimeout(dl.href, {}, DATA_TIMEOUT_MS, options?.signal);
-    } catch (e) {
-      throw providerTransportError(e, "Yandex Disk");
+    return dl.href;
+  }
+
+  private async downloadFileOnce(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
+    let preCheckedEtag: string | undefined;
+    if (options?.ifNoneMatch) {
+      const meta = await this.getMetadata(cloudPath).catch(() => null);
+      if (meta?.etag && meta.etag === options.ifNoneMatch) {
+        return { body: Buffer.alloc(0), notModified: true };
+      }
+      preCheckedEtag = meta?.etag;
+    }
+    // The link is requested again on every attempt: it redirects to a storage
+    // node, and a transfer that stalls on one node usually succeeds on the
+    // next. Retrying the same link would retry the same node.
+    let r!: Response;
+    for (let attempt = 1; ; attempt++) {
+      const href = await this.resolveDownloadHref(cloudPath, options?.signal);
+      try {
+        r = await fetchWithTimeout(href, {}, DATA_TIMEOUT_MS, options?.signal, cloudPath);
+        break;
+      } catch (e) {
+        if (attempt >= DOWNLOAD_ATTEMPTS || options?.signal?.aborted === true) {
+          throw providerTransportError(e, "Yandex Disk");
+        }
+      }
     }
     if (r.status === 404) {
       throw new ProviderError("NOT_FOUND", cloudPath);

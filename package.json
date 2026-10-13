@@ -2,7 +2,7 @@
   "name": "vscodesyncfiles",
   "displayName": "VSCodeSyncFiles",
   "description": "Синхронизация отдельных файлов между машинами через облако",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "license": "MIT",
   "publisher": "borodatych",
   "repository": {
@@ -2040,6 +2040,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "vscodesync.openDivergences",
+          "when": "view == vscodesync.workspaces",
+          "group": "0_view@0"
+        },
         {
           "command": "vscodesync.suspendWorkspaces",
           "when": "view == vscodesync.workspaces",

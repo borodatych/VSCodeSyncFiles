@@ -32,9 +32,18 @@ import {
 } from "../core/divergencePlan.js";
 
 
+/** One entry of the workspace picker. */
+export interface DivergenceWorkspaceOption {
+  root: string;
+  workspaceId: string;
+  note: string;
+}
+
 export interface DivergencePanelHandlers {
   /** Recompute statuses (detector pass) and return the fresh plan. */
   refresh: () => Promise<DivergenceGroup[]>;
+  /** Every connected workspace — the picker lists clean ones too. */
+  workspaces: () => Promise<DivergenceWorkspaceOption[]>;
   /** Run the bulk action over the selected rows; returns a short report line. */
   bulk: (direction: "push" | "pull", rows: DivergenceRow[]) => Promise<string>;
   /** Open a diff for one row. */
@@ -49,6 +58,7 @@ let panel: vscode.WebviewPanel | undefined;
 /** Subscriptions owned by the live panel; released on dispose, not on unload. */
 let panelSubscriptions: vscode.Disposable[] = [];
 let currentGroups: DivergenceGroup[] = [];
+let currentHandlers: DivergencePanelHandlers | undefined;
 
 function escapeHtml(s: string): string {
   return s
@@ -104,6 +114,11 @@ function buildHtml(nonce: string, cspSource: string): string {
     }
     .row .acts button.secondary:hover:not(:disabled) { opacity: 1; }
     .empty { padding: 24px 4px; opacity: 0.75; }
+    #ws {
+      background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+      border-radius: 3px; padding: 3px 6px; font: inherit; max-width: 260px;
+    }
     .busy { opacity: 0.55; pointer-events: none; }
   </style>
 </head>
@@ -112,6 +127,7 @@ function buildHtml(nonce: string, cspSource: string): string {
   <div class="muted" id="sub">Загрузка…</div>
 
   <div class="toolbar">
+    <select id="ws" title="Воркспейс"><option value="">Все воркспейсы</option></select>
     <div class="chips" id="chips">
       <button type="button" class="chip" data-f="all" aria-pressed="true">Все</button>
       <button type="button" class="chip" data-f="push" aria-pressed="false">↑ отправить</button>
@@ -137,7 +153,50 @@ function buildHtml(nonce: string, cspSource: string): string {
     }
     const SEP = ${JSON.stringify(DIVERGENCE_KEY_SEP)};
     function keyOf(r) { return [r.root, r.workspaceId, r.posixRel].join(SEP); }
+    // Picker value: root + SEP + workspaceId, '' = every workspace. Persisted in
+    // webview state so reopening the tab keeps the workspace the user was on.
+    var saved = vscode.getState() || {};
+    var wsFilter = typeof saved.ws === 'string' ? saved.ws : '';
+    var workspaces = [];
+    var allSummary = '';
+    function wsKey(g) { return g.root + SEP + g.workspaceId; }
+    function scopedGroups() {
+      if (wsFilter === '') return groups;
+      return groups.filter(function (g) { return wsKey(g) === wsFilter; });
+    }
+    function renderPicker() {
+      var sel = document.getElementById('ws');
+      if (wsFilter !== '' && !workspaces.some(function (w) { return w.root + SEP + w.workspaceId === wsFilter; })) {
+        wsFilter = ''; // the workspace was detached since the choice was saved
+      }
+      sel.innerHTML = '<option value="">Все воркспейсы</option>' + workspaces.map(function (w) {
+        var k = w.root + SEP + w.workspaceId;
+        return '<option value="' + esc(k) + '"' + (k === wsFilter ? ' selected' : '') + '>' + esc(w.note) + '</option>';
+      }).join('');
+      sel.style.display = workspaces.length > 1 ? '' : 'none';
+    }
+    function renderSummary() {
+      var sub = document.getElementById('sub');
+      if (wsFilter === '') { sub.textContent = allSummary; return; }
+      var push = 0, pull = 0, conflict = 0, paused = 0;
+      scopedGroups().forEach(function (g) {
+        g.rows.forEach(function (r) {
+          if (g.suspended) { paused++; return; }
+          if (r.direction === 'push') push++; else if (r.direction === 'pull') pull++; else conflict++;
+        });
+      });
+      var total = push + pull + conflict;
+      var parts = [];
+      if (push) parts.push('↑' + push);
+      if (pull) parts.push('↓' + pull);
+      if (conflict) parts.push('⚠' + conflict);
+      sub.textContent = (total === 0
+        ? 'В этом воркспейсе расхождений нет.'
+        : parts.join(' ') + ' — всего ' + total + ' в этом воркспейсе.') +
+        (paused ? ' На паузе — ' + paused + ', они не учитываются.' : '');
+    }
     function visibleGroups() {
+      var groups = scopedGroups();
       if (filter === 'all') return groups;
       return groups
         .map(function (g) { return Object.assign({}, g, { rows: g.rows.filter(function (r) { return r.direction === filter; }) }); })
@@ -148,7 +207,7 @@ function buildHtml(nonce: string, cspSource: string): string {
     }
     function updateButtons() {
       var pushable = 0, pullable = 0;
-      groups.forEach(function (g) {
+      scopedGroups().forEach(function (g) {
         if (g.suspended) return;
         g.rows.forEach(function (r) {
           if (!selected.has(keyOf(r))) return;
@@ -166,10 +225,13 @@ function buildHtml(nonce: string, cspSource: string): string {
         // An empty centre under a non-empty header reads as a bug: say how many
         // rows the "all" chip would show, so the filter explains itself.
         var totalRows = 0;
-        groups.forEach(function (g) { totalRows += g.rows.length; });
+        var scoped = scopedGroups();
+        scoped.forEach(function (g) { totalRows += g.rows.length; });
         list.innerHTML = '<div class="empty">' +
-          (groups.length === 0
-            ? 'Расхождений нет — локальное состояние совпадает с облаком.'
+          (scoped.length === 0
+            ? (wsFilter === ''
+                ? 'Расхождений нет — локальное состояние совпадает с облаком.'
+                : 'В выбранном воркспейсе расхождений нет.')
             : 'Под выбранный фильтр ничего не подходит. Под фильтром «Все» — ' + totalRows + '.') + '</div>';
         updateButtons();
         return;
@@ -214,6 +276,15 @@ function buildHtml(nonce: string, cspSource: string): string {
     }
     function selectedKeys() { return Array.from(selected); }
 
+    document.getElementById('ws').addEventListener('change', function (e) {
+      wsFilter = e.target.value;
+      vscode.setState({ ws: wsFilter });
+      // Ticks made in another workspace must not ride along into a bulk action
+      // the user now sees as scoped to this one.
+      selected.clear();
+      renderSummary();
+      render();
+    });
     document.getElementById('chips').addEventListener('click', function (e) {
       var b = e.target.closest('.chip');
       if (!b) return;
@@ -275,7 +346,10 @@ function buildHtml(nonce: string, cspSource: string): string {
       var live = new Set();
       groups.forEach(function (g) { g.rows.forEach(function (r) { live.add(keyOf(r)); }); });
       Array.from(selected).forEach(function (k) { if (!live.has(k)) selected.delete(k); });
-      document.getElementById('sub').textContent = msg.summary;
+      workspaces = msg.workspaces || [];
+      allSummary = msg.summary;
+      renderPicker();
+      renderSummary();
       render();
     });
 
@@ -297,7 +371,8 @@ function indexRows(groups: readonly DivergenceGroup[]): Map<string, DivergenceRo
 }
 
 
-function postState(target: vscode.WebviewPanel, groups: readonly DivergenceGroup[]): void {
+async function postState(target: vscode.WebviewPanel, groups: readonly DivergenceGroup[]): Promise<void> {
+  const workspaces = (await currentHandlers?.workspaces().catch(() => [])) ?? [];
   const counts = summariseDivergences(groups);
   // Paused rows are listed but not counted, so "nothing diverges" would be a
   // lie when the only rows left belong to a paused workspace. Say which it is.
@@ -306,6 +381,7 @@ function postState(target: vscode.WebviewPanel, groups: readonly DivergenceGroup
   void target.webview.postMessage({
     kind: "state",
     groups,
+    workspaces,
     summary:
       counts.total === 0
         ? `Локальное состояние совпадает с облаком.${pausedTail}`
@@ -317,7 +393,7 @@ function postState(target: vscode.WebviewPanel, groups: readonly DivergenceGroup
 export function updateDivergencePanel(groups: DivergenceGroup[]): void {
   currentGroups = groups;
   if (panel) {
-    postState(panel, groups);
+    void postState(panel, groups);
   }
 }
 
@@ -328,6 +404,7 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
     return;
   }
 
+  currentHandlers = handlers;
   panel = vscode.window.createWebviewPanel(
     descriptor.viewType,
     descriptor.title,
@@ -406,7 +483,7 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`VSCodeSync: расхождения — ${msg}`);
-          if (panel) postState(panel, currentGroups);
+          if (panel) void postState(panel, currentGroups);
         }
       })();
     }),

@@ -84,7 +84,7 @@
   "cmd.detachWorkspace.title": "Detach workspace…",
   "cmd.renameWorkspaceNote.title": "Rename workspace note",
   "cmd.showSyncSummary.title": "Show sync summary",
-  "cmd.openDivergences.title": "Show divergences (push / pull / conflicts)",
+  "cmd.openDivergences.title": "Show divergences",
   "cmd.previewSync.title": "Preview sync…",
   "cmd.signIn.title": "Sign in to cloud",
   "cmd.openDashboard.title": "Open panel…",
