@@ -398,6 +398,37 @@ export class YandexDiskProvider implements ICloudProvider {
     return dl.href;
   }
 
+  /**
+   * Fetch the file behind a download link, naming every host on the way.
+   *
+   * The link points at a front host that redirects to the storage node holding
+   * the bytes. Followed automatically, a stall could not say which of the two
+   * went silent — and on a machine that routes hosts differently (split VPN)
+   * that is the whole question. So the redirect is taken by hand.
+   */
+  private async fetchDownloadBody(href: string, cloudPath: string, signal?: AbortSignal): Promise<Response> {
+    const hostOf = (u: string): string => {
+      try {
+        return new URL(u).host;
+      } catch {
+        return "?";
+      }
+    };
+    const first = await fetchWithTimeout(
+      href,
+      { redirect: "manual" },
+      DATA_TIMEOUT_MS,
+      signal,
+      `${cloudPath} @ ${hostOf(href)}`,
+    );
+    const location = first.status >= 300 && first.status < 400 ? first.headers.get("location") : null;
+    if (location === null) {
+      return first; // answered directly, nothing to follow
+    }
+    const target = new URL(location, href).toString();
+    return fetchWithTimeout(target, {}, DATA_TIMEOUT_MS, signal, `${cloudPath} @ ${hostOf(target)}`);
+  }
+
   private async downloadFileOnce(cloudPath: string, options?: DownloadOptions): Promise<DownloadResult> {
     let preCheckedEtag: string | undefined;
     if (options?.ifNoneMatch) {
@@ -414,7 +445,7 @@ export class YandexDiskProvider implements ICloudProvider {
     for (let attempt = 1; ; attempt++) {
       const href = await this.resolveDownloadHref(cloudPath, options?.signal);
       try {
-        r = await fetchWithTimeout(href, {}, DATA_TIMEOUT_MS, options?.signal, cloudPath);
+        r = await this.fetchDownloadBody(href, cloudPath, options?.signal);
         break;
       } catch (e) {
         if (attempt >= DOWNLOAD_ATTEMPTS || options?.signal?.aborted === true) {

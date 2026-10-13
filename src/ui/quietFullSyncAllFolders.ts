@@ -14,7 +14,7 @@ import {
   allowImmediateOfflineFlushRetry,
   bumpOfflineFlushBackoff,
 } from "../core/syncOfflineFlushBackoff.js";
-import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
+import { noteTransportFailure } from "../core/syncOfflineHints.js";
 import { verboseLog } from "../utils/log.js";
 
 export interface QuietFullSyncAllFoldersDeps {
@@ -114,7 +114,7 @@ export async function runQuietFullSyncAllFolders(d: QuietFullSyncAllFoldersDeps)
       await d.offlineQueue.enqueueFullSync();
       allowImmediateOfflineFlushRetry();
       bumpOfflineFlushBackoff();
-      noteCloudTransportFailure();
+      noteTransportFailure(e);
     }
   } finally {
     verboseLog("quietFullSync", "finally");

@@ -16,13 +16,10 @@ import {
   noteProviderRequestSuccess,
 } from "../../core/syncRateLimitState.js";
 import {
-  noteCloudTransportFailure,
   noteCloudTransportSuccess,
+  noteTransportFailure,
 } from "../../core/syncOfflineHints.js";
-import {
-  describeProviderTransportFailure,
-  isConnectLevelFailure,
-} from "../../core/transportFailureReason.js";
+import { describeProviderTransportFailure } from "../../core/transportFailureReason.js";
 import { ProviderError } from "../cloudProviderTypes.js";
 import { classifyProviderHttpError } from "./classifyHttpError.js";
 
@@ -77,9 +74,7 @@ export function providerTransportError(e: unknown, provider: string): ProviderEr
   if (e instanceof ProviderError) {
     return e;
   }
-  if (isConnectLevelFailure(e)) {
-    noteCloudTransportFailure();
-  }
+  noteTransportFailure(e);
   // `fetch failed` is all undici puts in the outer message; the answer lives in
   // `cause`. Unwrapping it here means every surface — toast, log, report —
   // says what actually went wrong instead of the one useless string.

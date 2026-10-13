@@ -2,6 +2,8 @@
  * UI / recovery hints when TCP or Graph transport fails (distinct from 429 / 401).
  */
 
+import { isConnectLevelFailure } from "./transportFailureReason.js";
+
 let stickyTransportFailure = false;
 const listeners = new Set<() => void>();
 /** Notified when a cloud request gets through. Policy modules subscribe here. */
@@ -58,4 +60,16 @@ export function subscribeOfflineHints(listener: () => void): { dispose: () => vo
 export function resetOfflineHintsForTests(): void {
   stickyTransportFailure = false;
   emit();
+}
+
+/**
+ * Raise the "cloud unreachable" hint only for failures that happened before a
+ * connection existed. Every caller goes through here: five of them used to
+ * raise the flag on any network-looking error, so one stuck download kept
+ * announcing an outage that the next API call immediately denied.
+ */
+export function noteTransportFailure(e: unknown): void {
+  if (isConnectLevelFailure(e)) {
+    noteCloudTransportFailure();
+  }
 }

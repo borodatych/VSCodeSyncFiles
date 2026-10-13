@@ -85,13 +85,18 @@ export async function fetchWithTimeout(
   }, timeoutMs);
 
   let stalled = false;
+  // What the stall line reports: a silent host before any header is a routing
+  // or server problem, silence after N bytes is a transfer that died midway.
+  let gotHeaders = false;
+  let receivedBytes = 0;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const armIdle = (): void => {
     if (idleMs === undefined) return;
     if (idleTimer !== undefined) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       stalled = true;
-      warnLog(opts.channel, `STALL no data for ${String(idleMs)}ms — ${method} ${short}`);
+      const phase = gotHeaders ? `после ${String(receivedBytes)} байт` : "заголовки не пришли";
+      warnLog(opts.channel, `STALL no data for ${String(idleMs)}ms (${phase}) — ${method} ${short}`);
       ac.abort();
     }, idleMs);
   };
@@ -105,12 +110,17 @@ export async function fetchWithTimeout(
 
   try {
     const res = await fetch(url, { ...init, signal: ac.signal });
+    gotHeaders = true;
+    armIdle();
     // Body is read here on purpose: the deadline must outlive the headers.
     const buffered = NULL_BODY_STATUSES.has(res.status)
       ? null
       : idleMs === undefined || res.body === null
         ? await res.arrayBuffer()
-        : await readBodyResettingIdle(res.body, armIdle);
+        : await readBodyResettingIdle(res.body, (n) => {
+            receivedBytes += n;
+            armIdle();
+          });
     verboseLog(
       opts.channel,
       `DONE ${String(res.status)} in ${String(Date.now() - t0)}ms — ${short}`,
@@ -143,7 +153,7 @@ export async function fetchWithTimeout(
 /** Read a body to the end, re-arming the idle timer on every chunk. */
 async function readBodyResettingIdle(
   body: ReadableStream<Uint8Array>,
-  onChunk: () => void,
+  onChunk: (bytes: number) => void,
 ): Promise<ArrayBuffer> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -153,7 +163,7 @@ async function readBodyResettingIdle(
     if (done) break;
     chunks.push(value);
     total += value.byteLength;
-    onChunk();
+    onChunk(value.byteLength);
   }
   const out = new Uint8Array(total);
   let offset = 0;
