@@ -25,6 +25,9 @@ const iconOf = new Map(pkg.contributes.commands.map((c) => [c.command, c.icon]))
 function titleIcons(viewId: string): { command: string; icon: string }[] {
   return (pkg.contributes.menus["view/title"] ?? [])
     .filter((m) => (m.when ?? "").includes(viewId))
+    // Only the navigation group is drawn as buttons; everything else lives in
+    // the "…" menu as text, where an icon is not shown and cannot collide.
+    .filter((m) => (m.group ?? "").startsWith("navigation"))
     .map((m) => ({ command: m.command, icon: iconOf.get(m.command) ?? "" }))
     .filter((x) => x.icon !== "");
 }
@@ -46,6 +49,14 @@ describe("иконки в заголовках панелей", () => {
   it("фильтр воркспейсов и режим «только расхождения» — разные иконки", () => {
     expect(iconOf.get("vscodesync.filterWorkspaces")).toBe("$(filter)");
     expect(iconOf.get("vscodesync.toggleTreeOnlyDiverged")).toBe("$(diff)");
+  });
+
+  it("«Показать расхождения» есть в меню «…» панели", () => {
+    const item = (pkg.contributes.menus["view/title"] ?? []).find(
+      (m) => m.command === "vscodesync.openDivergences",
+    );
+    expect(item?.when).toContain("vscodesync.workspaces");
+    expect((item?.group ?? "").startsWith("navigation")).toBe(false);
   });
 
   it("каждая кнопка заголовка вообще имеет иконку или уходит в меню «…»", () => {

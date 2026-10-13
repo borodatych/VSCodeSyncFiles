@@ -197,6 +197,22 @@ export function registerDivergencesCommands(deps: DivergencesCommandsDeps): vsco
           await deps.refreshUi();
           return plan;
         },
+        // Listed from the config, not from the plan: the plan drops workspaces
+        // with nothing diverged, and "is this one clean?" is a fair question.
+        workspaces: async () => {
+          const out = [];
+          for (const f of deps.workspaceFolders()) {
+            const cfg = await WorkspaceConfigManager.load(f.uri.fsPath);
+            for (const w of cfg.activeWorkspaces) {
+              out.push({
+                root: f.uri.fsPath,
+                workspaceId: w.workspaceId,
+                note: w.workspaceNote.trim() || w.workspaceId.slice(0, 8),
+              });
+            }
+          }
+          return out;
+        },
         bulk: (direction, rows) => runBulk(deps, direction, rows),
         compare: (row) => openCompare(row),
         resolve: (row) => resolveConflict(deps, row),

@@ -2041,6 +2041,11 @@
       ],
       "view/title": [
         {
+          "command": "vscodesync.openDivergences",
+          "when": "view == vscodesync.workspaces",
+          "group": "0_view@0"
+        },
+        {
           "command": "vscodesync.suspendWorkspaces",
           "when": "view == vscodesync.workspaces",
           "group": "1_pause@0"

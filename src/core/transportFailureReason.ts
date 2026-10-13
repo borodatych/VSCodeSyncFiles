@@ -124,3 +124,25 @@ export function describeTransportFailure(e: unknown): TransportFailureReason {
 export function describeProviderTransportFailure(provider: string, e: unknown): string {
   return `${provider}: ${describeTransportFailure(e).text}`;
 }
+
+const CONNECT_LEVEL_CODES: ReadonlySet<string> = new Set([
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+]);
+
+/**
+ * Did the failure happen before a connection existed?
+ *
+ * Only these say "the cloud is unreachable". A body that stalls or a response
+ * that times out happened on a live connection: one file failed, the service
+ * did not. Treating both alike made a single stuck download flip the whole
+ * extension to "unreachable" and back twenty times an hour.
+ */
+export function isConnectLevelFailure(e: unknown): boolean {
+  const code = describeTransportFailure(e).code;
+  return code !== undefined && CONNECT_LEVEL_CODES.has(code);
+}
