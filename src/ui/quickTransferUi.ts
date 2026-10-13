@@ -12,7 +12,7 @@ import {
 } from "../core/quickTransfer.js";
 import { readLocalBackupSettings } from "./localBackupSettings.js";
 import { allowImmediateOfflineFlushRetry, bumpOfflineFlushBackoff } from "../core/syncOfflineFlushBackoff.js";
-import { noteCloudTransportFailure } from "../core/syncOfflineHints.js";
+import { noteTransportFailure } from "../core/syncOfflineHints.js";
 import { isLikelyUnreachableError } from "../utils/networkErrors.js";
 import { guardPathsBeforePush } from "./syncGuards.js";
 import { showSyncInfo, showSyncError, showSyncWarning } from "./notificationService.js";
@@ -244,7 +244,7 @@ export function registerQuickTransferFeatures(
           });
           bumpOfflineFlushBackoff();
           allowImmediateOfflineFlushRetry();
-          noteCloudTransportFailure();
+          noteTransportFailure(e);
           await showSyncWarning(
             `VSCodeSync: нет связи с облаком — Quick Transfer поставлен в оффлайн-очередь (${rel}).`,
             "normal",

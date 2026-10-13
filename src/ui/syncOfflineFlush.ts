@@ -10,7 +10,7 @@ import {
 } from "../core/binarySkipNotice.js";
 import { runQuietFullSyncAllFolders, type QuietFullSyncAllFoldersDeps } from "./quietFullSyncAllFolders.js";
 import { isAutoSyncBlockedByRateLimit } from "../core/syncRateLimitState.js";
-import { noteCloudTransportFailure, noteCloudTransportSuccess } from "../core/syncOfflineHints.js";
+import { noteTransportFailure, noteCloudTransportSuccess } from "../core/syncOfflineHints.js";
 import {
   allowImmediateOfflineFlushRetry,
   bumpOfflineFlushBackoff,
@@ -129,7 +129,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
             await store.prependItems(fileOps.slice(opIx));
             bumpOfflineFlushBackoff();
             allowImmediateOfflineFlushRetry();
-            noteCloudTransportFailure();
+            noteTransportFailure(e);
             abortedOpsForNetwork = true;
             break;
           }
@@ -145,7 +145,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
             await store.prependItems(fileOps.slice(opIx));
             bumpOfflineFlushBackoff();
             allowImmediateOfflineFlushRetry();
-            noteCloudTransportFailure();
+            noteTransportFailure(e);
             abortedOpsForNetwork = true;
             break;
           }
@@ -175,7 +175,7 @@ export async function flushOfflineQueue(store: SyncOfflineQueueStore, deps: Offl
           await store.prependItems(activeQt.slice(i));
           bumpOfflineFlushBackoff();
           allowImmediateOfflineFlushRetry();
-          noteCloudTransportFailure();
+          noteTransportFailure(e);
           abortedQtForNetwork = true;
           break;
         }

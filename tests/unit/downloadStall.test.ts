@@ -7,6 +7,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FetchTimeoutError, fetchWithTimeout } from "../../src/providers/_shared/fetchWithTimeout.js";
 import { isConnectLevelFailure } from "../../src/core/transportFailureReason.js";
+import {
+  hasStickyUnreachableHint,
+  noteTransportFailure,
+  resetOfflineHintsForTests,
+} from "../../src/core/syncOfflineHints.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -65,5 +70,23 @@ describe("isConnectLevelFailure", () => {
     expect(isConnectLevelFailure(new FetchTimeoutError(20_000, "GET a"))).toBe(false);
     expect(isConnectLevelFailure(withCode("ETIMEDOUT"))).toBe(false);
     expect(isConnectLevelFailure(withCode("ECONNRESET"))).toBe(false);
+  });
+});
+
+describe("noteTransportFailure", () => {
+  afterEach(() => {
+    resetOfflineHintsForTests();
+  });
+  const withCode = (code: string): Error =>
+    new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code }) });
+
+  it("зависшее скачивание не объявляет облако недоступным", () => {
+    noteTransportFailure(new FetchTimeoutError(20_000, "GET a"));
+    expect(hasStickyUnreachableHint()).toBe(false);
+  });
+
+  it("отказ соединения — объявляет, в том числе сквозь обёртку", () => {
+    noteTransportFailure(new Error("Yandex Disk: …", { cause: withCode("ENOTFOUND") }));
+    expect(hasStickyUnreachableHint()).toBe(true);
   });
 });
