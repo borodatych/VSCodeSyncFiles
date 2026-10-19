@@ -381,11 +381,12 @@ export class YandexDiskProvider implements ICloudProvider {
     return started;
   }
 
-  /** Дописывает облачный путь в текст ошибки, сохраняя код, причину и retryAfterMs. */
+  /** Дописывает облачный путь в текст ошибки и в поле cloudPath, сохраняя код, причину и retryAfterMs. */
   private withCloudPath(err: ProviderError, cloudPath: string): ProviderError {
     return new ProviderError(err.code, `${err.message} [${cloudPath}]`, {
       cause: err.cause,
       retryAfterMs: err.retryAfterMs,
+      cloudPath,
     });
   }
 

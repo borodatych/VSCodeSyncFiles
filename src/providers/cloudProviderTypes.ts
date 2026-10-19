@@ -16,15 +16,18 @@ export type ProviderErrorCode =
 export class ProviderError extends Error {
   /** Set for `RATE_LIMITED` when server sent `Retry-After` (milliseconds). */
   readonly retryAfterMs?: number;
+  /** Облачный путь файла, на котором упала операция: структурный признак вместо разбора текста. */
+  readonly cloudPath?: string;
 
   constructor(
     public readonly code: ProviderErrorCode,
     message: string,
-    options?: { cause?: unknown; retryAfterMs?: number },
+    options?: { cause?: unknown; retryAfterMs?: number; cloudPath?: string },
   ) {
     super(message, options?.cause ? { cause: options.cause } : undefined);
     this.name = "ProviderError";
     this.retryAfterMs = options?.retryAfterMs;
+    this.cloudPath = options?.cloudPath;
   }
 }
 
