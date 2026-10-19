@@ -25,6 +25,7 @@ import {
   type YandexTokenBundle,
 } from "./yandexTokens.js";
 import { fetchWithTimeout as sharedFetchWithTimeout } from "../_shared/fetchWithTimeout.js";
+import { warnLog } from "../../utils/log.js";
 
 const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 
@@ -32,10 +33,22 @@ const API_BASE = "https://cloud-api.yandex.net/v1/disk";
 const LOCKED_RETRY_MAX = 3;
 /** Transfers of one file, each over a freshly issued link. */
 const DOWNLOAD_ATTEMPTS = 3;
+/** Пауза перед повтором после 5xx; растёт с номером попытки */
+const DOWNLOAD_5XX_PAUSE_MS = 1_000;
 const LOCKED_RETRY_DELAY_MS = 1500;
+/** Сколько символов тела ответа сервера попадает в журнал. */
+const LOG_BODY_PREVIEW_CHARS = 120;
 
 const API_TIMEOUT_MS = 30_000;   // metadata / auth requests
 const DATA_TIMEOUT_MS = 120_000; // upload PUT / download GET
+
+/**
+ * Ответ 5xx хранилища — сбой узла, а не файла: новая ссылка обычно ведёт на другой узел.
+ * 4xx (включая 404) повтор не лечит.
+ */
+export function isRetryableDownloadStatus(status: number): boolean {
+  return status >= 500 && status <= 599;
+}
 
 /**
  * Yandex used to carry its own byte-for-byte copy of `fetchWithTimeout`,
@@ -368,6 +381,14 @@ export class YandexDiskProvider implements ICloudProvider {
     return started;
   }
 
+  /** Дописывает облачный путь в текст ошибки, сохраняя код, причину и retryAfterMs. */
+  private withCloudPath(err: ProviderError, cloudPath: string): ProviderError {
+    return new ProviderError(err.code, `${err.message} [${cloudPath}]`, {
+      cause: err.cause,
+      retryAfterMs: err.retryAfterMs,
+    });
+  }
+
   /** Ask the API for a fresh one-time download link, riding out 423 locks. */
   private async resolveDownloadHref(cloudPath: string, signal?: AbortSignal): Promise<string> {
     const pathEnc = encodeURIComponent(toDiskApiPath(cloudPath, this.useAppFolder));
@@ -444,20 +465,36 @@ export class YandexDiskProvider implements ICloudProvider {
     let r!: Response;
     for (let attempt = 1; ; attempt++) {
       const href = await this.resolveDownloadHref(cloudPath, options?.signal);
+      const isLast = attempt >= DOWNLOAD_ATTEMPTS || options?.signal?.aborted === true;
       try {
         r = await this.fetchDownloadBody(href, cloudPath, options?.signal);
-        break;
       } catch (e) {
-        if (attempt >= DOWNLOAD_ATTEMPTS || options?.signal?.aborted === true) {
-          throw providerTransportError(e, "Yandex Disk");
+        if (isLast) {
+          throw this.withCloudPath(providerTransportError(e, "Yandex Disk"), cloudPath);
         }
+        continue;
       }
+      if (!isRetryableDownloadStatus(r.status)) {
+        break;
+      }
+      // Тело читаем из клона: classifyResponse на последней попытке читает оригинал
+      const preview = (await r.clone().text().catch(() => "")).slice(0, LOG_BODY_PREVIEW_CHARS);
+      warnLog(
+        "yandex.fetch",
+        `скачивание: HTTP ${String(r.status)}, попытка ${String(attempt)} из ${String(DOWNLOAD_ATTEMPTS)}, ${cloudPath}`,
+        preview,
+      );
+      if (isLast) {
+        break;
+      }
+      // Сбой хранилища не проходит за доли секунды: без паузы все попытки попали бы в него же
+      await new Promise<void>((resolve) => { setTimeout(resolve, DOWNLOAD_5XX_PAUSE_MS * attempt); });
     }
     if (r.status === 404) {
       throw new ProviderError("NOT_FOUND", cloudPath);
     }
     if (!r.ok) {
-      throw await this.classifyResponse(r);
+      throw this.withCloudPath(await this.classifyResponse(r), cloudPath);
     }
     noteCloudTransportSuccess();
     const buf = Buffer.from(await r.arrayBuffer());
