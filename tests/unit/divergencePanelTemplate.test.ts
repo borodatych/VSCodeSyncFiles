@@ -71,6 +71,7 @@ describe("divergencePanel — целостность шаблона", () => {
     while ((m = re.exec(html)) !== null) seen.add(m[1]);
     expect([...seen].sort()).toEqual([
       "JSON.stringify(DIVERGENCE_KEY_SEP)",
+      'JSON.stringify(focusWs).replace(/</g, "\\\\u003c")',
       "cspSource",
       "escapeHtml(d.title)",
       "nonce",

@@ -17,6 +17,7 @@ import type { ICloudProvider } from "../providers/cloudProviderTypes.js";
 import { ProviderError } from "../providers/cloudProviderTypes.js";
 import { assertWorkspaceTrusted } from "./workspaceTrust.js";
 import { guardPathsBeforeAdd } from "./syncGuards.js";
+import { createAttachDivergencePrompt } from "./attachDivergencePrompt.js";
 
 export {
   parseWorkspaceStructureImport,
@@ -256,7 +257,11 @@ async function importLitePortable(
   }
 
   if (mode === "attach") {
-    await engine.attachCloudWorkspace(lite.sourceWorkspaceId);
+    const divergence = createAttachDivergencePrompt(workspaceRoot, lite.workspaceNote || lite.sourceWorkspaceId);
+    await engine.attachCloudWorkspace(lite.sourceWorkspaceId, {
+      onDivergedAfterAttach: divergence.onDivergedAfterAttach,
+    });
+    await divergence.afterAttach();
     const cfg = await WorkspaceConfigManager.load(workspaceRoot);
     const ent = cfg.activeWorkspaces.find((w) => w.workspaceId === lite.sourceWorkspaceId);
     if (!ent) {

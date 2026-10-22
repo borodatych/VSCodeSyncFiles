@@ -97,6 +97,8 @@ import { shouldSyncUnderMode } from "./selectiveSyncMode.js";
 import { absoluteToTrackedPosix, trackedLocalAbsolutePath } from "./pathMapping.js";
 import { assertMutationAllowed, mutationPolicy, type MutationOp } from "./syncPolicy.js";
 import { runWithSyncFileLock } from "./syncFileLock.js";
+import { settleAttachDivergence, type AttachDivergencePrompt } from "./attachDivergence.js";
+import { hashUntrackedLocalFiles } from "./io/adoptLocalHashes.js";
 import {
   isSecondaryWorkspaceInstanceReadOnly,
   rejectIfSecondaryWorkspaceInstanceReadOnly,
@@ -841,7 +843,7 @@ export class SyncEngine {
    */
   async attachCloudWorkspace(
     workspaceId: string,
-    opts?: { beforeInitialAdopt?: () => Promise<void> },
+    opts?: { beforeInitialAdopt?: () => Promise<void>; onDivergedAfterAttach?: AttachDivergencePrompt },
   ): Promise<void> {
     this.assertMayMutate("attachCloudWorkspace");
     rejectIfSecondaryWorkspaceInstanceReadOnly();
@@ -913,11 +915,8 @@ export class SyncEngine {
 
     await opts?.beforeInitialAdopt?.();
     await this.adoptManifestFilesFromCloud(workspaceId);
-    await this.syncWorkspace(workspaceId);
-    // Initial attach: materialise cloud-newer files on disk so the user lands
-    // in a ready-to-edit state. Without this `syncWorkspace` only marks them
-    // `cloud_newer` in the manifest and the user is forced to run Pull manually.
-    await this.forcePullWorkspace(workspaceId);
+    // Полный проход здесь отправил бы отличающиеся локальные байты поверх облака: только статусы и выбор пользователя
+    await settleAttachDivergence(this, { loadCfg: () => this.loadCfg(), saveCfg: (c) => this.saveCfg(c) }, workspaceId, opts?.onDivergedAfterAttach);
     const cfgEnd = await this.loadCfg();
     await this.saveCfg(cfgEnd);
   }
@@ -937,7 +936,7 @@ export class SyncEngine {
     const stamp = new Date().toISOString();
 
     // Which files to take over is decided by `planTrackingDiff` (pure); this
-    // loop only applies the decision. `existsLocally` is resolved up front so
+    // loop only applies the decision. `localHashOf` is resolved up front so
     // the planner stays free of I/O.
     //
     // Link Bindings: a folder rule redirects where an adopted file LIVES on
@@ -953,24 +952,21 @@ export class SyncEngine {
     const candidatePaths = manifest.files
       .filter((f) => !f.removedAt && inScope(f.path))
       .map((f) => f.path);
-    const existing = new Set<string>();
-    for (const posixRel of candidatePaths) {
-      if (await fileExists(this.localAbs(cfg, placementOf(posixRel)))) existing.add(posixRel);
-    }
+    // Link Bindings: tracked rows are known by canonical key — localPath would false-adopt every bound file.
+    const trackedKeys = cfg.files
+      .filter((f) => f.workspaceId === workspaceId && inScope(manifestKeyOf(f)))
+      .map((f) => manifestKeyOf(f));
+    const localHashes = await hashUntrackedLocalFiles(candidatePaths, trackedKeys, (k) => this.localAbs(cfg, placementOf(k)), (a, k) => this.hashTrackedFile(a, k));
     const trackedLinkIds = trackedLinkIdMap(cfg.files, workspaceId);
     const diff = planTrackingDiff({
       workspaceId,
       // Out-of-scope rows are invisible to the planner: neither adopted nor
       // pruned — this machine simply does not carry that folder.
       manifestFiles: manifest.files.filter((f) => inScope(f.path)),
-      // Link Bindings: tracked rows are known to the manifest by their
-      // canonical key — localPath here would false-adopt every bound file.
-      trackedPaths: cfg.files
-        .filter((f) => f.workspaceId === workspaceId && inScope(manifestKeyOf(f)))
-        .map((f) => manifestKeyOf(f)),
+      trackedPaths: trackedKeys,
       metaHashFor: (rel: string) => meta.files[rel]?.hash,
       wireGzipFor: (rel: string) => meta.files[rel]?.wireGzip === true,
-      existsLocally: (rel: string) => existing.has(rel),
+      localHashOf: (rel: string) => localHashes.get(rel),
       trackedLinkIdOf: (key: string) => trackedLinkIds.get(key),
     });
 
@@ -2992,7 +2988,7 @@ export class SyncEngine {
   ): void {
     if (!this.deps.onTrackingDriftDetected) return;
     // Same planner the adoption uses, so the notification cannot promise a
-    // different set of changes than the action would apply. `existsLocally` is
+    // different set of changes than the action would apply. `localHashOf` is
     // irrelevant to the counts, so the detector answers it cheaply.
     const driftLinkIds = trackedLinkIdMap(cfg.files, workspaceId);
     const diff = planTrackingDiff({
@@ -3007,7 +3003,7 @@ export class SyncEngine {
         .map((f) => manifestKeyOf(f)),
       metaHashFor: () => undefined,
       wireGzipFor: () => false,
-      existsLocally: () => false,
+      localHashOf: () => undefined,
       trackedLinkIdOf: (key: string) => driftLinkIds.get(key),
     });
     const toAdopt = [...diff.adopt.map((a) => a.posixRel), ...diff.rename.map((r) => r.to)];
@@ -3337,7 +3333,7 @@ export class SyncEngine {
     meta: MetaJson,
     entry: ActiveWorkspaceEntry,
     localCurrentHash: string,
-    activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean },
+    activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean; userForce?: boolean },
   ): Promise<boolean> {
     if (activityHint?.asAutoResolvedKeepMine === true) {
       return true;
@@ -3364,6 +3360,10 @@ export class SyncEngine {
       localHash: localCurrentHash,
       cloudHash: cloudCurrent,
     });
+    // Ручная отправка не скачивает облако поверх локального: его версия уйдёт в историю снимком в pushFile
+    if (activityHint?.userForce === true && planned.action !== "none") {
+      return !(await this.shouldSkipPushDueToMachineApproval(workspaceId));
+    }
     if (planned.reason === "consensus_lag") {
       await this.pullFile(cfg, workspaceId, file.localPath, entry, meta);
       return false;
@@ -3643,7 +3643,7 @@ export class SyncEngine {
     workspaceId: string,
     posixRel: string,
     entry?: ActiveWorkspaceEntry,
-    activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean },
+    activityHint?: { pushOnCommit?: boolean; asAutoResolvedKeepMine?: boolean; userForce?: boolean },
   ): Promise<void> {
     this.assertMayMutate("pushFile");
     this.assertEncryptionReady();
@@ -3664,7 +3664,7 @@ export class SyncEngine {
     }
     // Link Bindings: cloud state is keyed canonically; disk stays local.
     const key = manifestKeyOf(file);
-    if (file.syncStatus === "conflict") {
+    if (file.syncStatus === "conflict" && activityHint?.userForce !== true) {
       // Symmetric with `pullFile`: a conflicted file is never moved silently.
       // `pushAll` already filters conflicts out before reaching here, and a
       // stray one is now recorded as a skipped file rather than a false success.
@@ -3751,8 +3751,8 @@ export class SyncEngine {
       // fail with 412 exactly when the cloud had moved on — the one case the
       // button exists for — and the 412 branch below re-raised the conflict,
       // so "Всё равно оставить моё" looped forever without ever writing.
-      const ifMatchBlob =
-        pathModeChanged || activityHint?.asAutoResolvedKeepMine === true ? undefined : prevEtagLocked;
+      const deliberateOverwrite = activityHint?.asAutoResolvedKeepMine === true || activityHint?.userForce === true;
+      const ifMatchBlob = pathModeChanged || deliberateOverwrite ? undefined : prevEtagLocked;
       let etag = prevEtagLocked;
       const networkStartMs = this.deps.onSyncProfileSample ? Date.now() : 0;
       try {

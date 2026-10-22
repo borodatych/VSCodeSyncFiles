@@ -21,6 +21,9 @@ import { openDivergencePanel, updateDivergencePanel } from "../ui/divergencePane
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import { chooseMissingFilePlacement } from "./_placementFlow.js";
+import type { WorkspaceConfig } from "../core/types.js";
+import { splitBulkPushByFreshStatus } from "../core/bulkPushSplit.js";
+import { confirmPushOverNewerCloud } from "../ui/pushOverNewerCloudPrompt.js";
 
 export interface DivergencesCommandsDeps {
   runWithEngine: RunWithEngineFn;
@@ -86,17 +89,60 @@ async function runBulk(
   const verb = direction === "push" ? "Отправка" : "Скачивание";
   let done = 0;
   const failed: string[] = [];
+  // Файлы, по которым пользователь подтвердил отправку поверх более нового облака
+  const forced = new Set<string>();
+  const forceKey = (r: DivergenceRow): string => `${r.root}\0${r.workspaceId}\0${r.posixRel}`;
+  let toRun = rows;
+
+  if (direction === "push") {
+    // Статусы панели могли устареть: другая машина успела обновить облако, свежий пересчёт это покажет
+    for (const [root, rootRows] of groupRowsByRoot(rows)) {
+      await deps.runWithEngine(
+        async (engine) => {
+          for (const wid of new Set(rootRows.map((r) => r.workspaceId))) {
+            try {
+              await engine.checkWorkspaceStatus(wid);
+            } catch (e) {
+              warnLog("divergences", `recount ${wid}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        },
+        root,
+        { showErrorDialog: false, trigger: "user" },
+      );
+    }
+    const files: WorkspaceConfig["files"] = [];
+    let anyCfg: WorkspaceConfig | undefined;
+    const ahead: (DivergenceRow & { localPath: string })[] = [];
+    for (const [root, rootRows] of groupRowsByRoot(rows)) {
+      const cfg = await WorkspaceConfigManager.load(root);
+      anyCfg = cfg;
+      files.push(...cfg.files);
+      ahead.push(...splitBulkPushByFreshStatus(cfg.files, rootRows.map((r) => ({ ...r, localPath: r.posixRel }))).aheadInCloud);
+    }
+    if (ahead.length > 0 && anyCfg !== undefined) {
+      // Одно окно на весь набор: корни разные, поэтому статусы всех корней собраны в один список
+      const ok = await confirmPushOverNewerCloud({ ...anyCfg, files }, ahead);
+      if (ok) {
+        for (const r of ahead) forced.add(forceKey(r));
+      } else {
+        const skip = new Set(ahead.map(forceKey));
+        toRun = rows.filter((r) => !skip.has(forceKey(r)));
+        failed.push(`пропущено ${String(ahead.length)}: облако новее`);
+      }
+    }
+  }
 
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `VSCodeSync · ${verb}`, cancellable: false },
     async (progress) => {
-      for (const [root, rootRows] of groupRowsByRoot(rows)) {
+      for (const [root, rootRows] of groupRowsByRoot(toRun)) {
         await deps.runWithEngine(
           async (engine) => {
             for (const row of rootRows) {
               progress.report({
-                message: `${row.posixRel} (${String(done + 1)}/${String(rows.length)})`,
-                increment: 100 / rows.length,
+                message: `${row.posixRel} (${String(done + 1)}/${String(toRun.length)})`,
+                increment: 100 / toRun.length,
               });
               // Reloaded per file: push/pull mutate the config, and a stale
               // copy would overwrite the previous file's recorded status.
@@ -108,7 +154,15 @@ async function runBulk(
               }
               try {
                 if (direction === "push") {
-                  await engine.pushFile(cfg, row.workspaceId, row.posixRel, entry);
+                  // userForce только там, где пользователь подтвердил отправку поверх нового облака
+                  // Остальные идут со сверкой: после свежего пересчёта они pending_push
+                  await engine.pushFile(
+                    cfg,
+                    row.workspaceId,
+                    row.posixRel,
+                    entry,
+                    forced.has(forceKey(row)) ? { userForce: true } : undefined,
+                  );
                 } else {
                   await engine.pullFile(cfg, row.workspaceId, row.posixRel, entry);
                 }
@@ -187,7 +241,12 @@ async function resolveConflict(deps: DivergencesCommandsDeps, row: DivergenceRow
 
 export function registerDivergencesCommands(deps: DivergencesCommandsDeps): vscode.Disposable[] {
   return [
-    vscode.commands.registerCommand("vscodesync.openDivergences", () => {
+    // Необязательный аргумент — воркспейс, на котором открыть панель (после подключения с расхождениями)
+    vscode.commands.registerCommand("vscodesync.openDivergences", (focus?: { root?: unknown; workspaceId?: unknown }) => {
+      const focusWs =
+        typeof focus?.root === "string" && typeof focus.workspaceId === "string"
+          ? { root: focus.root, workspaceId: focus.workspaceId }
+          : undefined;
       openDivergencePanel({
         // The recount rewrites statuses in the config; the tree reads the same
         // statuses, so refreshing one surface without the other leaves them
@@ -245,7 +304,7 @@ export function registerDivergencesCommands(deps: DivergencesCommandsDeps): vsco
             { trigger: "user" },
           );
         },
-      });
+      }, focusWs);
     }),
   ];
 }

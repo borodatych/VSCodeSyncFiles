@@ -9,7 +9,7 @@
  * the notification and the action cannot disagree about what is missing.
  *
  * Pure: the caller supplies the manifest rows, what is tracked now, the meta
- * hashes, and which files exist on disk. No I/O.
+ * hashes, and the real hashes of the files on disk. No I/O.
  */
 
 export interface ManifestFileRow {
@@ -30,8 +30,12 @@ export interface TrackingDiffInput {
   metaHashFor: (posixRel: string) => string | undefined;
   /** `_meta.files[path].wireGzip` — decides the `.gz` suffix of the blob path. */
   wireGzipFor: (posixRel: string) => boolean;
-  /** Whether the file is present on this disk right now. */
-  existsLocally: (posixRel: string) => boolean;
+  /**
+   * Канонический хэш файла на диске сейчас; `undefined` — файла на диске нет
+   * Нужен реальный хэш, а не факт наличия: облачный хэш в роли локального даёт ложную базу,
+   * И отличающийся файл уходит в облако как локальная правка
+   */
+  localHashOf: (posixRel: string) => string | undefined;
   /**
    * Locally cached `linkId` of a tracked key — feeds the identity-pairing
    * phase. Optional: without it renames are detected by `renamedFrom` only.
@@ -47,9 +51,11 @@ export interface AdoptedFilePlan {
    * necessarily on this disk. Registering it as already-synced (cloud hash in
    * `localHash`, status `ok`) is what used to leave it never pulled.
    * `missing_local` is the honest form of "not on this disk" (Link Bindings).
+   * Байты на диске отличаются от облачных — `cloud_newer` с реальным хэшем:
+   * Кэш локального хэша расходится с базой, и сверка видит отставание, а не правку для отправки
    */
   localHash: string;
-  syncStatus: "ok" | "missing_local";
+  syncStatus: "ok" | "missing_local" | "cloud_newer";
   /** Manifest row identity to cache locally (undefined on legacy rows). */
   linkId?: string;
 }
@@ -220,12 +226,12 @@ export function planTrackingDiff(input: TrackingDiffInput): TrackingDiff {
       });
       continue;
     }
-    const exists = input.existsLocally(row.path);
+    const localHash = input.localHashOf(row.path);
     adopt.push({
       posixRel: row.path,
       wireGzip,
-      localHash: exists ? metaHash : "",
-      syncStatus: exists ? "ok" : "missing_local",
+      localHash: localHash ?? "",
+      syncStatus: localHash === undefined ? "missing_local" : localHash === metaHash ? "ok" : "cloud_newer",
       ...(row.linkId !== undefined ? { linkId: row.linkId } : {}),
     });
   }

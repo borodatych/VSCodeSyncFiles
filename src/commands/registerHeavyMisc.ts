@@ -107,8 +107,8 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
       });
     }),
 
-    vscode.commands.registerCommand("vscodesync.repairState", async () => {
-      const root = pickRoot();
+    vscode.commands.registerCommand("vscodesync.repairState", async (arg?: { workspaceId: string; root?: string }) => {
+      const root = arg?.root ?? pickRoot();
       if (!root) {
         return;
       }
@@ -118,7 +118,10 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
         return;
       }
 
-      const mode = await vscode.window.showQuickPick(
+      // С аргументом режим и воркспейс уже известны: сразу сканируем облако
+      const mode = arg?.workspaceId
+        ? { value: "scan" as const }
+        : await vscode.window.showQuickPick(
         [
           {
             label: "$(sync) Обычный ремонт",
@@ -151,9 +154,17 @@ export function registerHeavyMiscCommands(deps: HeavyMiscCommandsDeps): vscode.D
         description: w.workspaceId,
         workspaceId: w.workspaceId,
       }));
-      const pick = await vscode.window.showQuickPick<WsPick>(items, {
-        placeHolder: "Выберите workspace для сканирования облака",
-      });
+      const preset = arg?.workspaceId
+        ? items.find((i) => i.workspaceId === arg.workspaceId) ?? {
+            label: arg.workspaceId,
+            workspaceId: arg.workspaceId,
+          }
+        : undefined;
+      const pick =
+        preset ??
+        (await vscode.window.showQuickPick<WsPick>(items, {
+          placeHolder: "Выберите workspace для сканирования облака",
+        }));
       if (!pick) return;
 
       await runWithEngine(async (engine) => {

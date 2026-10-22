@@ -23,6 +23,8 @@ import type { WorkspacesTreeProvider } from "../ui/workspacesTree.js";
 import { refreshActiveEditorSyncContext } from "../ui/editorSyncContext.js";
 import { verboseLog } from "../utils/log.js";
 import { isCancellation } from "../core/operationCancelled.js";
+import { detectBrokenCloudFile } from "../core/brokenCloudFile.js";
+import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 
 export interface RunWithEngineDeps {
   registry: ProviderRegistry;
@@ -127,7 +129,7 @@ export function createRunWithEngine(deps: RunWithEngineDeps): RunWithEngineFn {
     // command promise must not hang on the user reading it.
     // The retry runs the very same command again — that is what the user means
     // by "Повторить" after a network blip, and it keeps the offer honest.
-    void reportEngineFailure(failure, globalConfig, () =>
+    void reportEngineFailure(failure, globalConfig, root, () =>
       runWithEngine(fn, workspaceRoot, options),
     );
   };
@@ -145,11 +147,13 @@ function toError(value: unknown): Error {
 
 const RETRY_LABEL = "Повторить";
 const DETAILS_LABEL = "Подробнее";
+const RESTORE_LABEL = "Восстановить";
 
 /** Surface a failed engine run. Never awaited by the caller — see `finally` above. */
 async function reportEngineFailure(
   failure: unknown,
   globalConfig: GlobalConfigManager,
+  root: string,
   retry?: () => Promise<void>,
 ): Promise<void> {
   if (failure instanceof ProviderError && failure.code === "UNAUTHORIZED") {
@@ -161,6 +165,27 @@ async function reportEngineFailure(
     );
     if (choice === "Войти снова") {
       await vscode.commands.executeCommand("vscodesync.setActiveProvider");
+    }
+    return;
+  }
+  // Служебный файл воркспейса сломан у провайдера: повтор не поможет, лечится пересборкой из файлов облака
+  const broken = detectBrokenCloudFile(failure);
+  if (broken) {
+    const wc = await WorkspaceConfigManager.load(root).catch(() => undefined);
+    const note = wc?.activeWorkspaces.find((w) => w.workspaceId === broken.workspaceId)?.workspaceNote;
+    const label = note !== undefined && note !== "" ? note : broken.workspaceId;
+    const what = broken.kind === "meta" ? "служебный файл" : "манифест";
+    const choice = await vscode.window.showErrorMessage(
+      `VSCodeSync: ${what} воркспейса «${label}» повреждён на стороне облака — облако не может его отдать. ` +
+        "Его можно собрать заново из файлов в облаке; сами файлы не меняются.",
+      RESTORE_LABEL,
+    );
+    if (choice === RESTORE_LABEL) {
+      if (broken.kind === "meta") {
+        await vscode.commands.executeCommand("vscodesync.repairState", { workspaceId: broken.workspaceId, root });
+      } else {
+        await vscode.commands.executeCommand("vscodesync.repairCloudManifest");
+      }
     }
     return;
   }
