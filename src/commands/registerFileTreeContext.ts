@@ -17,6 +17,7 @@ import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { ActivityEventInput } from "../core/activityLog.js";
 import { trackedLocalAbsolutePath } from "../core/pathMapping.js";
 import { guardPathsBeforePush } from "../ui/syncGuards.js";
+import { confirmPushOverNewerCloud } from "../ui/pushOverNewerCloudPrompt.js";
 import { keepMineWithCloudMovedPrompt } from "../ui/conflictKeepMinePrompt.js";
 import { chooseMissingFilePlacement } from "./_placementFlow.js";
 import type { SyncStatusBarController } from "../ui/statusBar.js";
@@ -133,6 +134,9 @@ export function registerFileTreeContextCommands(
         }
         await runWithEngine(async (engine, root) => {
           const cfg = await WorkspaceConfigManager.load(root);
+          if (!(await confirmPushOverNewerCloud(cfg, files))) {
+            return;
+          }
           let done = 0;
           const failed: string[] = [];
           for (const f of files) {
@@ -142,7 +146,8 @@ export function registerFileTreeContextCommands(
               continue;
             }
             try {
-              await engine.pushFile(cfg, f.workspaceId, f.localPath, entry);
+              // Ручная отправка не скачивает облако поверх локального — расхождение подтверждено выше
+              await engine.pushFile(cfg, f.workspaceId, f.localPath, entry, { userForce: true });
               done += 1;
             } catch (e) {
               failed.push(`${f.localPath}: ${e instanceof Error ? e.message : String(e)}`);
@@ -326,10 +331,10 @@ export function registerFileTreeContextCommands(
         }
         delete row.editingBy;
         delete row.editingByName;
-        row.syncStatus = "ok";
         await WorkspaceConfigManager.save(cfg, root);
         cfg = await WorkspaceConfigManager.load(root);
-        await engine.pushFile(cfg, el.workspaceId, el.localPath, entry);
+        // Принудительная отправка сама проходит мимо конфликта и сверки, подменять статус не нужно
+        await engine.pushFile(cfg, el.workspaceId, el.localPath, entry, { userForce: true });
         await WorkspaceConfigManager.save(cfg, root);
         const gconf = await globalConfig.load();
         const wnote = cfg.activeWorkspaces.find((w) => w.workspaceId === el.workspaceId)?.workspaceNote ?? el.workspaceId;

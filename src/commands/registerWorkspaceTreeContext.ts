@@ -23,6 +23,7 @@ import {
   applyWorkspacesTreeFilterChrome,
 } from "../ui/workspacesTreeFilterState.js";
 import { promptFolderIntakeAfterAttach } from "../ui/folderIntakePrompt.js";
+import { createAttachDivergencePrompt } from "../ui/attachDivergencePrompt.js";
 import type { WorkspacesTreeProvider, SyncTreeElement } from "../ui/workspacesTree.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 import { summarisePushForToast } from "../core/bulkPushWizard.js";
@@ -196,6 +197,10 @@ export function registerWorkspaceTreeContextCommands(
         }
         workspacesTree.setWorkspaceLoading(el.workspaceId, true);
         workspacesTree.refresh();
+        const divergence = createAttachDivergencePrompt(
+          el.anchorFolder.fsPath,
+          el.workspaceNote.trim().length > 0 ? el.workspaceNote : el.workspaceId,
+        );
         try {
           await runWithEngine(async (engine) => {
             const label = el.workspaceNote.trim().length > 0 ? el.workspaceNote : el.workspaceId;
@@ -209,12 +214,14 @@ export function registerWorkspaceTreeContextCommands(
                   el.workspaceId,
                   label,
                 ).then(() => undefined),
+              onDivergedAfterAttach: divergence.onDivergedAfterAttach,
             });
             void vscode.window.showInformationMessage(
               `VSCodeSync: подключён workspace «${label}» (${el.workspaceId})`,
             );
           }, el.anchorFolder.fsPath);
           workspacesTree.invalidateRemoteCache();
+          await divergence.afterAttach();
           void (async () => {
             const { maybePromptPathMapperAfterAttach } = await import("../ui/aiPathMapperCommand.js");
             await maybePromptPathMapperAfterAttach(context, el.workspaceId);

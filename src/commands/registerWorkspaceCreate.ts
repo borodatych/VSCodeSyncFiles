@@ -17,6 +17,7 @@ import * as vscode from "vscode";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
 import { writeSyncPreviewOutput } from "../ui/syncPreviewUi.js";
 import { promptFolderIntakeAfterAttach } from "../ui/folderIntakePrompt.js";
+import { createAttachDivergencePrompt } from "../ui/attachDivergencePrompt.js";
 import type { RunWithEngineFn } from "./registerWorkspaceLifecycle.js";
 
 const CFG_SECTION = "vscodesync";
@@ -200,6 +201,7 @@ export function registerWorkspaceCreateCommands(
             // runs BEFORE the initial adopt/pull, so the rules it writes govern
             // where the existing files land, not only future ones.
             let boundFolders = 0;
+            const divergence = createAttachDivergencePrompt(root, pick.label);
             await engine.attachCloudWorkspace(pick.workspaceId, {
               beforeInitialAdopt: async () => {
                 boundFolders = await promptFolderIntakeAfterAttach(
@@ -209,8 +211,10 @@ export function registerWorkspaceCreateCommands(
                   pick.label,
                 );
               },
+              onDivergedAfterAttach: divergence.onDivergedAfterAttach,
             });
             connected++;
+            await divergence.afterAttach();
             if (boundFolders === 0) {
               void vscode.window.showInformationMessage(
                 `«${pick.label}»: файлы разложатся по структуре отправителя. ` +

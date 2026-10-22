@@ -11,7 +11,7 @@ function makeInput(over: Partial<TrackingDiffInput> = {}): TrackingDiffInput {
     trackedPaths: [],
     metaHashFor: () => "H",
     wireGzipFor: () => false,
-    existsLocally: () => true,
+    localHashOf: () => "H",
     ...over,
   };
 }
@@ -31,13 +31,26 @@ describe("planTrackingDiff", () => {
     // Раньше такие записи получали cloud-хэш в localHash и статус ok —
     // выглядели синхронизированными, и их никто никогда не тянул.
     const d = planTrackingDiff(
-      makeInput({ manifestFiles: [{ path: "a.ts" }], existsLocally: () => false }),
+      makeInput({ manifestFiles: [{ path: "a.ts" }], localHashOf: () => undefined }),
     );
     expect(d.adopt[0]).toEqual({
       posixRel: "a.ts",
       wireGzip: false,
       localHash: "",
       syncStatus: "missing_local",
+    });
+  });
+
+  it("байты на диске отличаются от облачных → cloud_newer с реальным локальным хэшем", () => {
+    // Облачный хэш в роли локального давал ложную базу: файл уходил в облако как локальная правка
+    const d = planTrackingDiff(
+      makeInput({ manifestFiles: [{ path: "a.ts" }], localHashOf: () => "L" }),
+    );
+    expect(d.adopt[0]).toEqual({
+      posixRel: "a.ts",
+      wireGzip: false,
+      localHash: "L",
+      syncStatus: "cloud_newer",
     });
   });
 

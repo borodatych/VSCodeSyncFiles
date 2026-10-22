@@ -14,6 +14,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import { WorkspaceConfigManager } from "../core/workspaceConfigManager.js";
+import { confirmPushOverNewerCloud } from "../ui/pushOverNewerCloudPrompt.js";
 import type { GlobalConfigManager } from "../core/globalConfigManager.js";
 import type { SyncOfflineQueueStore } from "../core/syncOfflineQueueStore.js";
 import type { ProviderRegistry } from "../providers/registry.js";
@@ -521,7 +522,11 @@ export function registerFileOperationsCommands(
           await vscode.window.showErrorMessage("VSCodeSync: workspace не найден в конфиге.");
           return;
         }
-        await engine.pushFile(cfg, fileEntry.workspaceId, rel, entry);
+        if (!(await confirmPushOverNewerCloud(cfg, [fileEntry]))) {
+          return;
+        }
+        // Ручная отправка не скачивает облако поверх локального — расхождение подтверждено выше
+        await engine.pushFile(cfg, fileEntry.workspaceId, rel, entry, { userForce: true });
         void vscode.window.showInformationMessage(`Push ${rel}: готово.`);
       }, target.root);
     }),

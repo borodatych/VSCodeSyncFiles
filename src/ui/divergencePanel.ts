@@ -68,7 +68,7 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function buildHtml(nonce: string, cspSource: string): string {
+function buildHtml(nonce: string, cspSource: string, focusWs: string): string {
   const d = getWebviewKindDescriptor("divergences");
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -156,7 +156,10 @@ function buildHtml(nonce: string, cspSource: string): string {
     // Picker value: root + SEP + workspaceId, '' = every workspace. Persisted in
     // webview state so reopening the tab keeps the workspace the user was on.
     var saved = vscode.getState() || {};
-    var wsFilter = typeof saved.ws === 'string' ? saved.ws : '';
+    // Воркспейс, переданный при открытии, важнее запомненного: панель открыли ради него
+    var focusWs = ${JSON.stringify(focusWs).replace(/</g, "\\u003c")};
+    var wsFilter = focusWs !== '' ? focusWs : typeof saved.ws === 'string' ? saved.ws : '';
+    if (focusWs !== '') vscode.setState({ ws: wsFilter });
     var workspaces = [];
     var allSummary = '';
     function wsKey(g) { return g.root + SEP + g.workspaceId; }
@@ -339,6 +342,15 @@ function buildHtml(nonce: string, cspSource: string): string {
 
     window.addEventListener('message', function (event) {
       var msg = event.data;
+      if (msg && msg.kind === 'focus' && typeof msg.ws === 'string') {
+        wsFilter = msg.ws;
+        vscode.setState({ ws: wsFilter });
+        selected.clear();
+        renderPicker();
+        renderSummary();
+        render();
+        return;
+      }
       if (!msg || msg.kind !== 'state') return;
       groups = msg.groups || [];
       document.body.classList.remove('busy');
@@ -397,10 +409,16 @@ export function updateDivergencePanel(groups: DivergenceGroup[]): void {
   }
 }
 
-export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
+/** `focus` — воркспейс, на котором открыть панель; без него — запомненный выбор */
+export function openDivergencePanel(
+  handlers: DivergencePanelHandlers,
+  focus?: { root: string; workspaceId: string },
+): void {
   const descriptor = getWebviewKindDescriptor("divergences");
+  const focusWs = focus === undefined ? "" : [focus.root, focus.workspaceId].join(DIVERGENCE_KEY_SEP);
   if (panel) {
     panel.reveal(vscode.ViewColumn.Active);
+    if (focusWs !== "") void panel.webview.postMessage({ kind: "focus", ws: focusWs });
     return;
   }
 
@@ -417,7 +435,7 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
   );
   const live = panel;
   const nonce = getWebviewNonce();
-  live.webview.html = buildHtml(nonce, live.webview.cspSource);
+  live.webview.html = buildHtml(nonce, live.webview.cspSource, focusWs);
 
   panelSubscriptions.push(
     live.webview.onDidReceiveMessage((raw: unknown) => {
@@ -455,12 +473,12 @@ export function openDivergencePanel(handlers: DivergencePanelHandlers): void {
             if (target.direction !== req.direction) {
               const detail =
                 req.direction === "push"
-                  ? "В облаке лежит более новая версия. Отправка запишет поверх неё вашу локальную — облачные изменения будут потеряны."
+                  ? "Облако новее. Отправить всё равно? Облачная версия сохранится в истории."
                   : "Локально есть изменения. Скачивание запишет поверх них облачную версию — локальные изменения будут потеряны.";
               const go = await vscode.window.showWarningMessage(
                 `VSCodeSync — ${target.posixRel}`,
                 { modal: true, detail },
-                req.direction === "push" ? "Всё равно отправить" : "Всё равно скачать",
+                req.direction === "push" ? "Отправить" : "Всё равно скачать",
               );
               if (go === undefined) return;
             }
